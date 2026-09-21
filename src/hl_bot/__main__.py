@@ -7,7 +7,9 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="hl_bot", description="Hyperliquid BTC perp bot")
+    parser = argparse.ArgumentParser(
+        prog="hl_bot", description="Hyperliquid multi-symbol perp bot (BTC/SOL/XRP)"
+    )
     sub = parser.add_subparsers(dest="command")
 
     run_p = sub.add_parser("run", help="Start the trading loop")
@@ -41,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         print("PAPER mode — no live orders.", file=sys.stderr)
+    print(f"Symbols: {', '.join(settings.symbols)}", file=sys.stderr)
 
     run_bot(settings, max_iterations=args.max_iterations)
     return 0

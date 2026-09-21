@@ -31,7 +31,7 @@ def _fetch_mark(info: InfoClient, symbol: str, fallback: float | None = None) ->
     try:
         return info.get_mark_price(symbol)
     except Exception as exc:
-        logger.warning("mark fetch failed: %s", exc)
+        logger.warning("mark fetch failed for %s: %s", symbol, exc)
         if fallback is not None:
             return fallback
         raise
@@ -48,7 +48,8 @@ def run_bot(
     """Run the main loop.
 
     In PAPER mode (default) never instantiates LiveExchange / never calls order.
-    Returns a summary dict useful for tests.
+    Each iteration processes every configured symbol independently (one position
+    max per symbol). Returns a summary dict useful for tests.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -56,7 +57,8 @@ def run_bot(
     )
 
     mode = "LIVE" if settings.is_live else "PAPER"
-    logger.info("Starting hl_bot in %s mode | symbol=%s", mode, settings.symbol)
+    symbols = tuple(settings.symbols)
+    logger.info("Starting hl_bot in %s mode | symbols=%s", mode, ",".join(symbols))
 
     if settings.is_live:
         from hl_bot.exchange.live_exchange import LiveExchange
@@ -71,7 +73,7 @@ def run_bot(
 
     info = info or _build_info(settings)
     broker = broker or PaperBroker(
-        starting_equity=settings.starting_equity, symbol=settings.symbol
+        starting_equity=settings.starting_equity, symbols=symbols
     )
     risk = RiskManager(
         starting_equity=settings.starting_equity,
@@ -82,6 +84,7 @@ def run_bot(
         max_consecutive_losses=settings.max_consecutive_losses,
         leverage=settings.leverage,
         kill_switch=settings.kill_switch,
+        max_open_positions=settings.max_open_positions,
     )
     strategy = VwapTrendScalp(
         buffer_bps=settings.vwap_buffer_bps,
@@ -90,10 +93,10 @@ def run_bot(
         reset_utc_hour=settings.vwap_reset_utc_hour,
     )
     journal = TradeJournal(settings.journal_path)
-    journal.log("start", mode=mode, equity=settings.starting_equity)
+    journal.log("start", mode=mode, equity=settings.starting_equity, symbols=list(symbols))
 
     iterations = 0
-    summary = {"mode": mode, "opens": 0, "closes": 0, "halted": False}
+    summary: dict = {"mode": mode, "opens": 0, "closes": 0, "halted": False, "symbols": list(symbols)}
 
     while True:
         iterations += 1
@@ -101,110 +104,150 @@ def run_bot(
             break
 
         ks = killswitch_active(settings)
-        try:
-            mark = _fetch_mark(info, settings.symbol, fallback=broker.mark or None)
-        except Exception:
-            logger.exception("cannot get mark; sleeping")
+
+        # Fetch marks for all symbols
+        marks: dict[str, float] = {}
+        for symbol in symbols:
+            try:
+                fallback = broker.get_mark(symbol) or None
+                marks[symbol] = _fetch_mark(info, symbol, fallback=fallback)
+                broker.set_mark(marks[symbol], symbol=symbol)
+            except Exception:
+                logger.exception("cannot get mark for %s; skipping symbol this tick", symbol)
+
+        if not marks:
+            logger.warning("no marks available; sleeping")
             sleep_fn(settings.loop_interval_sec)
             continue
 
-        broker.set_mark(mark)
-        equity = broker.equity_mark_to_market(mark)
+        equity = broker.equity_mark_to_market(marks=marks)
 
-        # Risk flatten / kill
+        # Risk flatten / kill — close ALL open positions
         flatten, reason = risk.should_flatten(equity, kill_file_active=ks, env_kill=settings.kill_switch)
         if flatten and broker.has_position:
-            fill = broker.close_position(reason=reason, price=mark)
-            if fill:
-                risk.record_trade_close(fill.pnl)
-                journal.log("close", **{k: getattr(fill, k) for k in fill.__dataclass_fields__})
-                summary["closes"] += 1
-                if live is not None:
-                    try:
-                        live.market_close(settings.symbol)
-                    except Exception:
-                        logger.exception("LIVE close failed")
+            for symbol in list(broker.positions.keys()):
+                px = marks.get(symbol, broker.get_mark(symbol))
+                fill = broker.close_position(reason=reason, price=px, symbol=symbol)
+                if fill:
+                    risk.record_trade_close(fill.pnl)
+                    journal.log(
+                        "close",
+                        **{k: getattr(fill, k) for k in fill.__dataclass_fields__},
+                    )
+                    summary["closes"] += 1
+                    if live is not None:
+                        try:
+                            live.market_close(symbol)
+                        except Exception:
+                            logger.exception("LIVE close failed for %s", symbol)
             summary["halted"] = True
             if risk.killed:
                 logger.error("Kill switch / drawdown — exiting loop")
                 break
 
-        # Manage open position stops
-        if broker.has_position:
-            fill = broker.check_stops(mark)
+        # Manage open position stops per symbol
+        for symbol in symbols:
+            if not broker.has_position_for(symbol):
+                continue
+            mark = marks.get(symbol)
+            if mark is None:
+                continue
+            fill = broker.check_stops(mark, symbol=symbol)
             if fill:
                 risk.record_trade_close(fill.pnl)
-                journal.log("close", **{k: getattr(fill, k) for k in fill.__dataclass_fields__})
+                journal.log(
+                    "close",
+                    **{k: getattr(fill, k) for k in fill.__dataclass_fields__},
+                )
                 summary["closes"] += 1
                 if live is not None:
                     try:
-                        live.market_close(settings.symbol)
+                        live.market_close(symbol)
                     except Exception:
-                        logger.exception("LIVE close failed")
+                        logger.exception("LIVE close failed for %s", symbol)
 
-        # New entries
-        if not broker.has_position and not risk.killed and not risk.halted_daily_loss:
-            bars = info.get_candles(settings.symbol, interval="1m")
-            signal = strategy.on_bar(mark, bars, has_position=False)
-            if signal.side in ("long", "short") and signal.stop > 0:
+        # Refresh equity after any closes
+        equity = broker.equity_mark_to_market(marks=marks)
+
+        # New entries per symbol (independent positions)
+        if not risk.killed and not risk.halted_daily_loss:
+            for symbol in symbols:
+                if broker.has_position_for(symbol):
+                    continue
+                mark = marks.get(symbol)
+                if mark is None:
+                    continue
+
+                bars = info.get_candles(symbol, interval="1m")
+                signal = strategy.on_bar(mark, bars, has_position=False)
+                if signal.side not in ("long", "short") or signal.stop <= 0:
+                    continue
+
                 decision = risk.allow_entry(
                     equity,
                     signal.entry,
                     signal.stop,
-                    has_open_position=False,
+                    has_open_position=broker.has_position_for(symbol),
+                    open_position_count=broker.open_position_count,
                     kill_file_active=ks,
                     env_kill=settings.kill_switch,
                 )
-                if decision.allowed and decision.size > 0:
-                    fill = broker.open_position(
-                        side=signal.side,  # type: ignore[arg-type]
-                        size=decision.size,
-                        stop_price=signal.stop,
-                        take_profit=signal.take_profit,
-                        price=mark,
-                    )
-                    risk.record_trade_open()
-                    journal.log(
-                        "open",
-                        side=signal.side,
-                        size=decision.size,
-                        price=mark,
-                        stop=signal.stop,
-                        tp=signal.take_profit,
-                        vwap=signal.vwap,
-                        dollar_risk=decision.dollar_risk,
-                        trade_id=fill.trade_id,
-                    )
-                    summary["opens"] += 1
-                    logger.info(
-                        "OPEN %s size=%.6f @ %.2f stop=%.2f tp=%.2f vwap=%.2f",
-                        signal.side,
-                        decision.size,
-                        mark,
-                        signal.stop,
-                        signal.take_profit,
-                        signal.vwap,
-                    )
-                    if live is not None:
-                        try:
-                            is_buy = signal.side == "long"
-                            live.market_open(
-                                settings.symbol,
-                                is_buy,
-                                decision.size,
-                                leverage=settings.leverage,
-                            )
-                            # Protective stop on opposite side
-                            live.set_stop_loss(
-                                settings.symbol,
-                                is_buy=not is_buy,
-                                size=decision.size,
-                                trigger_px=signal.stop,
-                            )
-                        except Exception:
-                            logger.exception("LIVE open/stop failed")
-                else:
-                    logger.debug("entry blocked: %s", decision.reason)
+                if not (decision.allowed and decision.size > 0):
+                    logger.debug("[%s] entry blocked: %s", symbol, decision.reason)
+                    continue
+
+                fill = broker.open_position(
+                    side=signal.side,  # type: ignore[arg-type]
+                    size=decision.size,
+                    stop_price=signal.stop,
+                    take_profit=signal.take_profit,
+                    price=mark,
+                    symbol=symbol,
+                )
+                risk.record_trade_open()
+                journal.log(
+                    "open",
+                    symbol=symbol,
+                    side=signal.side,
+                    size=decision.size,
+                    price=mark,
+                    stop=signal.stop,
+                    tp=signal.take_profit,
+                    vwap=signal.vwap,
+                    dollar_risk=decision.dollar_risk,
+                    trade_id=fill.trade_id,
+                )
+                summary["opens"] += 1
+                logger.info(
+                    "OPEN %s %s size=%.6f @ %.4f stop=%.4f tp=%.4f vwap=%.4f",
+                    symbol,
+                    signal.side,
+                    decision.size,
+                    mark,
+                    signal.stop,
+                    signal.take_profit,
+                    signal.vwap,
+                )
+                if live is not None:
+                    try:
+                        is_buy = signal.side == "long"
+                        live.market_open(
+                            symbol,
+                            is_buy,
+                            decision.size,
+                            leverage=settings.leverage,
+                        )
+                        live.set_stop_loss(
+                            symbol,
+                            is_buy=not is_buy,
+                            size=decision.size,
+                            trigger_px=signal.stop,
+                        )
+                    except Exception:
+                        logger.exception("LIVE open/stop failed for %s", symbol)
+
+                # Update equity after open for subsequent symbols' sizing
+                equity = broker.equity_mark_to_market(marks=marks)
 
         sleep_fn(settings.loop_interval_sec)
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hl-bot"
 version = "0.1.0"
-description = "Hyperliquid BTC perpetual trading bot (paper-first, LIVE gated)"
+description = "Hyperliquid multi-symbol perp bot (BTC/SOL/XRP; paper-first, LIVE gated)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

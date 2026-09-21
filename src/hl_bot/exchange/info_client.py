@@ -14,13 +14,16 @@ class InfoClient:
     Candle / historical data availability depends on the Info API
     ``candleSnapshot`` endpoint. Session VWAP in paper/offline tests can
     also be fed from synthetic bars via ``inject_bars``.
+
+    Hyperliquid perp mid keys use bare coin names: BTC, SOL, XRP, etc.
     """
 
     def __init__(self, base_url: str = "https://api.hyperliquid.xyz", skip_ws: bool = True):
         self.base_url = base_url.rstrip("/")
         self._info: Any = None
         self._skip_ws = skip_ws
-        self._injected_bars: list[dict[str, float]] = []
+        # coin -> bars; "*" applies to any coin without a specific inject
+        self._injected_bars: dict[str, list[dict[str, float]]] = {}
 
     def _ensure_client(self) -> Any:
         if self._info is None:
@@ -34,14 +37,14 @@ class InfoClient:
         return self._info
 
     def get_mid_price(self, coin: str = "BTC") -> float:
-        """Return mid price for ``coin`` from allMids."""
+        """Return mid price for ``coin`` from allMids (bare coin name)."""
         info = self._ensure_client()
         mids = info.all_mids()
         key = coin if coin in mids else f"{coin}-PERP"
         if key not in mids:
-            # try bare coin
+            # try bare coin / prefix match
             for k, v in mids.items():
-                if k.upper().startswith(coin.upper()):
+                if k.upper() == coin.upper() or k.upper().startswith(coin.upper()):
                     return float(v)
             raise KeyError(f"No mid price for {coin} in allMids")
         return float(mids[key])
@@ -79,8 +82,11 @@ class InfoClient:
 
         Each bar: {t, o, h, l, c, v} with t in ms.
         """
-        if self._injected_bars:
-            return list(self._injected_bars)
+        coin_key = coin.upper()
+        if coin_key in self._injected_bars:
+            return list(self._injected_bars[coin_key])
+        if "*" in self._injected_bars:
+            return list(self._injected_bars["*"])
 
         info = self._ensure_client()
         req: dict[str, Any] = {"coin": coin, "interval": interval}
@@ -113,9 +119,13 @@ class InfoClient:
             )
         return bars
 
-    def inject_bars(self, bars: list[dict[str, float]]) -> None:
-        """Inject synthetic bars (for tests / offline VWAP)."""
-        self._injected_bars = list(bars)
+    def inject_bars(self, bars: list[dict[str, float]], coin: str | None = None) -> None:
+        """Inject synthetic bars (for tests / offline VWAP).
+
+        If ``coin`` is None, bars apply to any symbol without a specific inject.
+        """
+        key = coin.upper() if coin else "*"
+        self._injected_bars[key] = list(bars)
 
     def clear_injected_bars(self) -> None:
-        self._injected_bars = []
+        self._injected_bars = {}

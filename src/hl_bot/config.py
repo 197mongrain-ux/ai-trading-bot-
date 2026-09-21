@@ -28,6 +28,19 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw is not None and raw.strip() else default
 
 
+def _parse_symbols() -> tuple[str, ...]:
+    """Parse SYMBOLS (comma-separated) with SYMBOL fallback; default BTC,SOL,XRP."""
+    symbols_raw = os.getenv("SYMBOLS")
+    if symbols_raw is not None and symbols_raw.strip():
+        parsed = tuple(s.strip().upper() for s in symbols_raw.split(",") if s.strip())
+        if parsed:
+            return parsed
+    symbol_raw = os.getenv("SYMBOL")
+    if symbol_raw is not None and symbol_raw.strip():
+        return (symbol_raw.strip().upper(),)
+    return ("BTC", "SOL", "XRP")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable runtime settings loaded from environment."""
@@ -41,7 +54,11 @@ class Settings:
     private_key: str = ""
     account_address: str = ""
 
-    symbol: str = "BTC"
+    # Multi-symbol: Hyperliquid perp coin names (bare: BTC, SOL, XRP)
+    symbols: tuple[str, ...] = ("BTC", "SOL", "XRP")
+    symbol: str = "BTC"  # first of symbols; single-symbol backward compat
+    max_open_positions: int = 3
+
     starting_equity: float = 5000.0
     risk_per_trade: float = 0.005
     max_daily_loss_pct: float = 0.03
@@ -75,6 +92,10 @@ class Settings:
                 "TRADING_MODE=live requires I_UNDERSTAND_LIVE_TRADING=true. "
                 "Refusing to start LIVE without the explicit gate."
             )
+        if not self.symbols:
+            raise ValueError("At least one symbol required (SYMBOLS or SYMBOL).")
+        if self.max_open_positions < 1:
+            raise ValueError(f"MAX_OPEN_POSITIONS={self.max_open_positions} must be >= 1.")
         if not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
                 f"RISK_PER_TRADE={self.risk_per_trade} outside documented range "
@@ -101,6 +122,10 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     )
     api_url = os.getenv("HL_API_URL", default_url).strip() or default_url
 
+    symbols = _parse_symbols()
+    # MAX_OPEN_POSITIONS defaults to number of configured symbols
+    max_open = _int("MAX_OPEN_POSITIONS", len(symbols))
+
     settings = Settings(
         trading_mode=os.getenv("TRADING_MODE", "paper").strip().lower(),
         i_understand_live_trading=_bool("I_UNDERSTAND_LIVE_TRADING", False),
@@ -109,7 +134,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         api_url=api_url,
         private_key=os.getenv("HL_PRIVATE_KEY", "").strip(),
         account_address=os.getenv("HL_ACCOUNT_ADDRESS", "").strip(),
-        symbol=os.getenv("SYMBOL", "BTC").strip().upper(),
+        symbols=symbols,
+        symbol=symbols[0],
+        max_open_positions=max_open,
         starting_equity=_float("STARTING_EQUITY", 5000.0),
         risk_per_trade=_float("RISK_PER_TRADE", 0.005),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.03),

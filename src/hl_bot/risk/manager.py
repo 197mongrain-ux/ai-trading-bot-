@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
 
 
 @dataclass
@@ -19,8 +18,10 @@ class RiskDecision:
 class RiskManager:
     """Enforces daily loss, drawdown, trade caps, consecutive losses, sizing.
 
-    Position size is ALWAYS derived from dollar risk / stop distance —
-    leverage is a config ceiling only, never the sizing driver.
+    Shared across all symbols. Position size is ALWAYS derived from
+    dollar risk / stop distance — leverage is a config ceiling only,
+    never the sizing driver. Max one position per symbol (enforced by
+    caller via has_open_position); max_open_positions caps total.
     """
 
     starting_equity: float
@@ -31,6 +32,7 @@ class RiskManager:
     max_consecutive_losses: int = 3
     leverage: int = 5
     kill_switch: bool = False
+    max_open_positions: int = 3
 
     day_start_equity: float = 0.0
     high_water_mark: float = 0.0
@@ -84,10 +86,10 @@ class RiskManager:
 
     def record_trade_open(self) -> None:
         self.trades_today += 1
-        self.open_positions = 1
+        self.open_positions += 1
 
     def record_trade_close(self, pnl: float) -> None:
-        self.open_positions = 0
+        self.open_positions = max(0, self.open_positions - 1)
         if pnl < 0:
             self.consecutive_losses += 1
             if self.consecutive_losses >= self.max_consecutive_losses:
@@ -129,6 +131,7 @@ class RiskManager:
         stop_price: float,
         *,
         has_open_position: bool = False,
+        open_position_count: int | None = None,
         kill_file_active: bool = False,
         env_kill: bool = False,
     ) -> RiskDecision:
@@ -144,8 +147,12 @@ class RiskManager:
             return RiskDecision(False, "paused after consecutive losses")
         if self.trades_today >= self.max_trades_per_day:
             return RiskDecision(False, "max trades/day reached")
-        if has_open_position or self.open_positions >= 1:
-            return RiskDecision(False, "max 1 open position")
+        # No averaging down on the same symbol
+        if has_open_position:
+            return RiskDecision(False, "already in position for symbol")
+        count = self.open_positions if open_position_count is None else open_position_count
+        if count >= self.max_open_positions:
+            return RiskDecision(False, "max open positions reached")
         if stop_price <= 0:
             return RiskDecision(False, "stop required")
 

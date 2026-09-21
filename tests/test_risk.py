@@ -71,10 +71,39 @@ def test_consecutive_losses_pause():
     assert "consecutive" in d.reason.lower()
 
 
-def test_max_one_position():
-    rm = RiskManager(starting_equity=5000.0)
+def test_no_averaging_down_same_symbol():
+    rm = RiskManager(starting_equity=5000.0, max_open_positions=3)
     d = rm.allow_entry(5000.0, 50_000.0, 49_900.0, has_open_position=True)
     assert not d.allowed
+    assert "symbol" in d.reason.lower() or "position" in d.reason.lower()
+
+
+def test_max_open_positions_across_symbols():
+    rm = RiskManager(starting_equity=5000.0, max_open_positions=3)
+    # Simulate two opens already
+    rm.record_trade_open()
+    rm.record_trade_open()
+    assert rm.open_positions == 2
+    d = rm.allow_entry(5000.0, 50_000.0, 49_900.0, open_position_count=2)
+    assert d.allowed
+    rm.record_trade_open()
+    assert rm.open_positions == 3
+    d2 = rm.allow_entry(5000.0, 100.0, 99.0, open_position_count=3)
+    assert not d2.allowed
+    assert "max open positions" in d2.reason.lower()
+
+
+def test_record_open_close_counts():
+    rm = RiskManager(starting_equity=5000.0, max_open_positions=3)
+    rm.record_trade_open()
+    rm.record_trade_open()
+    assert rm.open_positions == 2
+    rm.record_trade_close(10.0)
+    assert rm.open_positions == 1
+    assert rm.consecutive_losses == 0
+    rm.record_trade_close(-5.0)
+    assert rm.open_positions == 0
+    assert rm.consecutive_losses == 1
 
 
 def test_kill_switch_file_flag():
