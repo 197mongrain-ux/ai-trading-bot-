@@ -14,7 +14,7 @@ DEFAULT_SYMBOLS = [
     {"coin": "XRP", "tv": "HYPERLIQUID:XRPUSDC.P"},
 ]
 
-TRADE_EVENTS = frozenset({"open", "close"})
+TRADE_EVENTS = frozenset({"open", "close", "scale_out"})
 
 
 def resolve_journal_path(
@@ -91,14 +91,17 @@ def _normalize_trade(ev: dict[str, Any]) -> dict[str, Any]:
         "dollar_risk": ev.get("dollar_risk"),
         "leverage": ev.get("leverage"),
         "stop_pct": ev.get("stop_pct"),
+        "remaining_size": ev.get("remaining_size"),
+        "scaled": ev.get("scaled"),
     }
     return out
 
 
 def reconstruct_open_positions(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Chronological open/close by trade_id (fallback: symbol).
+    """Chronological open/close/scale_out by trade_id (fallback: symbol).
 
-    An open without a matching close remains in the list.
+    An open without a matching full close remains in the list.
+    ``scale_out`` reduces remaining size, updates stop/TP, and sets scaled.
     """
     opens: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -121,12 +124,49 @@ def reconstruct_open_positions(events: list[dict[str, Any]]) -> list[dict[str, A
                 "vwap": ev.get("vwap"),
                 "dollar_risk": ev.get("dollar_risk"),
                 "leverage": ev.get("leverage"),
+                "scaled": False,
                 "mark": None,
                 "upnl": None,
             }
             if key not in opens:
                 order.append(key)
             opens[key] = pos
+        elif event == "scale_out":
+            trade_id = ev.get("trade_id")
+            symbol = str(ev.get("symbol") or "").upper()
+            key = None
+            if trade_id is not None and str(trade_id) in opens:
+                key = str(trade_id)
+            else:
+                for k in list(order):
+                    if k in opens and opens[k].get("symbol") == symbol:
+                        key = k
+                        break
+            if key is None or key not in opens:
+                continue
+            pos = opens[key]
+            if ev.get("remaining_size") is not None:
+                try:
+                    pos["size"] = float(ev["remaining_size"])
+                except (TypeError, ValueError):
+                    pass
+            else:
+                try:
+                    closed_sz = float(ev.get("size") or 0)
+                    pos["size"] = max(0.0, float(pos.get("size") or 0) - closed_sz)
+                except (TypeError, ValueError):
+                    pass
+            if ev.get("stop_price") is not None or ev.get("stop") is not None:
+                try:
+                    pos["stop"] = float(ev.get("stop_price") or ev.get("stop") or 0)
+                except (TypeError, ValueError):
+                    pass
+            if ev.get("take_profit") is not None or ev.get("tp") is not None:
+                try:
+                    pos["tp"] = float(ev.get("take_profit") or ev.get("tp") or 0)
+                except (TypeError, ValueError):
+                    pass
+            pos["scaled"] = True
         elif event == "close":
             trade_id = ev.get("trade_id")
             symbol = str(ev.get("symbol") or "").upper()
@@ -181,7 +221,7 @@ def compute_stats(
                 day_opens += 1
             if in_sess:
                 sess_opens += 1
-        elif event == "close":
+        elif event in ("close", "scale_out"):
             try:
                 pnl = float(ev.get("pnl") or 0)
             except (TypeError, ValueError):

@@ -187,3 +187,134 @@ def test_close_by_trade_id():
     assert closed.pnl == pytest.approx(10.0)  # (105-100)*2
     assert b.get_position_by_id(f1.trade_id) is not None
     assert b.open_position_count == 1
+
+
+def test_long_scale_out_at_1r_moves_stop_to_be_then_tp():
+    """Long scales 50% at 1R, stop → BE, remainder hits original TP."""
+    b = PaperBroker(
+        starting_equity=5000.0,
+        scale_out_enabled=True,
+        scale_out_r=1.0,
+        scale_out_pct=0.5,
+        be_buffer_bps=2.0,
+    )
+    entry = 50_000.0
+    stop = 49_500.0  # 500 risk → 1R = 50_500
+    tp = 51_000.0  # 2R
+    b.set_mark(entry)
+    fill = b.open_position("long", size=0.2, stop_price=stop, take_profit=tp)
+    tid = fill.trade_id
+
+    # Below 1R — no scale
+    assert b.check_scale_outs(50_400.0) == []
+    pos = b.get_position_by_id(tid)
+    assert pos is not None and not pos.scaled and pos.size == pytest.approx(0.2)
+
+    # Hit 1R
+    scaled = b.check_scale_outs(50_500.0)
+    assert len(scaled) == 1
+    assert scaled[0].action == "scale_out"
+    assert scaled[0].reason == "sell_into_strength"
+    assert scaled[0].size == pytest.approx(0.1)
+    assert scaled[0].pnl == pytest.approx(50.0)  # (50500-50000)*0.1
+    assert scaled[0].remaining_size == pytest.approx(0.1)
+
+    pos = b.get_position_by_id(tid)
+    assert pos is not None
+    assert pos.scaled
+    assert pos.size == pytest.approx(0.1)
+    # BE with 2 bps below entry
+    assert pos.stop_price == pytest.approx(entry * (1 - 0.0002))
+    assert pos.take_profit == pytest.approx(tp)
+
+    # Second scale should not fire
+    assert b.check_scale_outs(50_600.0) == []
+
+    # Remainder hits TP
+    closes = b.check_stops(51_000.0)
+    assert len(closes) == 1
+    assert closes[0].reason == "take_profit"
+    assert closes[0].size == pytest.approx(0.1)
+    assert closes[0].pnl == pytest.approx(100.0)  # (51000-50000)*0.1
+    assert not b.has_position
+    assert b.realized_pnl == pytest.approx(150.0)
+
+
+def test_short_scale_out_mirror():
+    """Short covers into weakness (same scale logic)."""
+    b = PaperBroker(
+        starting_equity=5000.0,
+        scale_out_enabled=True,
+        scale_out_r=1.0,
+        scale_out_pct=0.5,
+        be_buffer_bps=2.0,
+    )
+    entry = 50_000.0
+    stop = 50_500.0  # 500 risk → 1R = 49_500
+    tp = 49_000.0
+    b.set_mark(entry)
+    fill = b.open_position("short", size=0.2, stop_price=stop, take_profit=tp)
+    tid = fill.trade_id
+
+    scaled = b.check_scale_outs(49_500.0)
+    assert len(scaled) == 1
+    assert scaled[0].action == "scale_out"
+    assert scaled[0].size == pytest.approx(0.1)
+    assert scaled[0].pnl == pytest.approx(50.0)
+
+    pos = b.get_position_by_id(tid)
+    assert pos is not None and pos.scaled
+    assert pos.stop_price == pytest.approx(entry * (1 + 0.0002))
+    assert pos.size == pytest.approx(0.1)
+
+    closes = b.check_stops(49_000.0)
+    assert len(closes) == 1
+    assert closes[0].reason == "take_profit"
+    assert closes[0].pnl == pytest.approx(100.0)
+
+
+def test_scaled_runner_breakeven_stop():
+    """After scale-out, pullback to BE stop labels breakeven_stop."""
+    b = PaperBroker(
+        starting_equity=5000.0,
+        scale_out_r=1.0,
+        scale_out_pct=0.5,
+        be_buffer_bps=0.0,  # exact entry
+    )
+    b.set_mark(100.0)
+    fill = b.open_position("long", size=2.0, stop_price=99.0, take_profit=102.0)
+    tid = fill.trade_id
+    # 1R = 101
+    assert b.check_scale_outs(101.0)
+    pos = b.get_position_by_id(tid)
+    assert pos is not None
+    assert pos.stop_price == pytest.approx(100.0)
+
+    closes = b.check_stops(100.0)
+    assert len(closes) == 1
+    assert closes[0].reason == "breakeven_stop"
+    assert closes[0].pnl == pytest.approx(0.0)
+
+
+def test_scale_out_disabled():
+    b = PaperBroker(starting_equity=5000.0, scale_out_enabled=False)
+    b.set_mark(100.0)
+    b.open_position("long", size=1.0, stop_price=99.0, take_profit=102.0)
+    assert b.check_scale_outs(101.0) == []
+    assert not b.position.scaled
+
+
+def test_runner_tp_r_retargets_remainder():
+    b = PaperBroker(
+        starting_equity=5000.0,
+        scale_out_r=1.0,
+        scale_out_pct=0.5,
+        be_buffer_bps=0.0,
+        runner_tp_r=3.0,
+    )
+    b.set_mark(100.0)
+    fill = b.open_position("long", size=1.0, stop_price=99.0, take_profit=102.0)
+    b.check_scale_outs(101.0)
+    pos = b.get_position_by_id(fill.trade_id)
+    assert pos is not None
+    assert pos.take_profit == pytest.approx(103.0)  # entry + 3R

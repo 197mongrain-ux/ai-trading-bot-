@@ -315,3 +315,83 @@ def test_reconstruct_multiple_opens_same_symbol():
     assert len(opens_both) == 2
     ids = {o["trade_id"] for o in opens_both}
     assert ids == {"btc_a", "btc_b"}
+
+
+def test_reconstruct_scale_out_updates_size_stop_scaled():
+    events = [
+        _ev(
+            "open",
+            1.0,
+            symbol="BTC",
+            side="long",
+            size=0.2,
+            price=50000.0,
+            stop=49500.0,
+            tp=51000.0,
+            trade_id="t1",
+        ),
+        _ev(
+            "scale_out",
+            2.0,
+            symbol="BTC",
+            side="long",
+            size=0.1,
+            price=50500.0,
+            pnl=50.0,
+            reason="sell_into_strength",
+            trade_id="t1",
+            remaining_size=0.1,
+            stop_price=49990.0,
+            take_profit=51000.0,
+            scaled=True,
+            action="scale_out",
+        ),
+    ]
+    opens = reconstruct_open_positions(events)
+    assert len(opens) == 1
+    assert opens[0]["size"] == pytest.approx(0.1)
+    assert opens[0]["stop"] == pytest.approx(49990.0)
+    assert opens[0]["tp"] == pytest.approx(51000.0)
+    assert opens[0]["scaled"] is True
+    assert opens[0]["trade_id"] == "t1"
+
+
+def test_build_state_includes_scale_out_on_tape():
+    import time
+
+    now = time.time()
+    events = [
+        _ev("start", now - 10, mode="PAPER", symbols=["BTC"]),
+        _ev(
+            "open",
+            now - 5,
+            symbol="BTC",
+            side="long",
+            size=0.2,
+            price=100.0,
+            stop=99.0,
+            tp=102.0,
+            trade_id="a",
+        ),
+        _ev(
+            "scale_out",
+            now - 1,
+            symbol="BTC",
+            side="long",
+            size=0.1,
+            price=101.0,
+            pnl=0.1,
+            reason="sell_into_strength",
+            trade_id="a",
+            remaining_size=0.1,
+            stop_price=100.0,
+            action="scale_out",
+        ),
+    ]
+    state = build_state(events, last_n=10)
+    assert any(t["event"] == "scale_out" for t in state["trades"])
+    assert len(state["open_positions"]) == 1
+    assert state["open_positions"][0]["scaled"] is True
+    assert state["open_positions"][0]["size"] == pytest.approx(0.1)
+    assert state["stats"]["day_closes"] >= 1
+    assert state["stats"]["day_realized_pnl"] == pytest.approx(0.1)

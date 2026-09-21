@@ -120,6 +120,16 @@ class Settings:
     ote_require_close: bool = False
     ote_use_htf_swings: bool = False
 
+    # --- Scale-out / sell into strength ---
+    # At SCALE_OUT_R unrealized R, close SCALE_OUT_PCT of size, move stop to
+    # breakeven ± BE_BUFFER_BPS, leave runner to original TP (or RUNNER_TP_R).
+    scale_out_enabled: bool = True
+    scale_out_r: float = 1.0
+    scale_out_pct: float = 0.5
+    be_buffer_bps: float = 2.0
+    # None = keep existing take_profit on remainder
+    runner_tp_r: float | None = None
+
     journal_path: str = "logs/trades.jsonl"
     killswitch_file: str = ".killswitch"
 
@@ -207,6 +217,20 @@ class Settings:
             raise ValueError(
                 f"OTE_STOP_BUFFER_BPS={self.ote_stop_buffer_bps} must be >= 0."
             )
+        if self.scale_out_r <= 0:
+            raise ValueError(f"SCALE_OUT_R={self.scale_out_r} must be > 0.")
+        if not (0.0 < self.scale_out_pct < 1.0):
+            raise ValueError(
+                f"SCALE_OUT_PCT={self.scale_out_pct} must be in (0, 1)."
+            )
+        if self.be_buffer_bps < 0:
+            raise ValueError(
+                f"BE_BUFFER_BPS={self.be_buffer_bps} must be >= 0."
+            )
+        if self.runner_tp_r is not None and self.runner_tp_r <= 0:
+            raise ValueError(
+                f"RUNNER_TP_R={self.runner_tp_r} must be > 0 when set."
+            )
         if self.is_live and not self.private_key:
             raise ValueError("LIVE mode requires HL_PRIVATE_KEY.")
 
@@ -287,6 +311,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ote_stop_buffer_bps=_float("OTE_STOP_BUFFER_BPS", 0.0),
         ote_require_close=_bool("OTE_REQUIRE_CLOSE", False),
         ote_use_htf_swings=_bool("OTE_USE_HTF_SWINGS", False),
+        scale_out_enabled=_bool("SCALE_OUT_ENABLED", True),
+        scale_out_r=_float("SCALE_OUT_R", 1.0),
+        scale_out_pct=_float("SCALE_OUT_PCT", 0.5),
+        be_buffer_bps=_float("BE_BUFFER_BPS", 2.0),
+        runner_tp_r=_optional_float("RUNNER_TP_R", None),
         journal_path=os.getenv("JOURNAL_PATH", "logs/trades.jsonl"),
         killswitch_file=os.getenv("KILLSWITCH_FILE", ".killswitch"),
     )

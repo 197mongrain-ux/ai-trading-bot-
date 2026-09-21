@@ -200,3 +200,37 @@ def test_load_settings_ote_env(monkeypatch):
 def test_entry_mode_invalid_raises():
     with pytest.raises(ValueError, match="ENTRY_MODE"):
         Settings(entry_mode="fibonacci").validate()
+
+
+def test_scale_out_defaults():
+    s = Settings()
+    assert s.scale_out_enabled is True
+    assert s.scale_out_r == pytest.approx(1.0)
+    assert s.scale_out_pct == pytest.approx(0.5)
+    assert s.be_buffer_bps == pytest.approx(2.0)
+    assert s.runner_tp_r is None
+
+
+def test_load_scale_out_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("SCALE_OUT_ENABLED", "true")
+    monkeypatch.setenv("SCALE_OUT_R", "1.5")
+    monkeypatch.setenv("SCALE_OUT_PCT", "0.4")
+    monkeypatch.setenv("BE_BUFFER_BPS", "5")
+    monkeypatch.setenv("RUNNER_TP_R", "3.0")
+    monkeypatch.delenv("SYMBOLS", raising=False)
+    monkeypatch.delenv("SYMBOL", raising=False)
+    s = load_settings()
+    assert s.scale_out_enabled is True
+    assert s.scale_out_r == pytest.approx(1.5)
+    assert s.scale_out_pct == pytest.approx(0.4)
+    assert s.be_buffer_bps == pytest.approx(5.0)
+    assert s.runner_tp_r == pytest.approx(3.0)
+
+
+def test_scale_out_pct_validation():
+    with pytest.raises(ValueError, match="SCALE_OUT_PCT"):
+        Settings(scale_out_pct=1.0).validate()
+    with pytest.raises(ValueError, match="SCALE_OUT_PCT"):
+        Settings(scale_out_pct=0.0).validate()

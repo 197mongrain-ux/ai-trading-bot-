@@ -56,6 +56,9 @@ def run_bot(
     LIVE caveat: Hyperliquid may net same-side size into one position; paper
     keeps independent stops/trade_ids. Live path does best-effort
     ``market_open`` of additional size and per-fill stop/close by size.
+    Scale-out (sell into strength) is paper-first; LIVE uses best-effort
+    reduce-only ``market_close`` of the scaled size and a new stop at BE —
+    exchange netting may prevent true per-trade_id stops.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -67,7 +70,7 @@ def run_bot(
     logger.info(
         "Starting hl_bot in %s mode | symbols=%s | max_per_symbol=%s | "
         "max_open=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d | "
-        "entry_mode=%s",
+        "entry_mode=%s | scale_out=%s@%.2fR/%.0f%%",
         mode,
         ",".join(symbols),
         settings.max_positions_per_symbol or "unlimited",
@@ -76,6 +79,9 @@ def run_bot(
         settings.leverage,
         settings.breakout_bars,
         settings.entry_mode,
+        "on" if settings.scale_out_enabled else "off",
+        settings.scale_out_r,
+        settings.scale_out_pct * 100.0,
     )
     if settings.is_live:
         logger.warning(
@@ -99,6 +105,11 @@ def run_bot(
         starting_equity=settings.starting_equity,
         symbols=symbols,
         max_positions_per_symbol=settings.max_positions_per_symbol,
+        scale_out_enabled=settings.scale_out_enabled,
+        scale_out_r=settings.scale_out_r,
+        scale_out_pct=settings.scale_out_pct,
+        be_buffer_bps=settings.be_buffer_bps,
+        runner_tp_r=settings.runner_tp_r,
     )
     risk = RiskManager(
         starting_equity=settings.starting_equity,
@@ -150,6 +161,11 @@ def run_bot(
         entry_cooldown_sec=settings.entry_cooldown_sec,
         entry_mode=settings.entry_mode,
         ote_lookback_bars=settings.ote_lookback_bars,
+        scale_out_enabled=settings.scale_out_enabled,
+        scale_out_r=settings.scale_out_r,
+        scale_out_pct=settings.scale_out_pct,
+        be_buffer_bps=settings.be_buffer_bps,
+        runner_tp_r=settings.runner_tp_r,
     )
     # Daily loss / consecutive-loss halt is in-memory: restarting `hl_bot run`
     # always clears it (fresh RiskManager). Optional journal marker:
@@ -168,7 +184,14 @@ def run_bot(
     last_stop_ts: dict[str, float] = {}
 
     iterations = 0
-    summary: dict = {"mode": mode, "opens": 0, "closes": 0, "halted": False, "symbols": list(symbols)}
+    summary: dict = {
+        "mode": mode,
+        "opens": 0,
+        "closes": 0,
+        "scale_outs": 0,
+        "halted": False,
+        "symbols": list(symbols),
+    }
 
     while True:
         iterations += 1
@@ -220,13 +243,65 @@ def run_bot(
                 logger.error("Kill switch / drawdown — exiting loop")
                 break
 
-        # Manage stops/TP for EVERY open position (per symbol mark)
+        # Scale-out (sell into strength) then stops/TP for EVERY open leg
         for symbol in symbols:
             if not broker.has_position_for(symbol):
                 continue
             mark = marks.get(symbol)
             if mark is None:
                 continue
+
+            # 1) Scale out at SCALE_OUT_R before evaluating full stop/TP
+            for fill in broker.check_scale_outs(
+                mark,
+                symbol=symbol,
+                scale_out_r=settings.scale_out_r,
+                scale_out_pct=settings.scale_out_pct,
+                be_buffer_bps=settings.be_buffer_bps,
+                runner_tp_r=settings.runner_tp_r,
+                enabled=settings.scale_out_enabled,
+            ):
+                # Partial close — do NOT decrement open_positions / consecutive-loss
+                fields = {
+                    k: getattr(fill, k)
+                    for k in fill.__dataclass_fields__
+                    if getattr(fill, k) is not None
+                }
+                fields["reason"] = fill.reason or "sell_into_strength"
+                journal.log("scale_out", **fields)
+                summary["scale_outs"] += 1
+                logger.info(
+                    "SCALE_OUT %s %s size=%.6f @ %.4f pnl=%.4f rem=%.6f "
+                    "stop→BE=%.4f tp=%.4f trade_id=%s",
+                    fill.symbol,
+                    fill.side,
+                    fill.size,
+                    fill.price,
+                    fill.pnl,
+                    fill.remaining_size or 0.0,
+                    fill.stop_price or 0.0,
+                    fill.take_profit or 0.0,
+                    fill.trade_id,
+                )
+                if live is not None:
+                    try:
+                        # Best-effort reduce-only partial (exchange may net legs)
+                        live.market_close(symbol, size=fill.size)
+                        rem = broker.get_position_by_id(fill.trade_id)
+                        if rem is not None:
+                            is_buy = rem.side == "short"  # stop closes long → sell
+                            live.set_stop_loss(
+                                symbol,
+                                is_buy=is_buy,
+                                size=rem.size,
+                                trigger_px=rem.stop_price,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "LIVE scale-out/BE stop failed for %s", symbol
+                        )
+
+            # 2) Full stop / TP on remaining (and unscaled) size
             for fill in broker.check_stops(mark, symbol=symbol):
                 risk.record_trade_close(fill.pnl)
                 journal.log(
@@ -234,11 +309,12 @@ def run_bot(
                     **{k: getattr(fill, k) for k in fill.__dataclass_fields__},
                 )
                 summary["closes"] += 1
-                if fill.reason == "stop":
+                if fill.reason in ("stop", "breakeven_stop"):
                     last_stop_ts[symbol] = time.time()
                     logger.info(
-                        "[%s] stop-out — entry cooldown %ss",
+                        "[%s] %s — entry cooldown %ss",
                         symbol,
+                        fill.reason,
                         settings.entry_cooldown_sec,
                     )
                 if live is not None:

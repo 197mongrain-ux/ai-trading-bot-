@@ -177,7 +177,7 @@
         "<tr>" +
         "<td>" + (p.symbol || "—") + "</td>" +
         '<td class="side-' + side + '">' + (side || "—") + "</td>" +
-        "<td>" + fmtSz(p.size) + "</td>" +
+        "<td>" + fmtSz(p.size) + (p.scaled ? ' <span class="muted">scaled</span>' : "") + "</td>" +
         "<td>" + fmtPx(p.entry) + "</td>" +
         "<td>" + fmtPx(p.stop) + "</td>" +
         "<td>" + fmtPx(p.tp) + "</td>" +
@@ -205,9 +205,11 @@
       const ev = t.event || "";
       const side = (t.side || "").toLowerCase();
       let right = "";
-      if (ev === "close" && t.pnl != null) {
+      if ((ev === "close" || ev === "scale_out") && t.pnl != null) {
         right = '<span class="pnl ' + pnlClass(t.pnl) + '">' + fmtUsd(t.pnl) + "</span>";
         if (t.reason) right += ' <span class="muted">' + t.reason + "</span>";
+        if (ev === "scale_out" && t.remaining_size != null)
+          right += ' <span class="muted">rem ' + fmtSz(t.remaining_size) + "</span>";
       } else if (ev === "open") {
         right = '<span class="muted">stop ' + fmtPx(t.stop) + " · tp " + fmtPx(t.tp) + "</span>";
       }

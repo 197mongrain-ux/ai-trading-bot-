@@ -21,6 +21,7 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
 - Stub `strategy/ai_signal.py` (unused by default)
 - Hard risk limits shared across symbols (daily loss, drawdown kill switch, consecutive-loss pause)
 - Position size from **dollar risk ÷ stop distance** (leverage is exchange margin / notional ceiling only)
+- **Sell into strength (scale-out)** — at `SCALE_OUT_R` (default 1.0R) close `SCALE_OUT_PCT` (default 50%) of each leg, move stop to breakeven ± `BE_BUFFER_BPS`, leave runner to original TP (or optional `RUNNER_TP_R`). Shorts mirror. Paper-first; LIVE is best-effort reduce-only under exchange netting.
 - JSONL trade journal
 - **Live local dashboard** — TradingView + tape + positions (`python -m hl_bot dashboard`)
 
@@ -158,6 +159,11 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `ENTRY_COOLDOWN_SEC` | `120` | Block re-entry after stop-out (same symbol) |
 | `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` (prefer OTE in zone) |
 | `OTE_LOOKBACK_BARS` | `45` | Impulse swing lookback (1m or HTF) |
+| `SCALE_OUT_ENABLED` | `true` | Sell into strength at `SCALE_OUT_R` |
+| `SCALE_OUT_R` | `1.0` | Unrealized R to scale out |
+| `SCALE_OUT_PCT` | `0.5` | Fraction of size to close (50%) |
+| `BE_BUFFER_BPS` | `2` | BE stop buffer (favorable direction) |
+| `RUNNER_TP_R` | _(unset)_ | Optional retarget of remainder TP |
 
 **SL/TP example (BTC @ 86 000):**  
 stop = `86000 × (1 − 0.0015)` = **85 871** (−0.15%).  
@@ -273,6 +279,7 @@ tests/
 - LIVE order helpers depend on `hyperliquid-python-sdk` versions; always verify on testnet.
 - Equity (paper) = cash + sum of mark-to-market on **all** open positions (every `trade_id`).
 - Paper positions are a dict keyed by `trade_id`; the same symbol may appear multiple times with independent stops/TP.
+- Scale-out is paper-authoritative; LIVE reduce-only partials are best-effort under exchange netting.
 
 ## License / disclaimer
 
