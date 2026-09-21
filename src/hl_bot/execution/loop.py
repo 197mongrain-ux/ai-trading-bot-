@@ -58,7 +58,14 @@ def run_bot(
 
     mode = "LIVE" if settings.is_live else "PAPER"
     symbols = tuple(settings.symbols)
-    logger.info("Starting hl_bot in %s mode | symbols=%s", mode, ",".join(symbols))
+    logger.info(
+        "Starting hl_bot in %s mode | symbols=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d",
+        mode,
+        ",".join(symbols),
+        settings.stop_pct,
+        settings.leverage,
+        settings.breakout_bars,
+    )
 
     if settings.is_live:
         from hl_bot.exchange.live_exchange import LiveExchange
@@ -88,12 +95,23 @@ def run_bot(
     )
     strategy = VwapTrendScalp(
         buffer_bps=settings.vwap_buffer_bps,
-        stop_buffer_bps=settings.stop_buffer_bps,
+        stop_pct=settings.stop_pct,
         tp_r_multiple=settings.tp_r_multiple,
         reset_utc_hour=settings.vwap_reset_utc_hour,
+        breakout_bars=settings.breakout_bars,
+        min_stop_pct=settings.min_stop_pct,
+        max_stop_pct=settings.max_stop_pct,
     )
     journal = TradeJournal(settings.journal_path)
-    journal.log("start", mode=mode, equity=settings.starting_equity, symbols=list(symbols))
+    journal.log(
+        "start",
+        mode=mode,
+        equity=settings.starting_equity,
+        symbols=list(symbols),
+        stop_pct=settings.stop_pct,
+        leverage=settings.leverage,
+        breakout_bars=settings.breakout_bars,
+    )
 
     iterations = 0
     summary: dict = {"mode": mode, "opens": 0, "closes": 0, "halted": False, "symbols": list(symbols)}
@@ -169,7 +187,7 @@ def run_bot(
         # Refresh equity after any closes
         equity = broker.equity_mark_to_market(marks=marks)
 
-        # New entries per symbol (independent positions)
+        # New entries per symbol (independent positions); re-entry after close OK
         if not risk.killed and not risk.halted_daily_loss:
             for symbol in symbols:
                 if broker.has_position_for(symbol):
@@ -214,19 +232,23 @@ def run_bot(
                     stop=signal.stop,
                     tp=signal.take_profit,
                     vwap=signal.vwap,
+                    stop_pct=settings.stop_pct,
+                    leverage=settings.leverage,
                     dollar_risk=decision.dollar_risk,
                     trade_id=fill.trade_id,
                 )
                 summary["opens"] += 1
                 logger.info(
-                    "OPEN %s %s size=%.6f @ %.4f stop=%.4f tp=%.4f vwap=%.4f",
+                    "OPEN %s %s size=%.6f @ %.4f stop=%.4f (%.2f bps) tp=%.4f vwap=%.4f lev=%sx",
                     symbol,
                     signal.side,
                     decision.size,
                     mark,
                     signal.stop,
+                    settings.stop_pct * 10_000.0,
                     signal.take_profit,
                     signal.vwap,
+                    settings.leverage,
                 )
                 if live is not None:
                     try:

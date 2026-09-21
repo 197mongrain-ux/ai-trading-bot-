@@ -1,4 +1,4 @@
-# hl-bot — Hyperliquid Multi-Symbol Perpetual Trading Bot
+# hl-bot — Hyperliquid Multi-Symbol SCALP Bot
 
 Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hyperliquid.xyz). Default mode is **PAPER** (simulated fills at mark/mid). **LIVE** trading is gated and disabled unless you explicitly opt in.
 
@@ -7,15 +7,24 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
 ## Features
 
 - **Multi-symbol** — trade `BTC`, `SOL`, and `XRP` (Hyperliquid bare coin names) with independent paper/live positions
-- **Strategy v1 — VWAP trend scalp** (same rules on every symbol)
-  - Session VWAP resets at UTC 00:00 (configurable via `VWAP_RESET_UTC_HOUR`)
-  - Long when mark/mid is above VWAP + small buffer; short when below
-  - **Stop just beyond VWAP** (slightly on the far side of VWAP from entry, plus `STOP_BUFFER_BPS`)
-  - Take-profit at an R-multiple of risk (default **2.0**, configurable **1–3**)
+- **Strategy — VWAP bias + micro breakout scalp** (same rules on every symbol)
+  - Session VWAP resets at UTC 00:00 (configurable via `VWAP_RESET_UTC_HOUR`) — **bias only**
+  - Long only if mark > VWAP (+ optional `VWAP_BUFFER_BPS`); short only if mark < VWAP (− buffer)
+  - Entry on **1m bars**: break of prior **N**-bar high (long) / low (short). Default `BREAKOUT_BARS=3`
+  - **Fixed percent stop from entry** — default **0.15%** (`STOP_PCT=0.0015`). **Not** placed at VWAP
+  - Take-profit at an R-multiple of that tight stop (default **2.0**, configurable **1–3**)
 - Stub `strategy/ai_signal.py` (unused by default)
-- Hard risk limits shared across symbols (daily loss, drawdown kill switch, trade caps, consecutive-loss pause)
-- Position size from **dollar risk ÷ stop distance** (leverage is a notional ceiling only)
+- Hard risk limits shared across symbols (daily loss, drawdown kill switch, consecutive-loss pause)
+- Position size from **dollar risk ÷ stop distance** (leverage is exchange margin / notional ceiling only)
 - JSONL trade journal
+
+### Scalp vs old wide VWAP stops
+
+Older versions placed the stop just beyond session VWAP. When price was far from VWAP that made stops **very wide**, so position size shrank and R-multiples were unrealistic for scalps.
+
+This version keeps VWAP for **direction bias only**. The stop is a **tight fixed %** from entry (default 0.15%). That is the intended scalp behavior for liquid BTC/SOL/XRP perps.
+
+**Warning on `LEVERAGE=20`:** High leverage is for **margin efficiency** with tiny stops — it does **not** mean “risk 20× equity.” Dollar risk per trade is still `RISK_PER_TRADE` (default 0.5%). 20× only lets the exchange hold the notional that risk-based sizing already chose without over-margining.
 
 ## Watching on TradingView
 
@@ -84,7 +93,7 @@ python -m hl_bot run
 python -m hl_bot run --max-iterations 3
 ```
 
-PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark/mid from the Info API (or injected bars in tests). Each loop iteration fetches mark + candles and runs VWAP independently per configured symbol.
+PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark/mid from the Info API (or injected bars in tests). Each loop iteration fetches mark + candles and runs the scalp independently per configured symbol. After a close, **re-entry is allowed** on the next signal (one position max per symbol).
 
 ### Example defaults (~$5k equity)
 
@@ -94,14 +103,21 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `MAX_OPEN_POSITIONS` | `3` | One per symbol by default |
 | `STARTING_EQUITY` | `5000` | Paper account equity |
 | `RISK_PER_TRADE` | `0.005` | 0.5% → $25 risk on $5k |
-| `LEVERAGE` | `5` | Cap only; size from stop distance |
-| `TP_R_MULTIPLE` | `2.0` | TP at 2R |
+| `STOP_PCT` | `0.0015` | 0.15% stop from entry |
+| `BREAKOUT_BARS` | `3` | Prior N 1m bars for breakout |
+| `VWAP_BUFFER_BPS` | `0` | Bias-only (optional e.g. 2) |
+| `LEVERAGE` | `20` | Margin / notional ceiling — not sizing |
+| `TP_R_MULTIPLE` | `2.0` | TP at 2R from stop distance |
 | `MAX_DAILY_LOSS_PCT` | `0.03` | Flatten + halt until next UTC day |
 | `MAX_DRAWDOWN_PCT` | `0.08` | Kill switch from high-water mark |
-| `MAX_TRADES_PER_DAY` | `20` | Hard cap (total across symbols) |
+| `MAX_TRADES_PER_DAY` | `0` | **0 = unlimited** count; set e.g. 500 to cap |
 | `MAX_CONSECUTIVE_LOSSES` | `3` | Pause new entries |
 
-**Sizing example:** equity $5 000, risk 0.5% → $25. Entry 50 000, stop 49 900 → distance $100 → size **0.25 BTC**. Leverage does not increase that size; it only caps max notional at `equity × leverage`.
+**SL/TP example (BTC @ 86 000):**  
+stop = `86000 × (1 − 0.0015)` = **85 871** (−0.15%).  
+TP at 2R = `86000 + 2 × 129` = **86 258** (+0.30%).
+
+**Sizing example:** equity $5 000, risk 0.5% → $25. Entry 86 000, stop 85 871 → distance $129 → size ≈ **0.194 BTC**. Leverage does not increase that size; it only caps max notional at `equity × leverage` and sets exchange margin.
 
 ## LIVE mode (gated)
 
@@ -113,9 +129,10 @@ HL_PRIVATE_KEY=0x...          # API wallet key
 HL_ACCOUNT_ADDRESS=0x...      # optional master address if using agent
 HL_NETWORK=mainnet            # or testnet
 SYMBOLS=BTC,SOL,XRP
+LEVERAGE=20
 ```
 
-Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/stop orders are placed **per symbol** the same way as paper.
+Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/stop orders are placed **per symbol** the same way as paper. `update_leverage(20, coin)` is called before market open.
 
 ### Hyperliquid API wallet notes
 
@@ -130,18 +147,17 @@ Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/
 - Max daily loss **3%** of day-start equity → flatten all + no new entries until next UTC day
 - Max drawdown **8%** from high-water mark → kill switch
 - Risk per trade default **0.5%** (range **0.25–0.5%**)
-- Max **20** trades/day **total** (all symbols)
+- **Daily trade count:** `MAX_TRADES_PER_DAY=0` means **no count limit** (default). Activity is still limited by entry rules, daily loss, DD, open-position caps, and consecutive-loss pause. Set a positive number (e.g. `500`) if you want a hard cap.
 - Pause after **3** consecutive losses
 - Max open positions = `MAX_OPEN_POSITIONS` (default = number of symbols)
-- **One position max per symbol** — no averaging down
-- Stop **required**
+- **One position max per symbol** — no averaging down; re-entry after close when rules fire again
+- Stop **required** (fixed % from entry)
 - Kill switch: env `KILL_SWITCH=1` or file `.killswitch`
 
-### Stop placement (VWAP scalp)
+### Stop placement (scalp)
 
-For a **long**, stop sits just **below** session VWAP (VWAP − `STOP_BUFFER_BPS`).  
-For a **short**, stop sits just **above** VWAP (VWAP + buffer).  
-That way a reclaim/reject of VWAP invalidates the scalp. TP is entry ± `TP_R_MULTIPLE × R`.
+Stop = entry × (1 ± `STOP_PCT`). VWAP is **not** used for stop placement.  
+TP = entry ± `TP_R_MULTIPLE ×` stop distance.
 
 ## Tests
 
@@ -149,23 +165,23 @@ That way a reclaim/reject of VWAP invalidates the scalp. TP is entry ± `TP_R_MU
 pytest -q
 ```
 
-All unit tests are offline (no network).
+All unit tests are offline (no network). Inject bars for breakout cases in strategy tests.
 
 ## Project layout
 
 ```
 src/hl_bot/
-  config.py              # env-based settings (SYMBOLS / SYMBOL)
+  config.py              # env-based settings (SYMBOLS / SYMBOL / STOP_PCT / …)
   journal.py             # JSONL trade log
   __main__.py            # python -m hl_bot run
   exchange/
     info_client.py       # mark/mid + candles wrapper
     paper_broker.py      # multi-symbol simulated fills at mark
-    live_exchange.py     # LIVE only
+    live_exchange.py     # LIVE only (update_leverage + orders)
   risk/manager.py        # sizing + hard limits (shared)
   strategy/
     base.py              # Strategy protocol
-    vwap.py              # VWAP trend scalp
+    vwap.py              # VWAP bias + micro breakout scalp
     ai_signal.py         # stub (unused)
   execution/loop.py      # main loop (per-symbol)
 tests/

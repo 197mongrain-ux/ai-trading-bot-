@@ -16,6 +16,20 @@ def test_size_from_dollar_risk_not_leverage():
     assert d.dollar_risk == pytest.approx(25.0)
 
 
+def test_tight_scalp_stop_sizing_with_20x():
+    """0.15% stop at BTC 86k: size from $ risk, 20x only caps notional."""
+    rm = RiskManager(starting_equity=5000.0, risk_per_trade=0.005, leverage=20)
+    entry = 86_000.0
+    stop = entry * (1.0 - 0.0015)  # 85_871
+    d = rm.size_position(5000.0, entry, stop)
+    assert d.allowed
+    # dollar risk 25 / stop_dist 129 → size ≈ 0.1938 BTC
+    stop_dist = entry - stop
+    assert d.size == pytest.approx(25.0 / stop_dist)
+    # notional ≈ 16_666 < equity*20=100_000 → no leverage cap trim
+    assert d.size * entry < 5000.0 * 20
+
+
 def test_leverage_caps_notional_not_risk_driver():
     rm = RiskManager(starting_equity=5000.0, risk_per_trade=0.005, leverage=1)
     # Without cap: size = 25/100 = 0.25 → notional 12_500 > equity*1=5000
@@ -52,12 +66,20 @@ def test_max_drawdown_kills():
     assert "kill" in reason.lower() or rm.killed
 
 
-def test_max_trades_per_day():
+def test_max_trades_per_day_when_capped():
     rm = RiskManager(starting_equity=5000.0, max_trades_per_day=2)
     rm.trades_today = 2
     d = rm.allow_entry(5000.0, 50_000.0, 49_900.0)
     assert not d.allowed
     assert "trades/day" in d.reason.lower()
+
+
+def test_max_trades_per_day_zero_is_unlimited():
+    """MAX_TRADES_PER_DAY=0 disables the count cap."""
+    rm = RiskManager(starting_equity=5000.0, max_trades_per_day=0)
+    rm.trades_today = 500
+    d = rm.allow_entry(5000.0, 50_000.0, 49_900.0)
+    assert d.allowed
 
 
 def test_consecutive_losses_pause():

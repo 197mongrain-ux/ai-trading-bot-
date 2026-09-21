@@ -39,8 +39,12 @@ class LiveExchange:
             self.account_address,
         )
 
-    def market_open(self, coin: str, is_buy: bool, size: float, leverage: int = 5) -> Any:
-        """Place a market-style order (IOC / aggressive limit via SDK helpers)."""
+    def market_open(self, coin: str, is_buy: bool, size: float, leverage: int = 20) -> Any:
+        """Place a market-style order (IOC / aggressive limit via SDK helpers).
+
+        Leverage is set on the exchange for margin efficiency; position size
+        is still chosen by the risk manager from dollar risk / stop distance.
+        """
         logger.warning(
             "LIVE ORDER: %s %s size=%.6f lev=%sx",
             "BUY" if is_buy else "SELL",
@@ -48,7 +52,7 @@ class LiveExchange:
             size,
             leverage,
         )
-        # Update leverage first
+        # Update leverage first (cross margin)
         try:
             self._exchange.update_leverage(leverage, coin, is_cross=True)
         except Exception as exc:

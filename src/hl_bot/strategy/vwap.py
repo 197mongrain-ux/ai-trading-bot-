@@ -1,4 +1,8 @@
-"""Session VWAP trend scalp strategy."""
+"""Session VWAP bias + micro breakout scalp strategy.
+
+VWAP is used for directional bias only. Stops are a fixed percent from entry
+(not placed at VWAP). Entries require a break of the prior N-bar high/low.
+"""
 
 from __future__ import annotations
 
@@ -58,24 +62,63 @@ def session_vwap(
     return None
 
 
-class VwapTrendScalp:
-    """Long when mark > VWAP + buffer; short when mark < VWAP - buffer.
+def prior_n_bar_high_low(
+    bars: list[dict[str, float]], n: int
+) -> tuple[float | None, float | None]:
+    """High/low of the prior N completed bars (excludes the latest bar)."""
+    if n < 1 or len(bars) < n + 1:
+        return None, None
+    window = bars[-(n + 1) : -1]
+    highs = [float(b.get("h", b.get("c", 0))) for b in window]
+    lows = [float(b.get("l", b.get("c", 0))) for b in window]
+    if not highs or not lows:
+        return None, None
+    return max(highs), min(lows)
 
-    Stop is placed just beyond VWAP (on the other side of VWAP from entry),
-    with an optional extra buffer in bps. TP at R-multiple of risk.
+
+class VwapTrendScalp:
+    """VWAP-bias + micro breakout scalp with fixed-percent stop.
+
+    Bias (VWAP only):
+      - long only if mark > session VWAP + buffer
+      - short only if mark < session VWAP - buffer
+      Buffer defaults to 0 bps (optional small bias buffer).
+
+    Entry (1m bars): break of prior N-bar high (long) / low (short). Default N=3.
+
+    Stop: FIXED percent from entry (default 0.15%). NOT at VWAP.
+    TP: TP_R_MULTIPLE * stop distance (default 2.0R).
+
+    Optional max_stop_pct skips signals whose stop would exceed that cap
+    (redundant when stop_pct is already the fixed distance, but kept for safety).
     """
 
     def __init__(
         self,
-        buffer_bps: float = 5.0,
-        stop_buffer_bps: float = 2.0,
+        buffer_bps: float = 0.0,
+        stop_pct: float = 0.0015,
         tp_r_multiple: float = 2.0,
         reset_utc_hour: int = 0,
+        breakout_bars: int = 3,
+        min_stop_pct: float = 0.0,
+        max_stop_pct: float | None = None,
+        # Deprecated: ignored — stop is no longer placed at VWAP
+        stop_buffer_bps: float = 0.0,
     ):
         self.buffer_bps = buffer_bps
-        self.stop_buffer_bps = stop_buffer_bps
+        self.stop_pct = stop_pct
         self.tp_r_multiple = tp_r_multiple
         self.reset_utc_hour = reset_utc_hour
+        self.breakout_bars = breakout_bars
+        self.min_stop_pct = min_stop_pct
+        self.max_stop_pct = max_stop_pct
+        self.stop_buffer_bps = stop_buffer_bps  # retained for backward compat; unused
+
+    def _stop_distance(self, entry: float) -> float:
+        dist = entry * self.stop_pct
+        if self.min_stop_pct > 0:
+            dist = max(dist, entry * self.min_stop_pct)
+        return dist
 
     def on_bar(
         self,
@@ -92,24 +135,43 @@ class VwapTrendScalp:
             return Signal("flat", mark, 0.0, 0.0, vwap, reason="already_in")
 
         buf = vwap * (self.buffer_bps / 10_000.0)
-        stop_buf = vwap * (self.stop_buffer_bps / 10_000.0)
+        prior_high, prior_low = prior_n_bar_high_low(bars, self.breakout_bars)
 
+        # Effective stop pct for max-skip check
+        eff_stop_pct = self.stop_pct
+        if self.min_stop_pct > 0:
+            eff_stop_pct = max(eff_stop_pct, self.min_stop_pct)
+        if self.max_stop_pct is not None and eff_stop_pct > self.max_stop_pct:
+            return Signal("flat", mark, 0.0, 0.0, vwap, reason="stop_exceeds_max")
+
+        # Long: above VWAP bias + break of prior N-bar high
         if mark > vwap + buf:
-            # Long: stop just below VWAP
-            stop = vwap - stop_buf
-            risk = mark - stop
+            if prior_high is None or mark <= prior_high:
+                return Signal(
+                    "flat", mark, 0.0, 0.0, vwap, reason="no_breakout_long"
+                )
+            risk = self._stop_distance(mark)
             if risk <= 0:
                 return Signal("flat", mark, 0.0, 0.0, vwap, reason="bad_risk")
+            stop = mark - risk
             tp = mark + risk * self.tp_r_multiple
-            return Signal("long", mark, stop, tp, vwap, reason="above_vwap")
+            return Signal(
+                "long", mark, stop, tp, vwap, reason="vwap_bias_breakout_long"
+            )
 
+        # Short: below VWAP bias + break of prior N-bar low
         if mark < vwap - buf:
-            # Short: stop just above VWAP
-            stop = vwap + stop_buf
-            risk = stop - mark
+            if prior_low is None or mark >= prior_low:
+                return Signal(
+                    "flat", mark, 0.0, 0.0, vwap, reason="no_breakout_short"
+                )
+            risk = self._stop_distance(mark)
             if risk <= 0:
                 return Signal("flat", mark, 0.0, 0.0, vwap, reason="bad_risk")
+            stop = mark + risk
             tp = mark - risk * self.tp_r_multiple
-            return Signal("short", mark, stop, tp, vwap, reason="below_vwap")
+            return Signal(
+                "short", mark, stop, tp, vwap, reason="vwap_bias_breakout_short"
+            )
 
         return Signal("flat", mark, 0.0, 0.0, vwap, reason="inside_buffer")

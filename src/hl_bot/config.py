@@ -63,14 +63,22 @@ class Settings:
     risk_per_trade: float = 0.005
     max_daily_loss_pct: float = 0.03
     max_drawdown_pct: float = 0.08
-    max_trades_per_day: int = 20
+    # 0 = unlimited daily trade count (strategy + other risk rules still apply)
+    max_trades_per_day: int = 0
     max_consecutive_losses: int = 3
-    leverage: int = 5
+    leverage: int = 20
     tp_r_multiple: float = 2.0
-    vwap_buffer_bps: float = 5.0
+    # Bias-only: distance above/below VWAP required for long/short direction
+    vwap_buffer_bps: float = 0.0
     vwap_reset_utc_hour: int = 0
     loop_interval_sec: float = 5.0
-    stop_buffer_bps: float = 2.0
+    # Fixed percent stop from entry (NOT at VWAP). 0.0015 = 0.15%
+    stop_pct: float = 0.0015
+    breakout_bars: int = 3
+    min_stop_pct: float = 0.0
+    max_stop_pct: float | None = None
+    # Deprecated: previously used for stop-at-VWAP; ignored by strategy
+    stop_buffer_bps: float = 0.0
 
     journal_path: str = "logs/trades.jsonl"
     killswitch_file: str = ".killswitch"
@@ -105,6 +113,15 @@ class Settings:
             raise ValueError(f"TP_R_MULTIPLE={self.tp_r_multiple} must be in [1, 3].")
         if self.leverage < 1 or self.leverage > 20:
             raise ValueError(f"LEVERAGE={self.leverage} must be in [1, 20].")
+        if self.stop_pct <= 0:
+            raise ValueError(f"STOP_PCT={self.stop_pct} must be > 0.")
+        if self.breakout_bars < 1:
+            raise ValueError(f"BREAKOUT_BARS={self.breakout_bars} must be >= 1.")
+        if self.max_trades_per_day < 0:
+            raise ValueError(
+                f"MAX_TRADES_PER_DAY={self.max_trades_per_day} must be >= 0 "
+                "(0 = unlimited)."
+            )
         if self.is_live and not self.private_key:
             raise ValueError("LIVE mode requires HL_PRIVATE_KEY.")
 
@@ -126,6 +143,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     # MAX_OPEN_POSITIONS defaults to number of configured symbols
     max_open = _int("MAX_OPEN_POSITIONS", len(symbols))
 
+    max_stop_raw = os.getenv("MAX_STOP_PCT")
+    max_stop: float | None
+    if max_stop_raw is not None and max_stop_raw.strip():
+        max_stop = float(max_stop_raw)
+    else:
+        max_stop = None
+
     settings = Settings(
         trading_mode=os.getenv("TRADING_MODE", "paper").strip().lower(),
         i_understand_live_trading=_bool("I_UNDERSTAND_LIVE_TRADING", False),
@@ -141,14 +165,18 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         risk_per_trade=_float("RISK_PER_TRADE", 0.005),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.03),
         max_drawdown_pct=_float("MAX_DRAWDOWN_PCT", 0.08),
-        max_trades_per_day=_int("MAX_TRADES_PER_DAY", 20),
+        max_trades_per_day=_int("MAX_TRADES_PER_DAY", 0),
         max_consecutive_losses=_int("MAX_CONSECUTIVE_LOSSES", 3),
-        leverage=_int("LEVERAGE", 5),
+        leverage=_int("LEVERAGE", 20),
         tp_r_multiple=_float("TP_R_MULTIPLE", 2.0),
-        vwap_buffer_bps=_float("VWAP_BUFFER_BPS", 5.0),
+        vwap_buffer_bps=_float("VWAP_BUFFER_BPS", 0.0),
         vwap_reset_utc_hour=_int("VWAP_RESET_UTC_HOUR", 0),
         loop_interval_sec=_float("LOOP_INTERVAL_SEC", 5.0),
-        stop_buffer_bps=_float("STOP_BUFFER_BPS", 2.0),
+        stop_pct=_float("STOP_PCT", 0.0015),
+        breakout_bars=_int("BREAKOUT_BARS", 3),
+        min_stop_pct=_float("MIN_STOP_PCT", 0.0),
+        max_stop_pct=max_stop,
+        stop_buffer_bps=_float("STOP_BUFFER_BPS", 0.0),
         journal_path=os.getenv("JOURNAL_PATH", "logs/trades.jsonl"),
         killswitch_file=os.getenv("KILLSWITCH_FILE", ".killswitch"),
     )

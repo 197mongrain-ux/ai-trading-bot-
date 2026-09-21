@@ -40,6 +40,16 @@ def test_default_symbols():
     assert s.max_open_positions == 3
 
 
+def test_default_scalp_knobs():
+    s = Settings()
+    assert s.leverage == 20
+    assert s.stop_pct == pytest.approx(0.0015)
+    assert s.breakout_bars == 3
+    assert s.tp_r_multiple == pytest.approx(2.0)
+    assert s.vwap_buffer_bps == pytest.approx(0.0)
+    assert s.max_trades_per_day == 0  # unlimited
+
+
 def test_parse_symbols_from_env(monkeypatch):
     monkeypatch.setenv("SYMBOLS", "btc, sol ,xrp")
     monkeypatch.delenv("SYMBOL", raising=False)
@@ -65,7 +75,28 @@ def test_load_settings_symbols(monkeypatch, tmp_path):
     monkeypatch.delenv("MAX_OPEN_POSITIONS", raising=False)
     # Avoid leftover env noise for risk range
     monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.delenv("LEVERAGE", raising=False)
+    monkeypatch.delenv("STOP_PCT", raising=False)
+    monkeypatch.delenv("MAX_TRADES_PER_DAY", raising=False)
     s = load_settings()
     assert s.symbols == ("BTC", "SOL")
     assert s.symbol == "BTC"
     assert s.max_open_positions == 2  # defaults to len(symbols)
+    assert s.leverage == 20
+    assert s.stop_pct == pytest.approx(0.0015)
+    assert s.max_trades_per_day == 0
+
+
+def test_load_settings_scalp_env(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("STOP_PCT", "0.002")
+    monkeypatch.setenv("BREAKOUT_BARS", "5")
+    monkeypatch.setenv("LEVERAGE", "20")
+    monkeypatch.setenv("VWAP_BUFFER_BPS", "2")
+    monkeypatch.setenv("MAX_TRADES_PER_DAY", "0")
+    s = load_settings()
+    assert s.stop_pct == pytest.approx(0.002)
+    assert s.breakout_bars == 5
+    assert s.vwap_buffer_bps == pytest.approx(2.0)
+    assert s.max_trades_per_day == 0

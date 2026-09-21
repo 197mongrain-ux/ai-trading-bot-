@@ -19,18 +19,22 @@ class RiskManager:
     """Enforces daily loss, drawdown, trade caps, consecutive losses, sizing.
 
     Shared across all symbols. Position size is ALWAYS derived from
-    dollar risk / stop distance — leverage is a config ceiling only,
-    never the sizing driver. Max one position per symbol (enforced by
-    caller via has_open_position); max_open_positions caps total.
+    dollar risk / stop distance — leverage is a config ceiling only
+    (exchange margin setting), never the sizing driver. Max one position
+    per symbol (enforced by caller via has_open_position); max_open_positions
+    caps total.
+
+    max_trades_per_day: 0 means unlimited (no count cap). Strategy entry
+    rules + daily loss / DD / consecutive-loss still apply.
     """
 
     starting_equity: float
     risk_per_trade: float = 0.005
     max_daily_loss_pct: float = 0.03
     max_drawdown_pct: float = 0.08
-    max_trades_per_day: int = 20
+    max_trades_per_day: int = 0  # 0 = unlimited
     max_consecutive_losses: int = 3
-    leverage: int = 5
+    leverage: int = 20
     kill_switch: bool = False
     max_open_positions: int = 3
 
@@ -145,7 +149,8 @@ class RiskManager:
             return RiskDecision(False, "max daily loss reached — halted until next UTC day")
         if self.pause_entries:
             return RiskDecision(False, "paused after consecutive losses")
-        if self.trades_today >= self.max_trades_per_day:
+        # 0 = unlimited daily trade count
+        if self.max_trades_per_day > 0 and self.trades_today >= self.max_trades_per_day:
             return RiskDecision(False, "max trades/day reached")
         # No averaging down on the same symbol
         if has_open_position:
