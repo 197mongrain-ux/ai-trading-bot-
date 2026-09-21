@@ -17,6 +17,7 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
 - Hard risk limits shared across symbols (daily loss, drawdown kill switch, consecutive-loss pause)
 - Position size from **dollar risk ÷ stop distance** (leverage is exchange margin / notional ceiling only)
 - JSONL trade journal
+- **Live local dashboard** — TradingView + tape + positions (`python -m hl_bot dashboard`)
 
 ### Scalp vs old wide VWAP stops
 
@@ -159,6 +160,27 @@ Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/
 Stop = entry × (1 ± `STOP_PCT`). VWAP is **not** used for stop placement.  
 TP = entry ± `TP_R_MULTIPLE ×` stop distance.
 
+## Live dashboard (local command center)
+
+Axiom-style dark UI: TradingView chart (BTC / SOL / XRP Hyperliquid perps), live trade tape from the JSONL journal, open positions with optional mark uPnL, day/session stats, and a bot status strip.
+
+```bash
+# Terminal A — paper bot (writes logs/trades.jsonl)
+python -m hl_bot run
+
+# Terminal B — dashboard on http://127.0.0.1:8787/
+python -m hl_bot dashboard
+# equivalent:
+python -m dashboard
+```
+
+- URL: **http://127.0.0.1:8787/**
+- API: `GET /api/state` (polled every 2s by the page)
+- Journal: `JOURNAL_PATH` env (default `logs/trades.jsonl`, relative to the process cwd / project root)
+- Clear **PAPER** badge unless the latest journal `start` event has `mode=LIVE`
+- No secrets in the frontend; tape works offline even if TradingView needs network
+- Optional mark prices via Hyperliquid `allMids` (server-side `requests`; fails soft if offline)
+
 ## Tests
 
 ```bash
@@ -173,7 +195,7 @@ All unit tests are offline (no network). Inject bars for breakout cases in strat
 src/hl_bot/
   config.py              # env-based settings (SYMBOLS / SYMBOL / STOP_PCT / …)
   journal.py             # JSONL trade log
-  __main__.py            # python -m hl_bot run
+  __main__.py            # python -m hl_bot run | dashboard
   exchange/
     info_client.py       # mark/mid + candles wrapper
     paper_broker.py      # multi-symbol simulated fills at mark
@@ -184,6 +206,12 @@ src/hl_bot/
     vwap.py              # VWAP bias + micro breakout scalp
     ai_signal.py         # stub (unused)
   execution/loop.py      # main loop (per-symbol)
+src/dashboard/
+  state.py               # journal → open positions / stats / status
+  marks.py               # optional Hyperliquid allMids
+  app.py                 # FastAPI: GET / + GET /api/state
+  static/                # dark single-page UI
+  __main__.py            # python -m dashboard
 tests/
 ```
 

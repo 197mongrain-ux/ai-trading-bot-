@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>hl-bot · command center</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <div>
+        <div class="title">hl-bot command center</div>
+        <div class="sub">Hyperliquid scalp · local</div>
+      </div>
+    </div>
+    <div class="status-strip" id="statusStrip">
+      <span class="badge paper" id="modeBadge">PAPER</span>
+      <span class="pill" id="runningPill">—</span>
+      <span class="meta" id="lastEvent">last: —</span>
+      <span class="meta" id="symbolsMeta">symbols: —</span>
+    </div>
+    <div class="clock" id="clock"></div>
+  </header>
+
+  <main class="grid">
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <h2>Chart</h2>
+        <div class="sym-tabs" id="symTabs" role="tablist">
+          <button type="button" class="sym active" data-tv="HYPERLIQUID:BTCUSDC.P" data-coin="BTC">BTC</button>
+          <button type="button" class="sym" data-tv="HYPERLIQUID:SOLUSDC.P" data-coin="SOL">SOL</button>
+          <button type="button" class="sym" data-tv="HYPERLIQUID:XRPUSDC.P" data-coin="XRP">XRP</button>
+        </div>
+        <div class="interval-tabs">
+          <button type="button" class="iv active" data-iv="1">1m</button>
+          <button type="button" class="iv" data-iv="5">5m</button>
+        </div>
+      </div>
+      <div id="tvContainer" class="tv-wrap">
+        <div class="tv-offline">TradingView needs network. Tape / positions still work offline.</div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <div class="panel-head"><h2>Session / day</h2></div>
+        <div class="stats" id="stats">
+          <div class="stat"><span class="lbl">Day opens</span><span class="val" id="dayOpens">0</span></div>
+          <div class="stat"><span class="lbl">Day closes</span><span class="val" id="dayCloses">0</span></div>
+          <div class="stat"><span class="lbl">Day realized</span><span class="val" id="dayPnl">$0.00</span></div>
+          <div class="stat"><span class="lbl">Session opens</span><span class="val" id="sessOpens">0</span></div>
+          <div class="stat"><span class="lbl">Session closes</span><span class="val" id="sessCloses">0</span></div>
+          <div class="stat"><span class="lbl">Session realized</span><span class="val" id="sessPnl">$0.00</span></div>
+          <div class="stat"><span class="lbl">Open / uPnL</span><span class="val" id="openUpnl">0 / —</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Open positions</h2></div>
+        <div class="table-wrap">
+          <table class="tbl" id="posTable">
+            <thead>
+              <tr>
+                <th>Sym</th><th>Side</th><th>Size</th><th>Entry</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th>
+              </tr>
+            </thead>
+            <tbody id="posBody">
+              <tr class="empty"><td colspan="8">No open positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel tape-panel">
+        <div class="panel-head">
+          <h2>Trade tape</h2>
+          <span class="meta" id="tapeCount">0</span>
+        </div>
+        <div class="tape" id="tape">
+          <div class="empty">Waiting for journal events…</div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    Polling <code>/api/state</code> every 2s · no secrets in UI · journal-driven
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

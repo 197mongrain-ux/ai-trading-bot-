@@ -12,6 +12,9 @@ dependencies = [
     "hyperliquid-python-sdk>=0.7.0",
     "python-dotenv>=1.0.0",
     "eth-account>=0.10.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
@@ -19,9 +22,13 @@ dev = ["pytest>=7.4.0"]
 
 [project.scripts]
 hl-bot = "hl_bot.__main__:main"
+hl-dashboard = "dashboard.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dashboard = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
