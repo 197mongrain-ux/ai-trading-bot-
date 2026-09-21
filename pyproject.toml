@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hl-bot"
+version = "0.1.0"
+description = "Hyperliquid BTC perpetual trading bot (paper-first, LIVE gated)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "hyperliquid-python-sdk>=0.7.0",
+    "python-dotenv>=1.0.0",
+    "eth-account>=0.10.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0"]
+
+[project.scripts]
+hl-bot = "hl_bot.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
