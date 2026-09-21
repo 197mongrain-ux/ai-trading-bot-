@@ -13,6 +13,11 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
   - Entry on **1m bars**: break of prior **N**-bar high (long) / low (short). Default `BREAKOUT_BARS=3`
   - **Fixed percent stop from entry** — default **0.15%** (`STOP_PCT=0.0015`). **Not** placed at VWAP
   - Take-profit at an R-multiple of that tight stop (default **2.0**, configurable **1–3**)
+  - **Accuracy filters** (env-configurable; gate entries in `strategy.on_bar` before open):
+    1. **Volatility / noise** — skip if avg 1m range ≥ `MAX_RANGE_VS_STOP` × `STOP_PCT` (`vol_too_high`) or last bar > `MAX_BAR_RANGE_PCT` (`bar_too_wide`)
+    2. **Session (UTC)** — only enter when hour ∈ `TRADE_HOURS_UTC` (default `12-23` = 12:00–22:59 UTC; `0-24` / empty disables). Outside → `outside_session`
+    3. **HTF VWAP confirm** — long only if mark > 5m session VWAP; short only if below (`HTF_CONFIRM`, `HTF_INTERVAL`). Fail → `htf_vwap_block`
+    - Bonus: `ENTRY_COOLDOWN_SEC` (default 120) after a stop-out on the same symbol
 - Stub `strategy/ai_signal.py` (unused by default)
 - Hard risk limits shared across symbols (daily loss, drawdown kill switch, consecutive-loss pause)
 - Position size from **dollar risk ÷ stop distance** (leverage is exchange margin / notional ceiling only)
@@ -118,6 +123,13 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `MAX_DRAWDOWN_PCT` | `0.08` | Kill switch from high-water mark |
 | `MAX_TRADES_PER_DAY` | `0` | **0 = unlimited** count; set e.g. 500 to cap |
 | `MAX_CONSECUTIVE_LOSSES` | `3` | Pause new entries |
+| `MAX_RANGE_VS_STOP` | `1.0` | Skip if avg bar range ≥ this × `STOP_PCT` |
+| `VOL_LOOKBACK_BARS` | `5` | Bars for avg range |
+| `MAX_BAR_RANGE_PCT` | `0.003` | Skip if last bar wider than 0.3% (empty = off) |
+| `TRADE_HOURS_UTC` | `12-23` | UTC entry window, start incl. / end excl. (`0-24` = off) |
+| `HTF_CONFIRM` | `true` | Require 5m VWAP bias alignment |
+| `HTF_INTERVAL` | `5m` | HTF candle interval |
+| `ENTRY_COOLDOWN_SEC` | `120` | Block re-entry after stop-out (same symbol) |
 
 **SL/TP example (BTC @ 86 000):**  
 stop = `86000 × (1 − 0.0015)` = **85 871** (−0.15%).  
@@ -162,6 +174,7 @@ Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/
 - Each stacked entry still passes `allow_entry` with dollar risk; `open_position_count` is total opens across all
 - Stop **required** (fixed % from entry)
 - Kill switch: env `KILL_SWITCH=1` or file `.killswitch`
+- **Daily loss halt is in-memory:** restarting `python -m hl_bot run` clears it (new `RiskManager`). Optional `RESET_DAILY_RISK=1` journals a `risk_reset` event at start. UTC day boundary also clears via `maybe_roll_day`.
 
 ### Stop placement (scalp)
 
@@ -211,7 +224,8 @@ src/hl_bot/
   risk/manager.py        # sizing + hard limits (shared)
   strategy/
     base.py              # Strategy protocol
-    vwap.py              # VWAP bias + micro breakout scalp
+    vwap.py              # VWAP bias + micro breakout scalp + filters
+    filters.py           # vol / session / HTF / cooldown helpers
     ai_signal.py         # stub (unused)
   execution/loop.py      # main loop (per-symbol)
 src/dashboard/

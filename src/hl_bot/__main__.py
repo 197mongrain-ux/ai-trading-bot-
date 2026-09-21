@@ -55,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("PAPER mode — no live orders.", file=sys.stderr)
         print(f"Symbols: {', '.join(settings.symbols)}", file=sys.stderr)
+        print(
+            "Note: restarting this process clears in-memory daily loss halt / "
+            "consecutive-loss pause (fresh RiskManager). "
+            "Set RESET_DAILY_RISK=1 to also journal a risk_reset event.",
+            file=sys.stderr,
+        )
 
         run_bot(settings, max_iterations=args.max_iterations)
         return 0

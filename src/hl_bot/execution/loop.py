@@ -12,6 +12,7 @@ from hl_bot.exchange.info_client import InfoClient
 from hl_bot.exchange.paper_broker import PaperBroker
 from hl_bot.journal import TradeJournal
 from hl_bot.risk.manager import RiskManager
+from hl_bot.strategy.filters import cooldown_active
 from hl_bot.strategy.vwap import VwapTrendScalp
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,12 @@ def run_bot(
         breakout_bars=settings.breakout_bars,
         min_stop_pct=settings.min_stop_pct,
         max_stop_pct=settings.max_stop_pct,
+        max_range_vs_stop=settings.max_range_vs_stop,
+        vol_lookback_bars=settings.vol_lookback_bars,
+        max_bar_range_pct=settings.max_bar_range_pct,
+        trade_hours_utc=settings.trade_hours_utc,
+        htf_confirm=settings.htf_confirm,
+        htf_interval=settings.htf_interval,
     )
     journal = TradeJournal(settings.journal_path)
     journal.log(
@@ -129,7 +136,25 @@ def run_bot(
         breakout_bars=settings.breakout_bars,
         max_positions_per_symbol=settings.max_positions_per_symbol,
         max_open_positions=settings.max_open_positions,
+        trade_hours_utc=settings.trade_hours_utc,
+        htf_confirm=settings.htf_confirm,
+        entry_cooldown_sec=settings.entry_cooldown_sec,
     )
+    # Daily loss / consecutive-loss halt is in-memory: restarting `hl_bot run`
+    # always clears it (fresh RiskManager). Optional journal marker:
+    if settings.reset_daily_risk:
+        journal.log(
+            "risk_reset",
+            reason="RESET_DAILY_RISK=1 on process start",
+            day_start_equity=settings.starting_equity,
+        )
+        logger.info(
+            "RESET_DAILY_RISK=1 — journaled risk_reset; in-memory daily halt "
+            "is clear on every process start"
+        )
+
+    # Per-symbol last stop-out epoch (ENTRY_COOLDOWN_SEC)
+    last_stop_ts: dict[str, float] = {}
 
     iterations = 0
     summary: dict = {"mode": mode, "opens": 0, "closes": 0, "halted": False, "symbols": list(symbols)}
@@ -198,6 +223,13 @@ def run_bot(
                     **{k: getattr(fill, k) for k in fill.__dataclass_fields__},
                 )
                 summary["closes"] += 1
+                if fill.reason == "stop":
+                    last_stop_ts[symbol] = time.time()
+                    logger.info(
+                        "[%s] stop-out — entry cooldown %ss",
+                        symbol,
+                        settings.entry_cooldown_sec,
+                    )
                 if live is not None:
                     try:
                         # Best-effort: reduce by this fill's size (netting caveat)
@@ -222,10 +254,39 @@ def run_bot(
                 if mark is None:
                     continue
 
+                if cooldown_active(
+                    last_stop_ts.get(symbol),
+                    cooldown_sec=settings.entry_cooldown_sec,
+                ):
+                    logger.debug(
+                        "[%s] entry blocked: cooldown after stop-out", symbol
+                    )
+                    continue
+
                 bars = info.get_candles(symbol, interval="1m")
+                htf_bars = None
+                if settings.htf_confirm:
+                    try:
+                        htf_bars = info.get_candles(
+                            symbol, interval=settings.htf_interval
+                        )
+                    except Exception:
+                        logger.debug(
+                            "[%s] HTF candle fetch failed; strategy will "
+                            "aggregate from 1m",
+                            symbol,
+                            exc_info=True,
+                        )
+                        htf_bars = None
                 # Pass has_position=False so strategy can signal again while stacked
-                signal = strategy.on_bar(mark, bars, has_position=False)
+                signal = strategy.on_bar(
+                    mark, bars, has_position=False, htf_bars=htf_bars or None
+                )
                 if signal.side not in ("long", "short") or signal.stop <= 0:
+                    if signal.reason:
+                        logger.debug(
+                            "[%s] no entry: %s", symbol, signal.reason
+                        )
                     continue
 
                 decision = risk.allow_entry(

@@ -135,10 +135,10 @@ def test_btc_86000_sl_tp_math():
     """Example SL/TP at BTC 86000 with default 0.15% stop and 2R TP."""
     day = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
     t0 = day.timestamp() * 1000
-    # VWAP well below entry so bias is long; prior high broken
+    # Quiet bars (tight range) so vol filter does not block; VWAP below entry
     bars = [
-        _bar(t0 + i * 60_000, 85_000, 85_100, 84_900, 85_000, 10) for i in range(5)
-    ] + [_bar(t0 + 5 * 60_000, 86_000, 86_000, 85_900, 86_000, 10)]
+        _bar(t0 + i * 60_000, 85_000, 85_020, 84_980, 85_000, 10) for i in range(5)
+    ] + [_bar(t0 + 5 * 60_000, 86_000, 86_010, 85_990, 86_000, 10)]
     mark = 86_000.0
     strat = VwapTrendScalp(buffer_bps=0, stop_pct=0.0015, tp_r_multiple=2.0, breakout_bars=3)
     sig = strat.on_bar(mark, bars)

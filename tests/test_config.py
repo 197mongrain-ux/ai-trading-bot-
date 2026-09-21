@@ -123,3 +123,45 @@ def test_load_settings_zero_means_unlimited(monkeypatch):
     s = load_settings()
     assert s.max_positions_per_symbol == 0
     assert s.max_open_positions == 0
+
+
+def test_default_accuracy_filter_knobs():
+    s = Settings()
+    assert s.max_range_vs_stop == pytest.approx(1.0)
+    assert s.vol_lookback_bars == 5
+    assert s.max_bar_range_pct == pytest.approx(0.003)
+    assert s.trade_hours_utc == "12-23"
+    assert s.htf_confirm is True
+    assert s.htf_interval == "5m"
+    assert s.entry_cooldown_sec == pytest.approx(120.0)
+    assert s.reset_daily_risk is False
+
+
+def test_load_settings_accuracy_filters(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("MAX_RANGE_VS_STOP", "1.5")
+    monkeypatch.setenv("VOL_LOOKBACK_BARS", "8")
+    monkeypatch.setenv("MAX_BAR_RANGE_PCT", "0.005")
+    monkeypatch.setenv("TRADE_HOURS_UTC", "0-24")
+    monkeypatch.setenv("HTF_CONFIRM", "false")
+    monkeypatch.setenv("HTF_INTERVAL", "15m")
+    monkeypatch.setenv("ENTRY_COOLDOWN_SEC", "60")
+    monkeypatch.setenv("RESET_DAILY_RISK", "1")
+    s = load_settings()
+    assert s.max_range_vs_stop == pytest.approx(1.5)
+    assert s.vol_lookback_bars == 8
+    assert s.max_bar_range_pct == pytest.approx(0.005)
+    assert s.trade_hours_utc == "0-24"
+    assert s.htf_confirm is False
+    assert s.htf_interval == "15m"
+    assert s.entry_cooldown_sec == pytest.approx(60.0)
+    assert s.reset_daily_risk is True
+
+
+def test_load_settings_max_bar_range_empty_disables(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("MAX_BAR_RANGE_PCT", "")
+    s = load_settings()
+    assert s.max_bar_range_pct is None

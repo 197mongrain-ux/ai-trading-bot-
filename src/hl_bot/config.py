@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from hl_bot.strategy.filters import parse_trade_hours
+
 load_dotenv()
 
 
@@ -26,6 +28,16 @@ def _float(name: str, default: float) -> float:
 def _int(name: str, default: int) -> int:
     raw = os.getenv(name)
     return int(raw) if raw is not None and raw.strip() else default
+
+
+def _optional_float(name: str, default: float | None) -> float | None:
+    """Parse float; empty string → None (disabled). Missing → default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    if not raw.strip():
+        return None
+    return float(raw)
 
 
 def _parse_symbols() -> tuple[str, ...]:
@@ -83,6 +95,21 @@ class Settings:
     # Deprecated: previously used for stop-at-VWAP; ignored by strategy
     stop_buffer_bps: float = 0.0
 
+    # --- Accuracy filters ---
+    # Skip if avg (high-low)/close over lookback >= this × STOP_PCT
+    max_range_vs_stop: float = 1.0
+    vol_lookback_bars: int = 5
+    # Skip if last bar range > this (None / empty env = disabled). Default 0.3%.
+    max_bar_range_pct: float | None = 0.003
+    # UTC hours START-END (start inclusive, end exclusive). Empty or 0-24 = off.
+    trade_hours_utc: str = "12-23"
+    htf_confirm: bool = True
+    htf_interval: str = "5m"
+    # Seconds to block new entries on a symbol after a stop-out
+    entry_cooldown_sec: float = 120.0
+    # Journal risk_reset on start and document that restart clears daily halt
+    reset_daily_risk: bool = False
+
     journal_path: str = "logs/trades.jsonl"
     killswitch_file: str = ".killswitch"
 
@@ -133,6 +160,25 @@ class Settings:
                 f"MAX_TRADES_PER_DAY={self.max_trades_per_day} must be >= 0 "
                 "(0 = unlimited)."
             )
+        if self.max_range_vs_stop < 0:
+            raise ValueError(
+                f"MAX_RANGE_VS_STOP={self.max_range_vs_stop} must be >= 0."
+            )
+        if self.vol_lookback_bars < 1:
+            raise ValueError(
+                f"VOL_LOOKBACK_BARS={self.vol_lookback_bars} must be >= 1."
+            )
+        if self.max_bar_range_pct is not None and self.max_bar_range_pct < 0:
+            raise ValueError(
+                f"MAX_BAR_RANGE_PCT={self.max_bar_range_pct} must be >= 0 "
+                "(empty env disables)."
+            )
+        # Validate trade hours parse (raises on bad format)
+        parse_trade_hours(self.trade_hours_utc)
+        if self.entry_cooldown_sec < 0:
+            raise ValueError(
+                f"ENTRY_COOLDOWN_SEC={self.entry_cooldown_sec} must be >= 0."
+            )
         if self.is_live and not self.private_key:
             raise ValueError("LIVE mode requires HL_PRIVATE_KEY.")
 
@@ -163,6 +209,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     else:
         max_stop = None
 
+    # TRADE_HOURS_UTC: default liquid crypto hours; empty / 0-24 disables
+    trade_hours_raw = os.getenv("TRADE_HOURS_UTC")
+    if trade_hours_raw is None:
+        trade_hours = "12-23"
+    else:
+        trade_hours = trade_hours_raw.strip()
+
     settings = Settings(
         trading_mode=os.getenv("TRADING_MODE", "paper").strip().lower(),
         i_understand_live_trading=_bool("I_UNDERSTAND_LIVE_TRADING", False),
@@ -191,6 +244,14 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         min_stop_pct=_float("MIN_STOP_PCT", 0.0),
         max_stop_pct=max_stop,
         stop_buffer_bps=_float("STOP_BUFFER_BPS", 0.0),
+        max_range_vs_stop=_float("MAX_RANGE_VS_STOP", 1.0),
+        vol_lookback_bars=_int("VOL_LOOKBACK_BARS", 5),
+        max_bar_range_pct=_optional_float("MAX_BAR_RANGE_PCT", 0.003),
+        trade_hours_utc=trade_hours,
+        htf_confirm=_bool("HTF_CONFIRM", True),
+        htf_interval=os.getenv("HTF_INTERVAL", "5m").strip() or "5m",
+        entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
+        reset_daily_risk=_bool("RESET_DAILY_RISK", False),
         journal_path=os.getenv("JOURNAL_PATH", "logs/trades.jsonl"),
         killswitch_file=os.getenv("KILLSWITCH_FILE", ".killswitch"),
     )
