@@ -263,3 +263,55 @@ def test_empty_journal(tmp_path):
     assert state["trades"] == []
     assert state["open_positions"] == []
     assert state["status"]["mode"] == "UNKNOWN"
+
+
+def test_reconstruct_multiple_opens_same_symbol():
+    """Dashboard reconstructs multiple opens per symbol keyed by trade_id."""
+    events = [
+        _ev("start", 1.0, mode="PAPER", symbols=["BTC"]),
+        _ev(
+            "open",
+            2.0,
+            symbol="BTC",
+            side="long",
+            size=0.1,
+            price=50000.0,
+            stop=49000.0,
+            tp=52000.0,
+            trade_id="btc_a",
+        ),
+        _ev(
+            "open",
+            3.0,
+            symbol="BTC",
+            side="long",
+            size=0.2,
+            price=50100.0,
+            stop=49800.0,
+            tp=51000.0,
+            trade_id="btc_b",
+        ),
+        _ev(
+            "close",
+            4.0,
+            symbol="BTC",
+            side="long",
+            size=0.2,
+            price=49700.0,
+            pnl=-80.0,
+            reason="stop",
+            trade_id="btc_b",
+            action="close",
+        ),
+    ]
+    opens = reconstruct_open_positions(events)
+    assert len(opens) == 1
+    assert opens[0]["trade_id"] == "btc_a"
+    assert opens[0]["size"] == 0.1
+    assert opens[0]["stop"] == 49000.0
+
+    # Before the close, both should be open
+    opens_both = reconstruct_open_positions(events[:-1])
+    assert len(opens_both) == 2
+    ids = {o["trade_id"] for o in opens_both}
+    assert ids == {"btc_a", "btc_b"}

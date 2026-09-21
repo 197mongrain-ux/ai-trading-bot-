@@ -57,7 +57,10 @@ class Settings:
     # Multi-symbol: Hyperliquid perp coin names (bare: BTC, SOL, XRP)
     symbols: tuple[str, ...] = ("BTC", "SOL", "XRP")
     symbol: str = "BTC"  # first of symbols; single-symbol backward compat
-    max_open_positions: int = 3
+    # 0 = unlimited global open positions (still bound by per-symbol + risk)
+    max_open_positions: int = 0
+    # Max stacked opens on the same ticker; 0 = unlimited per symbol
+    max_positions_per_symbol: int = 3
 
     starting_equity: float = 5000.0
     risk_per_trade: float = 0.005
@@ -102,8 +105,16 @@ class Settings:
             )
         if not self.symbols:
             raise ValueError("At least one symbol required (SYMBOLS or SYMBOL).")
-        if self.max_open_positions < 1:
-            raise ValueError(f"MAX_OPEN_POSITIONS={self.max_open_positions} must be >= 1.")
+        if self.max_open_positions < 0:
+            raise ValueError(
+                f"MAX_OPEN_POSITIONS={self.max_open_positions} must be >= 0 "
+                "(0 = unlimited)."
+            )
+        if self.max_positions_per_symbol < 0:
+            raise ValueError(
+                f"MAX_POSITIONS_PER_SYMBOL={self.max_positions_per_symbol} must be >= 0 "
+                "(0 = unlimited)."
+            )
         if not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
                 f"RISK_PER_TRADE={self.risk_per_trade} outside documented range "
@@ -140,8 +151,10 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     api_url = os.getenv("HL_API_URL", default_url).strip() or default_url
 
     symbols = _parse_symbols()
-    # MAX_OPEN_POSITIONS defaults to number of configured symbols
-    max_open = _int("MAX_OPEN_POSITIONS", len(symbols))
+    # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
+    max_open = _int("MAX_OPEN_POSITIONS", 0)
+    # MAX_POSITIONS_PER_SYMBOL: default 3; 0 = unlimited stacking per ticker
+    max_per_sym = _int("MAX_POSITIONS_PER_SYMBOL", 3)
 
     max_stop_raw = os.getenv("MAX_STOP_PCT")
     max_stop: float | None
@@ -161,6 +174,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         symbols=symbols,
         symbol=symbols[0],
         max_open_positions=max_open,
+        max_positions_per_symbol=max_per_sym,
         starting_equity=_float("STARTING_EQUITY", 5000.0),
         risk_per_trade=_float("RISK_PER_TRADE", 0.005),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.03),

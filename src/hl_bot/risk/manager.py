@@ -20,12 +20,13 @@ class RiskManager:
 
     Shared across all symbols. Position size is ALWAYS derived from
     dollar risk / stop distance — leverage is a config ceiling only
-    (exchange margin setting), never the sizing driver. Max one position
-    per symbol (enforced by caller via has_open_position); max_open_positions
-    caps total.
+    (exchange margin setting), never the sizing driver.
 
-    max_trades_per_day: 0 means unlimited (no count cap). Strategy entry
-    rules + daily loss / DD / consecutive-loss still apply.
+    Stacking: up to ``max_positions_per_symbol`` independent opens on the
+    same ticker (0 = unlimited per symbol). ``max_open_positions`` is an
+    optional global cap across all symbols (0 = unlimited). Each new entry
+    still must pass dollar-risk sizing; ``open_position_count`` is total
+    opens across all symbols.
     """
 
     starting_equity: float
@@ -36,7 +37,8 @@ class RiskManager:
     max_consecutive_losses: int = 3
     leverage: int = 20
     kill_switch: bool = False
-    max_open_positions: int = 3
+    max_open_positions: int = 0  # 0 = unlimited global
+    max_positions_per_symbol: int = 3  # 0 = unlimited per symbol
 
     day_start_equity: float = 0.0
     high_water_mark: float = 0.0
@@ -135,10 +137,18 @@ class RiskManager:
         stop_price: float,
         *,
         has_open_position: bool = False,
+        positions_for_symbol: int | None = None,
         open_position_count: int | None = None,
         kill_file_active: bool = False,
         env_kill: bool = False,
     ) -> RiskDecision:
+        """Gate a new entry.
+
+        ``positions_for_symbol`` — how many opens already exist on this ticker.
+        ``has_open_position`` — legacy boolean; if True and positions_for_symbol
+        is omitted, treated as 1 open on the symbol (for older callers).
+        ``open_position_count`` — total opens across all symbols (global cap).
+        """
         self.maybe_roll_day(equity)
         self.update_equity(equity)
 
@@ -152,11 +162,17 @@ class RiskManager:
         # 0 = unlimited daily trade count
         if self.max_trades_per_day > 0 and self.trades_today >= self.max_trades_per_day:
             return RiskDecision(False, "max trades/day reached")
-        # No averaging down on the same symbol
-        if has_open_position:
-            return RiskDecision(False, "already in position for symbol")
+
+        if positions_for_symbol is None:
+            positions_for_symbol = 1 if has_open_position else 0
+        if (
+            self.max_positions_per_symbol > 0
+            and positions_for_symbol >= self.max_positions_per_symbol
+        ):
+            return RiskDecision(False, "max positions for symbol reached")
+
         count = self.open_positions if open_position_count is None else open_position_count
-        if count >= self.max_open_positions:
+        if self.max_open_positions > 0 and count >= self.max_open_positions:
             return RiskDecision(False, "max open positions reached")
         if stop_price <= 0:
             return RiskDecision(False, "stop required")

@@ -37,7 +37,8 @@ def test_default_symbols():
     s = Settings()
     assert s.symbols == ("BTC", "SOL", "XRP")
     assert s.symbol == "BTC"
-    assert s.max_open_positions == 3
+    assert s.max_open_positions == 0  # unlimited global
+    assert s.max_positions_per_symbol == 3
 
 
 def test_default_scalp_knobs():
@@ -73,6 +74,7 @@ def test_load_settings_symbols(monkeypatch, tmp_path):
     monkeypatch.delenv("SYMBOL", raising=False)
     monkeypatch.setenv("TRADING_MODE", "paper")
     monkeypatch.delenv("MAX_OPEN_POSITIONS", raising=False)
+    monkeypatch.delenv("MAX_POSITIONS_PER_SYMBOL", raising=False)
     # Avoid leftover env noise for risk range
     monkeypatch.setenv("RISK_PER_TRADE", "0.005")
     monkeypatch.delenv("LEVERAGE", raising=False)
@@ -81,7 +83,8 @@ def test_load_settings_symbols(monkeypatch, tmp_path):
     s = load_settings()
     assert s.symbols == ("BTC", "SOL")
     assert s.symbol == "BTC"
-    assert s.max_open_positions == 2  # defaults to len(symbols)
+    assert s.max_open_positions == 0  # default unlimited global
+    assert s.max_positions_per_symbol == 3
     assert s.leverage == 20
     assert s.stop_pct == pytest.approx(0.0015)
     assert s.max_trades_per_day == 0
@@ -100,3 +103,23 @@ def test_load_settings_scalp_env(monkeypatch):
     assert s.breakout_bars == 5
     assert s.vwap_buffer_bps == pytest.approx(2.0)
     assert s.max_trades_per_day == 0
+
+
+def test_load_settings_stacking(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("MAX_POSITIONS_PER_SYMBOL", "5")
+    monkeypatch.setenv("MAX_OPEN_POSITIONS", "10")
+    s = load_settings()
+    assert s.max_positions_per_symbol == 5
+    assert s.max_open_positions == 10
+
+
+def test_load_settings_zero_means_unlimited(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("MAX_POSITIONS_PER_SYMBOL", "0")
+    monkeypatch.setenv("MAX_OPEN_POSITIONS", "0")
+    s = load_settings()
+    assert s.max_positions_per_symbol == 0
+    assert s.max_open_positions == 0

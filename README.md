@@ -6,7 +6,7 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
 
 ## Features
 
-- **Multi-symbol** — trade `BTC`, `SOL`, and `XRP` (Hyperliquid bare coin names) with independent paper/live positions
+- **Multi-symbol + stacking** — trade `BTC`, `SOL`, and `XRP` with independent paper/live positions; multiple opens per ticker allowed (each with its own stop/TP/`trade_id`)
 - **Strategy — VWAP bias + micro breakout scalp** (same rules on every symbol)
   - Session VWAP resets at UTC 00:00 (configurable via `VWAP_RESET_UTC_HOUR`) — **bias only**
   - Long only if mark > VWAP (+ optional `VWAP_BUFFER_BPS`); short only if mark < VWAP (− buffer)
@@ -76,13 +76,17 @@ SYMBOLS=BTC,SOL,XRP
 # Fallback (single symbol) if SYMBOLS is unset:
 # SYMBOL=BTC
 
-# Cap concurrent opens across all symbols (default = number of symbols)
-MAX_OPEN_POSITIONS=3
+# Stacking: max independent opens per ticker (default 3; 0 = unlimited)
+MAX_POSITIONS_PER_SYMBOL=3
+
+# Optional global cap across all trade_ids (default 0 = unlimited)
+MAX_OPEN_POSITIONS=0
 ```
 
 - If `SYMBOLS` is set → that list is used.
 - Else if `SYMBOL` is set → single-symbol list `[SYMBOL]` (backward compatible).
 - Else → default `BTC,SOL,XRP`.
+- **Stacking:** the bot may open multiple positions on the same ticker when new entry signals fire, up to `MAX_POSITIONS_PER_SYMBOL`. Each open keeps its own `trade_id`, stop, TP, and size. `MAX_OPEN_POSITIONS` (0 = unlimited) optionally caps total opens across all symbols.
 
 Hyperliquid Info `allMids` keys are bare names (`BTC`, `SOL`, `XRP`) for these perps.
 
@@ -94,14 +98,15 @@ python -m hl_bot run
 python -m hl_bot run --max-iterations 3
 ```
 
-PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark/mid from the Info API (or injected bars in tests). Each loop iteration fetches mark + candles and runs the scalp independently per configured symbol. After a close, **re-entry is allowed** on the next signal (one position max per symbol).
+PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark/mid from the Info API (or injected bars in tests). Each loop iteration fetches mark + candles and runs the scalp independently per configured symbol. **Multiple positions per symbol are allowed** (stacking) up to `MAX_POSITIONS_PER_SYMBOL`; the entry loop does not skip a ticker merely because it already has an open — only when that ticker is at the per-symbol cap. Each position has its own stop/TP and is closed independently.
 
 ### Example defaults (~$5k equity)
 
 | Setting | Default | Notes |
 |--------|---------|--------|
 | `SYMBOLS` | `BTC,SOL,XRP` | Hyperliquid perp coins |
-| `MAX_OPEN_POSITIONS` | `3` | One per symbol by default |
+| `MAX_POSITIONS_PER_SYMBOL` | `3` | Max stacked opens per ticker (`0` = unlimited) |
+| `MAX_OPEN_POSITIONS` | `0` | Optional global cap (`0` = unlimited) |
 | `STARTING_EQUITY` | `5000` | Paper account equity |
 | `RISK_PER_TRADE` | `0.005` | 0.5% → $25 risk on $5k |
 | `STOP_PCT` | `0.0015` | 0.15% stop from entry |
@@ -135,6 +140,8 @@ LEVERAGE=20
 
 Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/stop orders are placed **per symbol** the same way as paper. `update_leverage(20, coin)` is called before market open.
 
+**LIVE stacking limitation:** Hyperliquid typically uses one-way / netted positions per coin. Paper keeps fully independent legs (separate stops/trade_ids). On LIVE the bot still `market_open`s additional size and places per-fill stops / size-reduced closes as **best-effort** — the exchange may merge same-side exposure. Prefer paper for true multi-leg simulation.
+
 ### Hyperliquid API wallet notes
 
 - Docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api
@@ -150,8 +157,9 @@ Without `I_UNDERSTAND_LIVE_TRADING=true`, LIVE will refuse to start. Open/close/
 - Risk per trade default **0.5%** (range **0.25–0.5%**)
 - **Daily trade count:** `MAX_TRADES_PER_DAY=0` means **no count limit** (default). Activity is still limited by entry rules, daily loss, DD, open-position caps, and consecutive-loss pause. Set a positive number (e.g. `500`) if you want a hard cap.
 - Pause after **3** consecutive losses
-- Max open positions = `MAX_OPEN_POSITIONS` (default = number of symbols)
-- **One position max per symbol** — no averaging down; re-entry after close when rules fire again
+- **Per-symbol stack cap** = `MAX_POSITIONS_PER_SYMBOL` (default **3**; `0` = unlimited per ticker)
+- **Global open cap** = `MAX_OPEN_POSITIONS` (default **0** = unlimited across all symbols)
+- Each stacked entry still passes `allow_entry` with dollar risk; `open_position_count` is total opens across all
 - Stop **required** (fixed % from entry)
 - Kill switch: env `KILL_SWITCH=1` or file `.killswitch`
 
@@ -220,7 +228,8 @@ tests/
 - **Mark/mid language:** prices come from Hyperliquid Info (`allMids` / `markPx`), not spot.
 - **Candle / VWAP data:** session VWAP uses Info `candleSnapshot` when available. The SDK/API surface can vary; if candles are empty, VWAP cannot signal until bars exist. Paper/tests can `inject_bars` on `InfoClient` (optionally per coin).
 - LIVE order helpers depend on `hyperliquid-python-sdk` versions; always verify on testnet.
-- Equity (paper) = cash + sum of mark-to-market on all open positions.
+- Equity (paper) = cash + sum of mark-to-market on **all** open positions (every `trade_id`).
+- Paper positions are a dict keyed by `trade_id`; the same symbol may appear multiple times with independent stops/TP.
 
 ## License / disclaimer
 

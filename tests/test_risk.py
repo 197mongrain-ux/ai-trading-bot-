@@ -93,26 +93,68 @@ def test_consecutive_losses_pause():
     assert "consecutive" in d.reason.lower()
 
 
-def test_no_averaging_down_same_symbol():
-    rm = RiskManager(starting_equity=5000.0, max_open_positions=3)
+def test_stacking_allowed_under_per_symbol_cap():
+    """Existing opens on the same symbol are OK until max_positions_per_symbol."""
+    rm = RiskManager(
+        starting_equity=5000.0,
+        max_open_positions=0,
+        max_positions_per_symbol=3,
+    )
+    d = rm.allow_entry(
+        5000.0, 50_000.0, 49_900.0, positions_for_symbol=1, open_position_count=1
+    )
+    assert d.allowed
+    d2 = rm.allow_entry(
+        5000.0, 50_000.0, 49_900.0, positions_for_symbol=2, open_position_count=2
+    )
+    assert d2.allowed
+    d3 = rm.allow_entry(
+        5000.0, 50_000.0, 49_900.0, positions_for_symbol=3, open_position_count=3
+    )
+    assert not d3.allowed
+    assert "symbol" in d3.reason.lower()
+
+
+def test_legacy_has_open_position_maps_to_one():
+    """has_open_position=True with default max_positions_per_symbol=3 still allows."""
+    rm = RiskManager(starting_equity=5000.0, max_positions_per_symbol=3)
     d = rm.allow_entry(5000.0, 50_000.0, 49_900.0, has_open_position=True)
-    assert not d.allowed
-    assert "symbol" in d.reason.lower() or "position" in d.reason.lower()
+    assert d.allowed
+    # With max 1 per symbol, legacy flag blocks
+    rm1 = RiskManager(starting_equity=5000.0, max_positions_per_symbol=1)
+    d1 = rm1.allow_entry(5000.0, 50_000.0, 49_900.0, has_open_position=True)
+    assert not d1.allowed
 
 
-def test_max_open_positions_across_symbols():
-    rm = RiskManager(starting_equity=5000.0, max_open_positions=3)
+def test_max_open_positions_global_cap():
+    rm = RiskManager(
+        starting_equity=5000.0, max_open_positions=3, max_positions_per_symbol=5
+    )
     # Simulate two opens already
     rm.record_trade_open()
     rm.record_trade_open()
     assert rm.open_positions == 2
-    d = rm.allow_entry(5000.0, 50_000.0, 49_900.0, open_position_count=2)
+    d = rm.allow_entry(
+        5000.0, 50_000.0, 49_900.0, positions_for_symbol=0, open_position_count=2
+    )
     assert d.allowed
     rm.record_trade_open()
     assert rm.open_positions == 3
-    d2 = rm.allow_entry(5000.0, 100.0, 99.0, open_position_count=3)
+    d2 = rm.allow_entry(
+        5000.0, 100.0, 99.0, positions_for_symbol=0, open_position_count=3
+    )
     assert not d2.allowed
     assert "max open positions" in d2.reason.lower()
+
+
+def test_max_open_positions_zero_unlimited():
+    rm = RiskManager(
+        starting_equity=5000.0, max_open_positions=0, max_positions_per_symbol=0
+    )
+    d = rm.allow_entry(
+        5000.0, 50_000.0, 49_900.0, positions_for_symbol=50, open_position_count=100
+    )
+    assert d.allowed
 
 
 def test_record_open_close_counts():

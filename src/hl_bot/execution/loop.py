@@ -48,8 +48,13 @@ def run_bot(
     """Run the main loop.
 
     In PAPER mode (default) never instantiates LiveExchange / never calls order.
-    Each iteration processes every configured symbol independently (one position
-    max per symbol). Returns a summary dict useful for tests.
+    Each iteration processes every configured symbol. Multiple independent
+    positions per symbol are allowed up to ``MAX_POSITIONS_PER_SYMBOL``
+    (stacking). Returns a summary dict useful for tests.
+
+    LIVE caveat: Hyperliquid may net same-side size into one position; paper
+    keeps independent stops/trade_ids. Live path does best-effort
+    ``market_open`` of additional size and per-fill stop/close by size.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -59,13 +64,21 @@ def run_bot(
     mode = "LIVE" if settings.is_live else "PAPER"
     symbols = tuple(settings.symbols)
     logger.info(
-        "Starting hl_bot in %s mode | symbols=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d",
+        "Starting hl_bot in %s mode | symbols=%s | max_per_symbol=%s | "
+        "max_open=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d",
         mode,
         ",".join(symbols),
+        settings.max_positions_per_symbol or "unlimited",
+        settings.max_open_positions or "unlimited",
         settings.stop_pct,
         settings.leverage,
         settings.breakout_bars,
     )
+    if settings.is_live:
+        logger.warning(
+            "LIVE stacking is best-effort: exchange one-way netting may merge "
+            "same-side size; independent paper stops/trade_ids are primary."
+        )
 
     if settings.is_live:
         from hl_bot.exchange.live_exchange import LiveExchange
@@ -80,7 +93,9 @@ def run_bot(
 
     info = info or _build_info(settings)
     broker = broker or PaperBroker(
-        starting_equity=settings.starting_equity, symbols=symbols
+        starting_equity=settings.starting_equity,
+        symbols=symbols,
+        max_positions_per_symbol=settings.max_positions_per_symbol,
     )
     risk = RiskManager(
         starting_equity=settings.starting_equity,
@@ -92,6 +107,7 @@ def run_bot(
         leverage=settings.leverage,
         kill_switch=settings.kill_switch,
         max_open_positions=settings.max_open_positions,
+        max_positions_per_symbol=settings.max_positions_per_symbol,
     )
     strategy = VwapTrendScalp(
         buffer_bps=settings.vwap_buffer_bps,
@@ -111,6 +127,8 @@ def run_bot(
         stop_pct=settings.stop_pct,
         leverage=settings.leverage,
         breakout_bars=settings.breakout_bars,
+        max_positions_per_symbol=settings.max_positions_per_symbol,
+        max_open_positions=settings.max_open_positions,
     )
 
     iterations = 0
@@ -140,12 +158,15 @@ def run_bot(
 
         equity = broker.equity_mark_to_market(marks=marks)
 
-        # Risk flatten / kill — close ALL open positions
+        # Risk flatten / kill — close ALL open positions (every trade_id)
         flatten, reason = risk.should_flatten(equity, kill_file_active=ks, env_kill=settings.kill_switch)
         if flatten and broker.has_position:
-            for symbol in list(broker.positions.keys()):
-                px = marks.get(symbol, broker.get_mark(symbol))
-                fill = broker.close_position(reason=reason, price=px, symbol=symbol)
+            for tid in list(broker.positions.keys()):
+                pos = broker.get_position_by_id(tid)
+                if pos is None:
+                    continue
+                px = marks.get(pos.symbol, broker.get_mark(pos.symbol))
+                fill = broker.close_position(reason=reason, price=px, trade_id=tid)
                 if fill:
                     risk.record_trade_close(fill.pnl)
                     journal.log(
@@ -155,23 +176,22 @@ def run_bot(
                     summary["closes"] += 1
                     if live is not None:
                         try:
-                            live.market_close(symbol)
+                            live.market_close(fill.symbol, size=fill.size)
                         except Exception:
-                            logger.exception("LIVE close failed for %s", symbol)
+                            logger.exception("LIVE close failed for %s", fill.symbol)
             summary["halted"] = True
             if risk.killed:
                 logger.error("Kill switch / drawdown — exiting loop")
                 break
 
-        # Manage open position stops per symbol
+        # Manage stops/TP for EVERY open position (per symbol mark)
         for symbol in symbols:
             if not broker.has_position_for(symbol):
                 continue
             mark = marks.get(symbol)
             if mark is None:
                 continue
-            fill = broker.check_stops(mark, symbol=symbol)
-            if fill:
+            for fill in broker.check_stops(mark, symbol=symbol):
                 risk.record_trade_close(fill.pnl)
                 journal.log(
                     "close",
@@ -180,23 +200,30 @@ def run_bot(
                 summary["closes"] += 1
                 if live is not None:
                     try:
-                        live.market_close(symbol)
+                        # Best-effort: reduce by this fill's size (netting caveat)
+                        live.market_close(symbol, size=fill.size)
                     except Exception:
                         logger.exception("LIVE close failed for %s", symbol)
 
         # Refresh equity after any closes
         equity = broker.equity_mark_to_market(marks=marks)
 
-        # New entries per symbol (independent positions); re-entry after close OK
+        # New entries: do NOT skip a symbol merely because it already has a
+        # position — only skip when at MAX_POSITIONS_PER_SYMBOL for that ticker.
         if not risk.killed and not risk.halted_daily_loss:
             for symbol in symbols:
-                if broker.has_position_for(symbol):
+                per_sym = broker.position_count_for(symbol)
+                if (
+                    settings.max_positions_per_symbol > 0
+                    and per_sym >= settings.max_positions_per_symbol
+                ):
                     continue
                 mark = marks.get(symbol)
                 if mark is None:
                     continue
 
                 bars = info.get_candles(symbol, interval="1m")
+                # Pass has_position=False so strategy can signal again while stacked
                 signal = strategy.on_bar(mark, bars, has_position=False)
                 if signal.side not in ("long", "short") or signal.stop <= 0:
                     continue
@@ -205,7 +232,7 @@ def run_bot(
                     equity,
                     signal.entry,
                     signal.stop,
-                    has_open_position=broker.has_position_for(symbol),
+                    positions_for_symbol=per_sym,
                     open_position_count=broker.open_position_count,
                     kill_file_active=ks,
                     env_kill=settings.kill_switch,
@@ -239,7 +266,8 @@ def run_bot(
                 )
                 summary["opens"] += 1
                 logger.info(
-                    "OPEN %s %s size=%.6f @ %.4f stop=%.4f (%.2f bps) tp=%.4f vwap=%.4f lev=%sx",
+                    "OPEN %s %s size=%.6f @ %.4f stop=%.4f (%.2f bps) tp=%.4f vwap=%.4f "
+                    "lev=%sx trade_id=%s stack=%d",
                     symbol,
                     signal.side,
                     decision.size,
@@ -249,10 +277,13 @@ def run_bot(
                     signal.take_profit,
                     signal.vwap,
                     settings.leverage,
+                    fill.trade_id,
+                    per_sym + 1,
                 )
                 if live is not None:
                     try:
                         is_buy = signal.side == "long"
+                        # Best-effort add size; exchange may net same-side
                         live.market_open(
                             symbol,
                             is_buy,

@@ -48,8 +48,12 @@ def _pnl_for(pos: Position, px: float) -> float:
 class PaperBroker:
     """Simulates a multi-symbol perp account filled at mark.
 
-    One open position max per symbol. Equity = cash (starting + realized)
-    + sum of mark-to-market on all open positions.
+    Positions are keyed by ``trade_id`` so the same symbol can hold multiple
+    independent opens (each with its own stop/tp/size). Equity = cash
+    (starting + realized) + sum of mark-to-market on all open positions.
+
+    ``max_positions_per_symbol``: 0 = unlimited per symbol (still subject to
+    caller / account risk caps).
     """
 
     def __init__(
@@ -57,6 +61,7 @@ class PaperBroker:
         starting_equity: float = 5000.0,
         symbol: str = "BTC",
         symbols: tuple[str, ...] | list[str] | None = None,
+        max_positions_per_symbol: int = 0,
     ):
         if symbols:
             self.symbols: tuple[str, ...] = tuple(s.upper() for s in symbols)
@@ -67,9 +72,11 @@ class PaperBroker:
         self.starting_equity = starting_equity
         self.equity = starting_equity
         self.realized_pnl = 0.0
+        # trade_id -> Position (multiple per symbol allowed)
         self.positions: dict[str, Position] = {}
         self.fills: list[Fill] = []
         self._marks: dict[str, float] = {}
+        self.max_positions_per_symbol = int(max_positions_per_symbol)
 
     # --- mark helpers ---
 
@@ -92,8 +99,16 @@ class PaperBroker:
     def has_position(self) -> bool:
         return bool(self.positions)
 
+    def positions_for(self, symbol: str) -> list[Position]:
+        """Open positions for ``symbol`` in open order (oldest first)."""
+        sym = symbol.upper()
+        return [p for p in self.positions.values() if p.symbol == sym]
+
+    def position_count_for(self, symbol: str) -> int:
+        return len(self.positions_for(symbol))
+
     def has_position_for(self, symbol: str) -> bool:
-        return symbol.upper() in self.positions
+        return self.position_count_for(symbol) > 0
 
     @property
     def open_position_count(self) -> int:
@@ -101,27 +116,33 @@ class PaperBroker:
 
     @property
     def position(self) -> Position | None:
-        """Position for default symbol (single-symbol backward compat)."""
-        return self.positions.get(self.default_symbol)
+        """Oldest position for default symbol (single-symbol backward compat)."""
+        poses = self.positions_for(self.default_symbol)
+        return poses[0] if poses else None
 
     def get_position(self, symbol: str) -> Position | None:
-        return self.positions.get(symbol.upper())
+        """Oldest open position for symbol (backward compat)."""
+        poses = self.positions_for(symbol)
+        return poses[0] if poses else None
+
+    def get_position_by_id(self, trade_id: str) -> Position | None:
+        return self.positions.get(trade_id)
 
     def unrealized_pnl(self, mark: float | None = None, symbol: str | None = None) -> float:
         if symbol is not None:
             sym = symbol.upper()
-            pos = self.positions.get(sym)
-            if pos is None:
-                return 0.0
+            total = 0.0
             px = float(mark if mark is not None else self._marks.get(sym, 0.0))
-            return _pnl_for(pos, px)
+            for pos in self.positions_for(sym):
+                total += _pnl_for(pos, px)
+            return total
 
         total = 0.0
-        for sym, pos in self.positions.items():
-            if mark is not None and sym == self.default_symbol:
+        for pos in self.positions.values():
+            if mark is not None and pos.symbol == self.default_symbol:
                 px = float(mark)
             else:
-                px = float(self._marks.get(sym, 0.0))
+                px = float(self._marks.get(pos.symbol, 0.0))
             total += _pnl_for(pos, px)
         return total
 
@@ -145,10 +166,12 @@ class PaperBroker:
         symbol: str | None = None,
     ) -> Fill:
         sym = (symbol or self.default_symbol).upper()
-        if sym in self.positions:
-            raise RuntimeError(
-                f"Max 1 open position per symbol ({sym}); flatten before opening another"
-            )
+        if self.max_positions_per_symbol > 0:
+            if self.position_count_for(sym) >= self.max_positions_per_symbol:
+                raise RuntimeError(
+                    f"Max {self.max_positions_per_symbol} open position(s) per "
+                    f"symbol ({sym}); flatten or wait before opening another"
+                )
         if size <= 0:
             raise ValueError("size must be positive")
         if stop_price <= 0 or take_profit <= 0:
@@ -166,7 +189,7 @@ class PaperBroker:
             take_profit=take_profit,
             symbol=sym,
         )
-        self.positions[sym] = pos
+        self.positions[pos.trade_id] = pos
         fill = Fill(
             trade_id=pos.trade_id,
             side=side,
@@ -184,18 +207,29 @@ class PaperBroker:
         reason: str = "manual",
         price: float | None = None,
         symbol: str | None = None,
+        trade_id: str | None = None,
     ) -> Fill | None:
-        if symbol is not None:
-            sym = symbol.upper()
-        elif len(self.positions) == 1:
-            sym = next(iter(self.positions))
-        else:
-            sym = self.default_symbol
+        """Close one position by trade_id, or the oldest for ``symbol``.
 
-        pos = self.positions.get(sym)
+        If neither is given and exactly one position is open, close that one;
+        otherwise close the oldest on the default symbol.
+        """
+        pos: Position | None = None
+        if trade_id is not None:
+            pos = self.positions.get(trade_id)
+        elif symbol is not None:
+            poses = self.positions_for(symbol)
+            pos = poses[0] if poses else None
+        elif len(self.positions) == 1:
+            pos = next(iter(self.positions.values()))
+        else:
+            poses = self.positions_for(self.default_symbol)
+            pos = poses[0] if poses else None
+
         if pos is None:
             return None
 
+        sym = pos.symbol
         fill_px = float(price if price is not None else self._marks.get(sym, 0.0))
         pnl = _pnl_for(pos, fill_px)
         self.realized_pnl += pnl
@@ -211,47 +245,62 @@ class PaperBroker:
             symbol=sym,
         )
         self.fills.append(fill)
-        del self.positions[sym]
+        del self.positions[pos.trade_id]
         return fill
 
     def check_stops(
         self, mark: float | None = None, symbol: str | None = None
-    ) -> Fill | None:
-        """Close if mark hits stop or take-profit. Returns fill if closed.
+    ) -> list[Fill]:
+        """Evaluate stop/TP on each matching open position.
 
-        If ``symbol`` is given, only that symbol is checked. Otherwise all open
-        positions are checked (first hit wins / returned).
+        Returns a list of close fills (may be empty). Each position is checked
+        independently so one stop does not close siblings on the same symbol.
         """
         if symbol is not None:
-            targets = [symbol.upper()] if symbol.upper() in self.positions else []
+            candidates = list(self.positions_for(symbol))
         else:
-            targets = list(self.positions.keys())
+            candidates = list(self.positions.values())
 
-        for sym in targets:
-            pos = self.positions[sym]
-            px = float(mark if mark is not None else self._marks.get(sym, 0.0))
+        closed: list[Fill] = []
+        for pos in candidates:
+            # Skip if already closed earlier in this pass
+            if pos.trade_id not in self.positions:
+                continue
+            px = float(
+                mark if mark is not None else self._marks.get(pos.symbol, 0.0)
+            )
+            hit: str | None = None
             if pos.side == "long":
                 if px <= pos.stop_price:
-                    return self.close_position(reason="stop", price=px, symbol=sym)
-                if px >= pos.take_profit:
-                    return self.close_position(reason="take_profit", price=px, symbol=sym)
+                    hit = "stop"
+                elif px >= pos.take_profit:
+                    hit = "take_profit"
             else:
                 if px >= pos.stop_price:
-                    return self.close_position(reason="stop", price=px, symbol=sym)
-                if px <= pos.take_profit:
-                    return self.close_position(reason="take_profit", price=px, symbol=sym)
-        return None
+                    hit = "stop"
+                elif px <= pos.take_profit:
+                    hit = "take_profit"
+            if hit:
+                fill = self.close_position(
+                    reason=hit, price=px, trade_id=pos.trade_id
+                )
+                if fill:
+                    closed.append(fill)
+        return closed
 
     def close_all(
         self, reason: str = "flatten", marks: dict[str, float] | None = None
     ) -> list[Fill]:
         """Close every open position. Returns list of fills."""
         fills: list[Fill] = []
-        for sym in list(self.positions.keys()):
+        for tid in list(self.positions.keys()):
+            pos = self.positions.get(tid)
+            if pos is None:
+                continue
             px = None
-            if marks and sym in marks:
-                px = marks[sym]
-            fill = self.close_position(reason=reason, price=px, symbol=sym)
+            if marks and pos.symbol in marks:
+                px = marks[pos.symbol]
+            fill = self.close_position(reason=reason, price=px, trade_id=tid)
             if fill:
                 fills.append(fill)
         return fills
