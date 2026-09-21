@@ -66,7 +66,8 @@ def run_bot(
     symbols = tuple(settings.symbols)
     logger.info(
         "Starting hl_bot in %s mode | symbols=%s | max_per_symbol=%s | "
-        "max_open=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d",
+        "max_open=%s | stop_pct=%.4f | leverage=%sx | breakout_bars=%d | "
+        "entry_mode=%s",
         mode,
         ",".join(symbols),
         settings.max_positions_per_symbol or "unlimited",
@@ -74,6 +75,7 @@ def run_bot(
         settings.stop_pct,
         settings.leverage,
         settings.breakout_bars,
+        settings.entry_mode,
     )
     if settings.is_live:
         logger.warning(
@@ -124,6 +126,13 @@ def run_bot(
         trade_hours_utc=settings.trade_hours_utc,
         htf_confirm=settings.htf_confirm,
         htf_interval=settings.htf_interval,
+        entry_mode=settings.entry_mode,
+        ote_lookback_bars=settings.ote_lookback_bars,
+        ote_fib_shallow=settings.ote_fib_shallow,
+        ote_fib_deep=settings.ote_fib_deep,
+        ote_stop_buffer_bps=settings.ote_stop_buffer_bps,
+        ote_require_close=settings.ote_require_close,
+        ote_use_htf_swings=settings.ote_use_htf_swings,
     )
     journal = TradeJournal(settings.journal_path)
     journal.log(
@@ -139,6 +148,8 @@ def run_bot(
         trade_hours_utc=settings.trade_hours_utc,
         htf_confirm=settings.htf_confirm,
         entry_cooldown_sec=settings.entry_cooldown_sec,
+        entry_mode=settings.entry_mode,
+        ote_lookback_bars=settings.ote_lookback_bars,
     )
     # Daily loss / consecutive-loss halt is in-memory: restarting `hl_bot run`
     # always clears it (fresh RiskManager). Optional journal marker:
@@ -324,6 +335,8 @@ def run_bot(
                     leverage=settings.leverage,
                     dollar_risk=decision.dollar_risk,
                     trade_id=fill.trade_id,
+                    entry_mode=signal.entry_mode or settings.entry_mode,
+                    reason=signal.reason,
                 )
                 summary["opens"] += 1
                 logger.info(

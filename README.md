@@ -7,7 +7,7 @@ Paper-first bot for **BTC, SOL, and XRP perpetuals** on [Hyperliquid](https://hy
 ## Features
 
 - **Multi-symbol + stacking** — trade `BTC`, `SOL`, and `XRP` with independent paper/live positions; multiple opens per ticker allowed (each with its own stop/TP/`trade_id`)
-- **Strategy — VWAP bias + micro breakout scalp** (same rules on every symbol)
+- **Strategy — VWAP bias + micro breakout scalp + optional OTE pullback** (same rules on every symbol)
   - Session VWAP resets at UTC 00:00 (configurable via `VWAP_RESET_UTC_HOUR`) — **bias only**
   - Long only if mark > VWAP (+ optional `VWAP_BUFFER_BPS`); short only if mark < VWAP (− buffer)
   - Entry on **1m bars**: break of prior **N**-bar high (long) / low (short). Default `BREAKOUT_BARS=3`
@@ -31,6 +31,32 @@ Older versions placed the stop just beyond session VWAP. When price was far from
 This version keeps VWAP for **direction bias only**. The stop is a **tight fixed %** from entry (default 0.15%). That is the intended scalp behavior for liquid BTC/SOL/XRP perps.
 
 **Warning on `LEVERAGE=20`:** High leverage is for **margin efficiency** with tiny stops — it does **not** mean “risk 20× equity.” Dollar risk per trade is still `RISK_PER_TRADE` (default 0.5%). 20× only lets the exchange hold the notional that risk-based sizing already chose without over-margining.
+
+
+### OTE add-on (Optimal Trade Entry pullback)
+
+ICT-lite pullback entry alongside the 1m breakout scalp. **OTE ≈ the 62%–79% Fibonacci retracement** of the most recent impulse swing, taken **with** VWAP bias (never counter-trend).
+
+**Long** (only when VWAP long bias already passes):
+1. Impulse = swing low → swing high over `OTE_LOOKBACK_BARS` (default 45 of 1m; set `OTE_USE_HTF_SWINGS=true` to use `HTF_INTERVAL` bars for swings).
+2. Zone from high: `zone_high = high − 0.62×(high−low)`, `zone_low = high − 0.79×(high−low)`.
+3. Enter when mark is **inside** the zone (optional: `OTE_REQUIRE_CLOSE=true` also needs a bullish 1m close).
+4. Stop: prefer `zone_low − buffer`, but **clamp max risk to `STOP_PCT`**. If the swing/zone stop is wider than `STOP_PCT` from entry, use `STOP_PCT` so R stays scalp-sized. (`stop = max(entry×(1−STOP_PCT), zone_low − buffer)` for longs.)
+5. TP: `TP_R_MULTIPLE` × that stop distance (unchanged).
+
+**Short:** mirror (VWAP short bias, swing high→low impulse, OTE zone on the retrace up).
+
+**`ENTRY_MODE`** = `breakout` | `ote` | `both` (default **`both`**):
+- `breakout` — existing N-bar micro breakout only.
+- `ote` — OTE pullback only (reasons: `ote_long` / `ote_short` / `ote_no_swing` / `ote_outside_zone`).
+- `both` — **prefer OTE when mark is in the zone**; otherwise try breakout. Session / vol / HTF / cooldown filters still apply before either path.
+
+**Example zone math:** impulse low 100 → high 110 (range 10).  
+Long OTE zone = `[110 − 0.79×10, 110 − 0.62×10]` = **`[102.1, 103.8]`**.  
+Mark 103.0 inside → `ote_long`. With `STOP_PCT=0.0015`, pct stop ≈ 102.845; zone stop at 102.1 is wider → use pct stop 102.845 so risk stays 0.15%.
+
+Env knobs: `ENTRY_MODE`, `OTE_LOOKBACK_BARS`, `OTE_FIB_SHALLOW`, `OTE_FIB_DEEP`, `OTE_STOP_BUFFER_BPS`, `OTE_REQUIRE_CLOSE`, `OTE_USE_HTF_SWINGS`. Journal `open` events log `entry_mode` + `reason`.
+
 
 ## Watching on TradingView
 
@@ -130,6 +156,8 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `HTF_CONFIRM` | `true` | Require 5m VWAP bias alignment |
 | `HTF_INTERVAL` | `5m` | HTF candle interval |
 | `ENTRY_COOLDOWN_SEC` | `120` | Block re-entry after stop-out (same symbol) |
+| `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` (prefer OTE in zone) |
+| `OTE_LOOKBACK_BARS` | `45` | Impulse swing lookback (1m or HTF) |
 
 **SL/TP example (BTC @ 86 000):**  
 stop = `86000 × (1 − 0.0015)` = **85 871** (−0.15%).  
@@ -224,7 +252,8 @@ src/hl_bot/
   risk/manager.py        # sizing + hard limits (shared)
   strategy/
     base.py              # Strategy protocol
-    vwap.py              # VWAP bias + micro breakout scalp + filters
+    vwap.py              # VWAP bias + micro breakout / OTE + filters
+    ote.py               # OTE Fib zone helpers (impulse / zone / stop)
     filters.py           # vol / session / HTF / cooldown helpers
     ai_signal.py         # stub (unused)
   execution/loop.py      # main loop (per-symbol)

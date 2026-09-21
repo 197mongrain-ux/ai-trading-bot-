@@ -16,6 +16,7 @@ class Signal:
     take_profit: float
     vwap: float
     reason: str = ""
+    entry_mode: str = ""  # "breakout" | "ote" | "" when flat
 
 
 class Strategy(Protocol):

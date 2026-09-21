@@ -165,3 +165,38 @@ def test_load_settings_max_bar_range_empty_disables(monkeypatch):
     monkeypatch.setenv("MAX_BAR_RANGE_PCT", "")
     s = load_settings()
     assert s.max_bar_range_pct is None
+
+
+def test_default_entry_mode_both():
+    s = Settings()
+    assert s.entry_mode == "both"
+    assert s.ote_lookback_bars == 45
+    assert s.ote_fib_shallow == pytest.approx(0.62)
+    assert s.ote_fib_deep == pytest.approx(0.79)
+    assert s.ote_require_close is False
+    assert s.ote_use_htf_swings is False
+
+
+def test_load_settings_ote_env(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("ENTRY_MODE", "ote")
+    monkeypatch.setenv("OTE_LOOKBACK_BARS", "60")
+    monkeypatch.setenv("OTE_FIB_SHALLOW", "0.618")
+    monkeypatch.setenv("OTE_FIB_DEEP", "0.786")
+    monkeypatch.setenv("OTE_STOP_BUFFER_BPS", "2")
+    monkeypatch.setenv("OTE_REQUIRE_CLOSE", "true")
+    monkeypatch.setenv("OTE_USE_HTF_SWINGS", "1")
+    s = load_settings()
+    assert s.entry_mode == "ote"
+    assert s.ote_lookback_bars == 60
+    assert s.ote_fib_shallow == pytest.approx(0.618)
+    assert s.ote_fib_deep == pytest.approx(0.786)
+    assert s.ote_stop_buffer_bps == pytest.approx(2.0)
+    assert s.ote_require_close is True
+    assert s.ote_use_htf_swings is True
+
+
+def test_entry_mode_invalid_raises():
+    with pytest.raises(ValueError, match="ENTRY_MODE"):
+        Settings(entry_mode="fibonacci").validate()

@@ -1,7 +1,13 @@
-"""Session VWAP bias + micro breakout scalp strategy.
+"""Session VWAP bias + micro breakout scalp strategy (+ optional OTE add-on).
 
 VWAP is used for directional bias only. Stops are a fixed percent from entry
-(not placed at VWAP). Entries require a break of the prior N-bar high/low.
+(not placed at VWAP), except OTE which may tighten toward the zone edge while
+still clamping max risk to STOP_PCT.
+
+Entries:
+  - breakout: break of the prior N-bar high/low (default)
+  - ote: Optimal Trade Entry pullback into 62–79% Fib of recent impulse
+  - both: prefer OTE when mark is inside the zone; otherwise try breakout
 
 Accuracy filters (all optional / configurable) gate new entries before open:
   1. Volatility / noise vs stop
@@ -22,6 +28,7 @@ from hl_bot.strategy.filters import (
     parse_trade_hours,
     volatility_block,
 )
+from hl_bot.strategy.ote import evaluate_ote_long, evaluate_ote_short
 
 
 def session_vwap(
@@ -90,16 +97,21 @@ def prior_n_bar_high_low(
 
 
 class VwapTrendScalp:
-    """VWAP-bias + micro breakout scalp with fixed-percent stop.
+    """VWAP-bias + micro breakout scalp (optional OTE pullback add-on).
 
     Bias (VWAP only):
       - long only if mark > session VWAP + buffer
       - short only if mark < session VWAP - buffer
       Buffer defaults to 0 bps (optional small bias buffer).
 
-    Entry (1m bars): break of prior N-bar high (long) / low (short). Default N=3.
+    Entry modes (``ENTRY_MODE``):
+      - ``breakout``: break of prior N-bar high (long) / low (short). Default N=3.
+      - ``ote``: mark inside 62–79% Fib retracement of recent impulse (with bias).
+      - ``both`` (default): prefer OTE when mark is in the zone; else breakout.
 
-    Stop: FIXED percent from entry (default 0.15%). NOT at VWAP.
+    Stop (breakout): FIXED percent from entry (default 0.15%). NOT at VWAP.
+    Stop (OTE): zone edge ± buffer, but **clamped** so max risk distance is
+      STOP_PCT (if swing/zone stop is wider, use STOP_PCT from entry).
     TP: TP_R_MULTIPLE * stop distance (default 2.0R).
 
     Accuracy filters (before open):
@@ -127,6 +139,14 @@ class VwapTrendScalp:
         trade_hours_utc: str = "12-23",
         htf_confirm: bool = True,
         htf_interval: str = "5m",
+        # --- entry mode / OTE add-on ---
+        entry_mode: str = "both",
+        ote_lookback_bars: int = 45,
+        ote_fib_shallow: float = 0.62,
+        ote_fib_deep: float = 0.79,
+        ote_stop_buffer_bps: float = 0.0,
+        ote_require_close: bool = False,
+        ote_use_htf_swings: bool = False,
     ):
         self.buffer_bps = buffer_bps
         self.stop_pct = stop_pct
@@ -143,6 +163,16 @@ class VwapTrendScalp:
         self._trade_hours = parse_trade_hours(trade_hours_utc)
         self.htf_confirm = htf_confirm
         self.htf_interval = htf_interval
+        mode = (entry_mode or "both").strip().lower()
+        if mode not in {"breakout", "ote", "both"}:
+            mode = "both"
+        self.entry_mode = mode
+        self.ote_lookback_bars = ote_lookback_bars
+        self.ote_fib_shallow = ote_fib_shallow
+        self.ote_fib_deep = ote_fib_deep
+        self.ote_stop_buffer_bps = ote_stop_buffer_bps
+        self.ote_require_close = ote_require_close
+        self.ote_use_htf_swings = ote_use_htf_swings
 
     def _stop_distance(self, entry: float) -> float:
         dist = entry * self.stop_pct
@@ -161,6 +191,167 @@ class VwapTrendScalp:
         if minutes <= 1:
             return bars
         return aggregate_bars(bars, minutes)
+
+    def _breakout_long(
+        self, mark: float, bars: list[dict[str, float]], vwap: float
+    ) -> Signal | None:
+        prior_high, _ = prior_n_bar_high_low(bars, self.breakout_bars)
+        if prior_high is None or mark <= prior_high:
+            return Signal(
+                "flat",
+                mark,
+                0.0,
+                0.0,
+                vwap,
+                reason="no_breakout_long",
+                entry_mode="breakout",
+            )
+        risk = self._stop_distance(mark)
+        if risk <= 0:
+            return Signal(
+                "flat", mark, 0.0, 0.0, vwap, reason="bad_risk", entry_mode="breakout"
+            )
+        stop = mark - risk
+        tp = mark + risk * self.tp_r_multiple
+        return Signal(
+            "long",
+            mark,
+            stop,
+            tp,
+            vwap,
+            reason="vwap_bias_breakout_long",
+            entry_mode="breakout",
+        )
+
+    def _breakout_short(
+        self, mark: float, bars: list[dict[str, float]], vwap: float
+    ) -> Signal | None:
+        _, prior_low = prior_n_bar_high_low(bars, self.breakout_bars)
+        if prior_low is None or mark >= prior_low:
+            return Signal(
+                "flat",
+                mark,
+                0.0,
+                0.0,
+                vwap,
+                reason="no_breakout_short",
+                entry_mode="breakout",
+            )
+        risk = self._stop_distance(mark)
+        if risk <= 0:
+            return Signal(
+                "flat", mark, 0.0, 0.0, vwap, reason="bad_risk", entry_mode="breakout"
+            )
+        stop = mark + risk
+        tp = mark - risk * self.tp_r_multiple
+        return Signal(
+            "short",
+            mark,
+            stop,
+            tp,
+            vwap,
+            reason="vwap_bias_breakout_short",
+            entry_mode="breakout",
+        )
+
+    def _ote_long(
+        self,
+        mark: float,
+        bars: list[dict[str, float]],
+        vwap: float,
+        swing_bars: list[dict[str, float]] | None,
+    ) -> Signal:
+        reason, stop, _, _zone = evaluate_ote_long(
+            mark,
+            bars,
+            lookback=self.ote_lookback_bars,
+            fib_shallow=self.ote_fib_shallow,
+            fib_deep=self.ote_fib_deep,
+            stop_pct=self.stop_pct,
+            stop_buffer_bps=self.ote_stop_buffer_bps,
+            require_close=self.ote_require_close,
+            swing_bars=swing_bars,
+        )
+        if reason != "ote_long" or stop <= 0:
+            return Signal(
+                "flat", mark, 0.0, 0.0, vwap, reason=reason, entry_mode="ote"
+            )
+        risk = mark - stop
+        tp = mark + risk * self.tp_r_multiple
+        return Signal(
+            "long", mark, stop, tp, vwap, reason="ote_long", entry_mode="ote"
+        )
+
+    def _ote_short(
+        self,
+        mark: float,
+        bars: list[dict[str, float]],
+        vwap: float,
+        swing_bars: list[dict[str, float]] | None,
+    ) -> Signal:
+        reason, stop, _, _zone = evaluate_ote_short(
+            mark,
+            bars,
+            lookback=self.ote_lookback_bars,
+            fib_shallow=self.ote_fib_shallow,
+            fib_deep=self.ote_fib_deep,
+            stop_pct=self.stop_pct,
+            stop_buffer_bps=self.ote_stop_buffer_bps,
+            require_close=self.ote_require_close,
+            swing_bars=swing_bars,
+        )
+        if reason != "ote_short" or stop <= 0:
+            return Signal(
+                "flat", mark, 0.0, 0.0, vwap, reason=reason, entry_mode="ote"
+            )
+        risk = stop - mark
+        tp = mark - risk * self.tp_r_multiple
+        return Signal(
+            "short", mark, stop, tp, vwap, reason="ote_short", entry_mode="ote"
+        )
+
+    def _pick_entry(
+        self,
+        bias: str,
+        mark: float,
+        bars: list[dict[str, float]],
+        vwap: float,
+        swing_bars: list[dict[str, float]] | None,
+    ) -> Signal:
+        """Select OTE and/or breakout per ENTRY_MODE.
+
+        ``both``: prefer OTE when mark is inside the zone (live long/short
+        signal); otherwise fall through to breakout. If OTE is outside the
+        zone / no swing, breakout still runs. If breakout also flat, the
+        last reason (breakout's) is returned — except when mode is ``ote``
+        only, then OTE reasons surface.
+        """
+        mode = self.entry_mode
+        ote_fn = self._ote_long if bias == "long" else self._ote_short
+        brk_fn = self._breakout_long if bias == "long" else self._breakout_short
+
+        ote_sig: Signal | None = None
+        if mode in ("ote", "both"):
+            ote_sig = ote_fn(mark, bars, vwap, swing_bars)
+            if ote_sig.side in ("long", "short"):
+                return ote_sig
+            if mode == "ote":
+                return ote_sig
+
+        # breakout or both (OTE did not fire)
+        if mode in ("breakout", "both"):
+            brk = brk_fn(mark, bars, vwap)
+            assert brk is not None
+            if brk.side in ("long", "short"):
+                return brk
+            # both + OTE flat: if OTE was outside_zone / no_swing, keep that
+            # reason only when breakout also flat AND OTE actually had a zone
+            # miss worth reporting — prefer breakout reason for "no breakout"
+            # so existing tests keep seeing no_breakout_*.
+            return brk
+
+        # unreachable — mode validated in __init__
+        return Signal("flat", mark, 0.0, 0.0, vwap, reason="bad_entry_mode")
 
     def on_bar(
         self,
@@ -210,7 +401,6 @@ class VwapTrendScalp:
             return Signal("flat", mark, 0.0, 0.0, vwap, reason=vol_reason)
 
         buf = vwap * (self.buffer_bps / 10_000.0)
-        prior_high, prior_low = prior_n_bar_high_low(bars, self.breakout_bars)
 
         # Effective stop pct for max-skip check
         eff_stop_pct = self.stop_pct
@@ -219,53 +409,40 @@ class VwapTrendScalp:
         if self.max_stop_pct is not None and eff_stop_pct > self.max_stop_pct:
             return Signal("flat", mark, 0.0, 0.0, vwap, reason="stop_exceeds_max")
 
-        side: str | None = None
-        stop = 0.0
-        tp = 0.0
-        reason = ""
-
-        # Long: above VWAP bias + break of prior N-bar high
+        # VWAP bias
         if mark > vwap + buf:
-            if prior_high is None or mark <= prior_high:
-                return Signal(
-                    "flat", mark, 0.0, 0.0, vwap, reason="no_breakout_long"
-                )
-            risk = self._stop_distance(mark)
-            if risk <= 0:
-                return Signal("flat", mark, 0.0, 0.0, vwap, reason="bad_risk")
-            side = "long"
-            stop = mark - risk
-            tp = mark + risk * self.tp_r_multiple
-            reason = "vwap_bias_breakout_long"
-
-        # Short: below VWAP bias + break of prior N-bar low
+            bias = "long"
         elif mark < vwap - buf:
-            if prior_low is None or mark >= prior_low:
-                return Signal(
-                    "flat", mark, 0.0, 0.0, vwap, reason="no_breakout_short"
-                )
-            risk = self._stop_distance(mark)
-            if risk <= 0:
-                return Signal("flat", mark, 0.0, 0.0, vwap, reason="bad_risk")
-            side = "short"
-            stop = mark + risk
-            tp = mark - risk * self.tp_r_multiple
-            reason = "vwap_bias_breakout_short"
+            bias = "short"
         else:
             return Signal("flat", mark, 0.0, 0.0, vwap, reason="inside_buffer")
 
+        swing_bars = None
+        if self.ote_use_htf_swings and self.entry_mode in ("ote", "both"):
+            swing_bars = self._resolve_htf_bars(bars, htf_bars)
+
+        sig = self._pick_entry(bias, mark, bars, vwap, swing_bars)
+        if sig.side not in ("long", "short"):
+            return sig
+
         # --- Higher-timeframe VWAP confirmation ---
-        if self.htf_confirm and side in ("long", "short"):
+        if self.htf_confirm:
             htf = self._resolve_htf_bars(bars, htf_bars)
             if htf_vwap_blocks(
-                side,
+                sig.side,
                 mark,
                 htf,
                 reset_utc_hour=self.reset_utc_hour,
                 now_ms=now_ms,
             ):
                 return Signal(
-                    "flat", mark, 0.0, 0.0, vwap, reason="htf_vwap_block"
+                    "flat",
+                    mark,
+                    0.0,
+                    0.0,
+                    vwap,
+                    reason="htf_vwap_block",
+                    entry_mode=sig.entry_mode,
                 )
 
-        return Signal(side, mark, stop, tp, vwap, reason=reason)  # type: ignore[arg-type]
+        return sig

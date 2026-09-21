@@ -110,6 +110,16 @@ class Settings:
     # Journal risk_reset on start and document that restart clears daily halt
     reset_daily_risk: bool = False
 
+    # --- Entry mode / OTE add-on ---
+    # breakout | ote | both (default both: prefer OTE when in zone, else breakout)
+    entry_mode: str = "both"
+    ote_lookback_bars: int = 45
+    ote_fib_shallow: float = 0.62
+    ote_fib_deep: float = 0.79
+    ote_stop_buffer_bps: float = 0.0
+    ote_require_close: bool = False
+    ote_use_htf_swings: bool = False
+
     journal_path: str = "logs/trades.jsonl"
     killswitch_file: str = ".killswitch"
 
@@ -178,6 +188,24 @@ class Settings:
         if self.entry_cooldown_sec < 0:
             raise ValueError(
                 f"ENTRY_COOLDOWN_SEC={self.entry_cooldown_sec} must be >= 0."
+            )
+        mode = (self.entry_mode or "").strip().lower()
+        if mode not in {"breakout", "ote", "both"}:
+            raise ValueError(
+                f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both."
+            )
+        if self.ote_lookback_bars < 3:
+            raise ValueError(
+                f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
+            )
+        if not (0 < self.ote_fib_shallow < self.ote_fib_deep <= 1.0):
+            raise ValueError(
+                f"OTE fibs invalid: shallow={self.ote_fib_shallow} "
+                f"deep={self.ote_fib_deep} (need 0 < shallow < deep <= 1)."
+            )
+        if self.ote_stop_buffer_bps < 0:
+            raise ValueError(
+                f"OTE_STOP_BUFFER_BPS={self.ote_stop_buffer_bps} must be >= 0."
             )
         if self.is_live and not self.private_key:
             raise ValueError("LIVE mode requires HL_PRIVATE_KEY.")
@@ -252,6 +280,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         htf_interval=os.getenv("HTF_INTERVAL", "5m").strip() or "5m",
         entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
+        entry_mode=(os.getenv("ENTRY_MODE", "both").strip().lower() or "both"),
+        ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
+        ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
+        ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
+        ote_stop_buffer_bps=_float("OTE_STOP_BUFFER_BPS", 0.0),
+        ote_require_close=_bool("OTE_REQUIRE_CLOSE", False),
+        ote_use_htf_swings=_bool("OTE_USE_HTF_SWINGS", False),
         journal_path=os.getenv("JOURNAL_PATH", "logs/trades.jsonl"),
         killswitch_file=os.getenv("KILLSWITCH_FILE", ".killswitch"),
     )
