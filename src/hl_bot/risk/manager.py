@@ -79,10 +79,11 @@ class RiskManager:
         if equity > self.high_water_mark:
             self.high_water_mark = equity
         dd = (self.high_water_mark - equity) / self.high_water_mark if self.high_water_mark else 0.0
-        if dd >= self.max_drawdown_pct:
+        if self.max_drawdown_pct > 0 and dd >= self.max_drawdown_pct:
             self.killed = True
+        # max_daily_loss_pct <= 0 disables the daily loss halt (long paper edge tests)
         daily_loss = (self.day_start_equity - equity) / self.day_start_equity if self.day_start_equity else 0.0
-        if daily_loss >= self.max_daily_loss_pct:
+        if self.max_daily_loss_pct > 0 and daily_loss >= self.max_daily_loss_pct:
             self.halted_daily_loss = True
 
     def set_kill_switch(self, active: bool) -> None:
@@ -98,7 +99,7 @@ class RiskManager:
         self.open_positions = max(0, self.open_positions - 1)
         if pnl < 0:
             self.consecutive_losses += 1
-            if self.consecutive_losses >= self.max_consecutive_losses:
+            if self.max_consecutive_losses > 0 and self.consecutive_losses >= self.max_consecutive_losses:
                 self.pause_entries = True
         else:
             self.consecutive_losses = 0
