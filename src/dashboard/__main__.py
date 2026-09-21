@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
 
     journal = args.journal or os.getenv("JOURNAL_PATH", "logs/trades.jsonl")
     print(f"Dashboard -> http://{args.host}:{args.port}/", flush=True)
-    print(f"Journal   → {Path(journal).resolve() if Path(journal).is_absolute() else Path.cwd() / journal}", flush=True)
+    print(f"Journal   -> {Path(journal).resolve() if Path(journal).is_absolute() else Path.cwd() / journal}", flush=True)
     print("PAPER badge shown unless latest start event mode=LIVE", flush=True)
 
     import uvicorn
