@@ -81,7 +81,12 @@ class InfoClient:
         """Fetch candle snapshot if available; else return injected bars.
 
         Each bar: {t, o, h, l, c, v} with t in ms.
+
+        Hyperliquid returns an empty list when start/end are both 0, so we
+        default to the last 24 hours of candles for VWAP.
         """
+        import time
+
         coin_key = coin.upper()
         if coin_key in self._injected_bars:
             return list(self._injected_bars[coin_key])
@@ -89,14 +94,21 @@ class InfoClient:
             return list(self._injected_bars["*"])
 
         info = self._ensure_client()
-        req: dict[str, Any] = {"coin": coin, "interval": interval}
-        if start_ms is not None:
-            req["startTime"] = start_ms
-        if end_ms is not None:
-            req["endTime"] = end_ms
+        now_ms = int(time.time() * 1000)
+        if end_ms is None or end_ms <= 0:
+            end_ms = now_ms
+        if start_ms is None or start_ms <= 0:
+            start_ms = end_ms - 24 * 60 * 60 * 1000
+
+        req: dict[str, Any] = {
+            "coin": coin,
+            "interval": interval,
+            "startTime": start_ms,
+            "endTime": end_ms,
+        }
 
         try:
-            raw = info.candles_snapshot(coin, interval, start_ms or 0, end_ms or 0)
+            raw = info.candles_snapshot(coin, interval, start_ms, end_ms)
         except Exception:
             # Older SDK signature variations
             try:
