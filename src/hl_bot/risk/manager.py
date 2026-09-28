@@ -186,9 +186,13 @@ class RiskManager:
     def should_flatten(self, equity: float, kill_file_active: bool = False, env_kill: bool = False) -> tuple[bool, str]:
         self.maybe_roll_day(equity)
         self.update_equity(equity)
-        if env_kill or kill_file_active or self.kill_switch or self.killed:
+        # Env / file kill only. Drawdown sets ``killed`` inside update_equity
+        # and must not be journaled as "kill switch" when KILL_SWITCH=0.
+        if env_kill or kill_file_active or self.kill_switch:
             self.killed = True
             return True, "kill switch"
+        if self.killed:
+            return True, "max drawdown"
         if self.halted_daily_loss:
             return True, "daily loss limit"
         return False, ""
