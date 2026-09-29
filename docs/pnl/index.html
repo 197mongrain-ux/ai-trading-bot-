@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HL Testnet · PnL since Mon 9am ET</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:#000; --bg2:#0b0b0b; --panel:#0e0e0e; --border:#1a1a1a; --border2:#262626;
+  --text:#e8e8e8; --muted:#8b8b8b; --dim:#5c5c5c;
+  --green:#00c805; --green2:#3dd68c; --red:#ff4d4f; --amber:#e6c07b; --accent:#6ea8fe;
+  --mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+.topbar{display:flex;align-items:center;gap:1rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:.55rem;min-width:180px}
+.mark{color:var(--green);font-size:1.2rem}
+.brand-title{font-weight:650;font-size:14px;letter-spacing:.01em}
+.brand-sub{color:var(--muted);font-size:10px}
+.badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;border:1px solid #1a5c2a;color:var(--green);background:#06140a}
+.badge.warn{border-color:#7a5a1a;color:var(--amber);background:#140e06}
+.spacer{flex:1}
+.meta{color:var(--muted);font-size:11px}
+.wrap{max-width:1180px;margin:0 auto;padding:1rem 1.1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.65rem}
+@media (max-width:960px){.kpis{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem .85rem}
+.kpi .lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.25rem}
+.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:650}
+.kpi .sub{color:var(--dim);font-size:10px;margin-top:.2rem;font-family:var(--mono)}
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:.85rem}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:.65rem .9rem;border-bottom:1px solid var(--border);background:#0a0a0a}
+.card-h h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.card-b{padding:.85rem .9rem}
+.chart-box{height:260px;position:relative}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:.45rem .55rem;border-bottom:1px solid var(--border);text-align:left}
+th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#0a0a0a;position:sticky;top:0}
+td.num,th.num{text-align:right;font-family:var(--mono)}
+tr:hover td{background:#111}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:.12rem .4rem;border-radius:999px;border:1px solid var(--border2)}
+.pill.win{color:var(--green);border-color:#1a5c2a;background:#06140a}
+.pill.loss{color:var(--red);border-color:#7a3338;background:#1a0a0c}
+.pill.be{color:var(--amber);border-color:#7a5a1a;background:#140e06}
+.footer{color:var(--dim);font-size:11px;line-height:1.45;padding:0 .15rem}
+.footer code{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.stat-row{display:flex;flex-wrap:wrap;gap:.75rem 1.25rem}
+.stat-row .s .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.stat-row .s .v{font-family:var(--mono);font-size:14px;font-weight:600;margin-top:.1rem}
+.empty{color:var(--dim);padding:1rem 0;text-align:center}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">◆</span>
+    <div>
+      <div class="brand-title" id="title">PnL desk</div>
+      <div class="brand-sub" id="subtitle">since Mon 9:00 ET · Hyperliquid testnet</div>
+    </div>
+  </div>
+  <span class="badge" id="netBadge">TESTNET</span>
+  <div class="spacer"></div>
+  <div class="meta mono" id="generated">—</div>
+</header>
+
+<main class="wrap">
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="card-h"><h2>Equity curve</h2><span class="meta mono" id="eqHint">start → now</span></div>
+      <div class="card-b"><div class="chart-box"><canvas id="eqChart"></canvas></div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2>Session breakdown</h2></div>
+      <div class="card-b">
+        <div class="stat-row" id="breakdown"></div>
+        <div style="height:180px;margin-top:1rem"><canvas id="wlChart"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-h"><h2>Closed trades</h2><span class="meta mono" id="tradeCount">0</span></div>
+    <div class="card-b" style="padding:0;overflow:auto;max-height:420px">
+      <table>
+        <thead>
+          <tr>
+            <th>When (ET)</th><th>Symbol</th><th>Side</th><th>Result</th>
+            <th class="num">PnL</th><th class="num">Fees</th><th class="num">Net</th><th class="num">Size</th>
+          </tr>
+        </thead>
+        <tbody id="trades"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-h"><h2>Open positions</h2></div>
+    <div class="card-b" id="opens"></div>
+  </section>
+
+  <p class="footer" id="notes"></p>
+</main>
+
+<script>
+const BOARD = {"title":"PnL board since Monday 9 AM ET","since_et":"2026-09-28T09:00:00-04:00","generated_et":"2026-09-28T22:35:17.889405-04:00","starting_equity":657.0,"network":"testnet","journal_path":"(local journal)","money_source":"hl_fills","hl":{"ok":true,"reason":null,"address_redacted":"0x0520\u2026d541","fills_n":61},"summary":{"trades":7,"wins":3,"losses":4,"breakeven":0,"win_rate_pct":42.9,"gross_pnl":-10.184038,"fees":5.210606,"funding":-0.50754,"net_pnl":-15.902184,"vs_starting_usd":-15.902184,"vs_starting_pct":-2.42,"equity_now_spot_usdc":651.273794,"equity_vs_starting_usd":-5.726206,"equity_vs_starting_pct":-0.872},"closed_trades":[{"symbol":"BNB","dir":"Close Long","pnl":0.69611,"fees":0.052212,"fills":1,"sz":0.151,"closed_ts":1790610937.928,"result":"WIN","source":"hl_fills"},{"symbol":"ICP","dir":"Close Short","pnl":-5.628714,"fees":0.383319,"fills":3,"sz":287.88,"closed_ts":1790611218.14,"result":"LOSS","source":"hl_fills"},{"symbol":"BLUR","dir":"Close Long","pnl":-3.124216,"fees":0.517472,"fills":4,"sz":57406.0,"closed_ts":1790619631.955,"result":"LOSS","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-6.72677,"fees":0.981304,"fills":6,"sz":0.8176,"closed_ts":1790624234.745,"result":"LOSS","source":"hl_fills"},{"symbol":"ATOM","dir":"Close Long","pnl":1.297982,"fees":0.187713,"fills":3,"sz":240.68,"closed_ts":1790626830.454,"result":"WIN","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-5.2666,"fees":0.927285,"fills":1,"sz":0.7745,"closed_ts":1790633165.919,"result":"LOSS","source":"hl_fills"},{"symbol":"BTC","dir":"Close Long","pnl":8.56817,"fees":0.858777,"fills":5,"sz":0.0227,"closed_ts":1790636848.735,"result":"WIN","source":"hl_fills"}],"journal_closes_enriched":[{"trade_id":"899293c7","symbol":"BNB","side":"long","pnl":0.75106,"fee":0.063946,"reason":"take_profit","closed_ts":1790610932.8762608,"closed_et":"2026-09-28 11:55:32 ET","result":"WIN","source":"journal"},{"trade_id":"1ba6ed9b","symbol":"ICP","side":"short","pnl":-5.420955,"fee":0.391088,"reason":"kill switch","closed_ts":1790611214.8104095,"closed_et":"2026-09-28 12:00:14 ET","result":"LOSS","source":"journal"},{"trade_id":"c2749bc9","symbol":"0G","side":"long","pnl":0.0,"fee":0.006344,"reason":"exchange_flat","closed_ts":1790618789.899328,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"2a544201","symbol":"BTC","side":"short","pnl":0.0,"fee":0.117937,"reason":"tp","closed_ts":1790618789.9013393,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":null,"symbol":"KAITO","side":"long","pnl":0.0,"fee":0.0,"reason":"sl","closed_ts":1790618789.9023347,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"1f5b6752","symbol":"ETH","side":"short","pnl":0.0,"fee":0.148024,"reason":"exchange_flat","closed_ts":1790618789.9023347,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"01d94a66","symbol":"MORPHO","side":"short","pnl":0.0,"fee":0.002763,"reason":"exchange_flat","closed_ts":1790618789.9033349,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":null,"symbol":"BLUR","side":"long","pnl":-3.124216,"fee":0.517472,"reason":"exchange_flat","closed_ts":1790619655.161162,"closed_et":"2026-09-28 14:20:55 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"7b945784","symbol":"ETH","side":"long","pnl":-7.808221,"fee":1.309372,"reason":"sl","closed_ts":1790624248.0829701,"closed_et":"2026-09-28 15:37:28 ET","result":"LOSS","source":"journal"},{"trade_id":"ca6faeb4","symbol":"ATOM","side":"long","pnl":1.297982,"fee":0.187713,"reason":"exchange_flat","closed_ts":1790626835.0264409,"closed_et":"2026-09-28 16:20:35 ET","result":"WIN","source":"journal+hl"},{"trade_id":"ceb02e9a","symbol":"ETH","side":"long","pnl":-5.2666,"fee":0.927285,"reason":"sl","closed_ts":1790633168.2659514,"closed_et":"2026-09-28 18:06:08 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"1809462b","symbol":"BTC","side":"long","pnl":8.56817,"fee":0.858777,"reason":"exchange_flat","closed_ts":1790636850.1956823,"closed_et":"2026-09-28 19:07:30 ET","result":"WIN","source":"journal+hl"}],"open_positions":[],"journal_open_count":46,"notes":["Win rate uses closed round-trips only (HL Close-fill clusters when available).","Gross PnL = sum of HL closedPnl (or journal close/scale_out pnl fallback).","Net PnL = gross - fees + journal funding payments since window start.","Open positions prefer live HL user_state; journal open book may retain stale rows.","STARTING_EQUITY is the configured baseline (~657), not necessarily Mon 9am spot."]};
+
+function fmtUsd(n, signed=false){
+  if(n==null || Number.isNaN(n)) return "—";
+  const v = Number(n);
+  const s = (signed && v>0 ? "+" : "") + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  return "$"+s;
+}
+function cls(n){ return n>1e-9 ? "pos" : (n<-1e-9 ? "neg" : ""); }
+function et(ts){
+  if(!ts) return "—";
+  try{
+    return new Date(Number(ts)*1000).toLocaleString("en-CA",{timeZone:"America/Toronto",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false})+" ET";
+  }catch(e){ return "—"; }
+}
+
+const s = BOARD.summary || {};
+const trades = BOARD.closed_trades || [];
+document.getElementById("title").textContent = BOARD.title || "PnL board";
+document.getElementById("subtitle").textContent =
+  `since ${BOARD.since_et || "—"} · ${BOARD.network || "testnet"} · ${BOARD.money_source || ""}`;
+document.getElementById("netBadge").textContent = String(BOARD.network||"testnet").toUpperCase();
+document.getElementById("generated").textContent = "updated " + (BOARD.generated_et || "—");
+
+const kpis = [
+  {lbl:"Net PnL", val:fmtUsd(s.net_pnl,true), c:cls(s.net_pnl), sub:`vs start ${s.vs_starting_pct!=null?(s.vs_starting_pct>0?"+":"")+s.vs_starting_pct+"%":"—"}`},
+  {lbl:"Win rate", val: s.win_rate_pct!=null ? s.win_rate_pct.toFixed(1)+"%" : "n/a", c:"", sub:`${s.wins||0}W / ${s.losses||0}L / ${s.breakeven||0}BE`},
+  {lbl:"Gross PnL", val:fmtUsd(s.gross_pnl,true), c:cls(s.gross_pnl), sub:`${s.trades||0} closed`},
+  {lbl:"Fees", val:fmtUsd(s.fees), c:"neg", sub:"paid"},
+  {lbl:"Funding", val:fmtUsd(s.funding,true), c:cls(s.funding), sub:"journal"},
+  {lbl:"Spot USDC", val:fmtUsd(s.equity_now_spot_usdc), c:"", sub: s.equity_vs_starting_usd!=null ? `Δ ${fmtUsd(s.equity_vs_starting_usd,true)}` : "—"},
+];
+document.getElementById("kpis").innerHTML = kpis.map(k =>
+  `<div class="kpi"><div class="lbl">${k.lbl}</div><div class="val mono ${k.c}">${k.val}</div><div class="sub">${k.sub}</div></div>`
+).join("");
+
+document.getElementById("breakdown").innerHTML = [
+  ["Starting equity", fmtUsd(BOARD.starting_equity)],
+  ["Trades", String(s.trades||0)],
+  ["Wins", String(s.wins||0)],
+  ["Losses", String(s.losses||0)],
+  ["HL fills", String((BOARD.hl||{}).fills_n||0)],
+  ["Addr", (BOARD.hl||{}).address_redacted || "—"],
+].map(([l,v]) => `<div class="s"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("");
+
+// Equity curve from starting equity + cumulative (pnl - fees) approx using trade net
+const startEq = Number(BOARD.starting_equity||0);
+let run = startEq;
+const labels = ["Start"];
+const eq = [run];
+const tradeNets = [];
+trades.forEach((t,i) => {
+  const pnl = Number(t.pnl||0);
+  const fees = Number(t.fees!=null?t.fees:(t.fee||0));
+  const net = pnl - fees;
+  run += net;
+  labels.push((t.symbol||"?")+" #"+(i+1));
+  eq.push(Number(run.toFixed(4)));
+  tradeNets.push(net);
+});
+document.getElementById("eqHint").textContent = `${fmtUsd(startEq)} → ${fmtUsd(eq[eq.length-1])}`;
+
+const eqCtx = document.getElementById("eqChart").getContext("2d");
+const last = eq[eq.length-1];
+const lineColor = last >= startEq ? "#00c805" : "#ff4d4f";
+new Chart(eqCtx, {
+  type: "line",
+  data: {
+    labels,
+    datasets: [{
+      label: "Equity",
+      data: eq,
+      borderColor: lineColor,
+      backgroundColor: lineColor+"22",
+      fill: true,
+      tension: 0.25,
+      pointRadius: 3,
+      pointBackgroundColor: "#e8e8e8",
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:(c)=>" "+fmtUsd(c.parsed.y)}} },
+    scales:{
+      x:{ ticks:{color:"#5c5c5c", maxRotation:0, autoSkip:true, maxTicksLimit:8}, grid:{color:"#141414"} },
+      y:{ ticks:{color:"#8b8b8b", callback:(v)=>"$"+v}, grid:{color:"#141414"} }
+    }
+  }
+});
+
+new Chart(document.getElementById("wlChart"), {
+  type: "doughnut",
+  data: {
+    labels: ["Wins","Losses","BE"],
+    datasets: [{
+      data: [s.wins||0, s.losses||0, s.breakeven||0],
+      backgroundColor: ["#00c805","#ff4d4f","#e6c07b"],
+      borderWidth: 0,
+    }]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false, cutout:"68%",
+    plugins:{ legend:{position:"bottom", labels:{color:"#8b8b8b", boxWidth:10}} }
+  }
+});
+
+document.getElementById("tradeCount").textContent = trades.length + " rows";
+const tb = document.getElementById("trades");
+if(!trades.length){
+  tb.innerHTML = `<tr><td colspan="8" class="empty">No closed trades in window</td></tr>`;
+} else {
+  tb.innerHTML = trades.map(t => {
+    const pnl = Number(t.pnl||0);
+    const fees = Number(t.fees!=null?t.fees:(t.fee||0));
+    const net = pnl - fees;
+    const res = (t.result||"").toUpperCase();
+    const pill = res==="WIN"?"win":(res==="LOSS"?"loss":"be");
+    const dir = t.dir || t.side || "—";
+    return `<tr>
+      <td class="mono dim">${et(t.closed_ts)}</td>
+      <td class="mono">${t.symbol||"—"}</td>
+      <td class="muted">${dir}</td>
+      <td><span class="pill ${pill}">${res||"—"}</span></td>
+      <td class="num ${cls(pnl)}">${fmtUsd(pnl,true)}</td>
+      <td class="num neg">${fmtUsd(fees)}</td>
+      <td class="num ${cls(net)}">${fmtUsd(net,true)}</td>
+      <td class="num muted">${t.sz!=null?Number(t.sz):"—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+const opens = BOARD.open_positions || [];
+const op = document.getElementById("opens");
+if(!opens.length){
+  op.innerHTML = `<div class="empty">Flat — no open HL perps</div>`;
+} else {
+  op.innerHTML = `<table><thead><tr><th>Coin</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">uPnL</th></tr></thead><tbody>` +
+    opens.map(p => `<tr><td class="mono">${p.coin||"—"}</td><td>${p.side||"—"}</td><td class="num">${p.szi}</td><td class="num">${p.entry}</td><td class="num ${cls(p.uPnl)}">${fmtUsd(p.uPnl,true)}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+const notes = (BOARD.notes||[]).map(n => `• ${n}`).join("<br>");
+const hl = BOARD.hl || {};
+document.getElementById("notes").innerHTML =
+  `${notes}<br><br>Money source: <code>${BOARD.money_source||"—"}</code> · HL ok=${hl.ok} addr=<code>${hl.address_redacted||"—"}</code> · No private keys on this page · Testnet board only.<br>Refresh: regenerate <code>scripts/pnl_board_since_mon9am.py</code> (writes HTML + publishes).`;
+</script>
+</body>
+</html>
