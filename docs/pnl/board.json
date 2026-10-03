@@ -1,7 +1,7 @@
 {
   "title": "PnL board since Monday 9 AM ET",
   "since_et": "2026-09-28T09:00:00-04:00",
-  "generated_et": "2026-10-02T07:16:47.435675-04:00",
+  "generated_et": "2026-10-03T14:28:56.502029-04:00",
   "starting_equity": 657.0,
   "network": "testnet",
   "journal_path": "(local journal)",
@@ -10,24 +10,24 @@
     "ok": true,
     "reason": null,
     "address_redacted": "0x0520\u2026d541",
-    "fills_n": 300,
+    "fills_n": 352,
     "api": "https://api.hyperliquid-testnet.xyz"
   },
   "summary": {
-    "trades": 22,
-    "wins": 9,
-    "losses": 13,
+    "trades": 27,
+    "wins": 11,
+    "losses": 16,
     "breakeven": 0,
-    "win_rate_pct": 40.9,
-    "gross_pnl": -29.391603,
-    "fees": 21.747836,
-    "funding": 0.946917,
-    "net_pnl": -50.192522,
-    "vs_starting_usd": -50.192522,
-    "vs_starting_pct": -7.64,
-    "equity_now_spot_usdc": 616.710687,
-    "equity_vs_starting_usd": -40.289313,
-    "equity_vs_starting_pct": -6.132
+    "win_rate_pct": 40.7,
+    "gross_pnl": -30.302388,
+    "fees": 23.610778,
+    "funding": 2.570214,
+    "net_pnl": -51.342952,
+    "vs_starting_usd": -51.342952,
+    "vs_starting_pct": -7.815,
+    "equity_now_spot_usdc": 615.667454,
+    "equity_vs_starting_usd": -41.332546,
+    "equity_vs_starting_pct": -6.291
   },
   "closed_trades": [
     {
@@ -270,6 +270,61 @@
       "sz": 20.37,
       "closed_ts": 1790904033.894,
       "result": "WIN",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": -0.5369,
+      "fees": 0.084355,
+      "fills": 4,
+      "sz": 1.51,
+      "closed_ts": 1790948231.065,
+      "result": "LOSS",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": 0.328615,
+      "fees": 0.086877,
+      "fills": 4,
+      "sz": 1.56,
+      "closed_ts": 1790949119.715,
+      "result": "WIN",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": -0.7689,
+      "fees": 0.216609,
+      "fills": 12,
+      "sz": 4.01,
+      "closed_ts": 1790984709.5,
+      "result": "LOSS",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": 0.1428,
+      "fees": 0.01506,
+      "fills": 1,
+      "sz": 0.28,
+      "closed_ts": 1790985658.217,
+      "result": "WIN",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": -0.0764,
+      "fees": 0.994413,
+      "fills": 10,
+      "sz": 18.39,
+      "closed_ts": 1790998528.774,
+      "result": "LOSS",
       "source": "hl_fills"
     }
   ],
@@ -595,6 +650,66 @@
       "reason": "sl",
       "closed_ts": 1790904036.8097193,
       "closed_et": "2026-10-01 21:20:36 ET",
+      "result": "WIN",
+      "source": "journal"
+    },
+    {
+      "trade_id": "5befc346",
+      "symbol": "SOL",
+      "side": "short",
+      "pnl": -0.371144,
+      "fee": 0.112283,
+      "reason": "exchange_flat",
+      "closed_ts": 1790948233.4547899,
+      "closed_et": "2026-10-02 09:37:13 ET",
+      "result": "LOSS",
+      "source": "journal"
+    },
+    {
+      "trade_id": "73fccfe5",
+      "symbol": "SOL",
+      "side": "short",
+      "pnl": 0.287542,
+      "fee": 0.115867,
+      "reason": "exchange_flat",
+      "closed_ts": 1790949122.364486,
+      "closed_et": "2026-10-02 09:52:02 ET",
+      "result": "WIN",
+      "source": "journal"
+    },
+    {
+      "trade_id": "f4fa2dc6",
+      "symbol": "SOL",
+      "side": "short",
+      "pnl": 0.373466,
+      "fee": 0.237397,
+      "reason": "sl",
+      "closed_ts": 1790984712.3817308,
+      "closed_et": "2026-10-02 19:45:12 ET",
+      "result": "WIN",
+      "source": "journal"
+    },
+    {
+      "trade_id": "6a88d0fc",
+      "symbol": "SOL",
+      "side": "short",
+      "pnl": 0.094124,
+      "fee": 0.020118,
+      "reason": "exchange_flat",
+      "closed_ts": 1790985663.0283132,
+      "closed_et": "2026-10-02 20:01:03 ET",
+      "result": "WIN",
+      "source": "journal"
+    },
+    {
+      "trade_id": "7a2a0631",
+      "symbol": "SOL",
+      "side": "short",
+      "pnl": 2.685271,
+      "fee": 1.050586,
+      "reason": "sl",
+      "closed_ts": 1790998532.2089102,
+      "closed_et": "2026-10-02 23:35:32 ET",
       "result": "WIN",
       "source": "journal"
     }
