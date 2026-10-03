@@ -78,19 +78,161 @@ class LiveExchange:
         raise RuntimeError("SDK market_close unavailable; close manually")
 
     def set_stop_loss(
-        self, coin: str, is_buy: bool, size: float, trigger_px: float
+        self,
+        coin: str,
+        is_buy: bool,
+        size: float,
+        trigger_px: float,
+        sz_decimals: int = 0,
     ) -> Any:
-        """Place a trigger stop order if supported by the SDK."""
-        logger.warning(
-            "LIVE STOP: %s trigger=%.2f size=%.6f", coin, trigger_px, size
+        """Place a reduce-only trigger stop, tick-rounded with Decimal."""
+        from hl_bot.execution.brackets import (
+            order_response_ok,
+            quantize_size,
+            quantize_trigger_px,
+            wire_float,
         )
+
+        px = wire_float(quantize_trigger_px(trigger_px, sz_decimals))
+        sz = wire_float(quantize_size(size, sz_decimals))
+        logger.warning("LIVE STOP: %s trigger=%s size=%s", coin, px, sz)
         order_type = {
             "trigger": {
-                "triggerPx": trigger_px,
+                "triggerPx": px,
                 "isMarket": True,
                 "tpsl": "sl",
             }
         }
-        return self._exchange.order(
-            coin, is_buy, size, trigger_px, order_type, reduce_only=True
+        resp = self._exchange.order(
+            coin, is_buy, sz, px, order_type, reduce_only=True
         )
+        if not order_response_ok(resp):
+            raise RuntimeError(f"stop rejected for {coin}: {resp}")
+        return resp
+
+    def fetch_account(self):
+        """Positions, resting orders, and perp szDecimals for bracket sync."""
+        from hl_bot.execution.brackets import account_from_raw
+
+        info = self._exchange.info
+        state = info.user_state(self.account_address)
+        try:
+            raw_orders = info.frontend_open_orders(self.account_address)
+        except Exception:
+            logger.exception("frontend_open_orders failed; falling back to open_orders")
+            raw_orders = info.open_orders(self.account_address)
+        sz_decimals: dict[str, int] = {}
+        for name, asset in getattr(info, "coin_to_asset", {}).items():
+            if not isinstance(asset, int) or asset >= 10_000:
+                continue
+            dec = getattr(info, "asset_to_sz_decimals", {}).get(asset)
+            if dec is not None:
+                sz_decimals[str(name)] = int(dec)
+        return account_from_raw(state, raw_orders, sz_decimals)
+
+    def cancel_orders(self, orders: list[tuple[str, int]]) -> Any:
+        """Cancel resting orders (used to pull entry Alos before a halt)."""
+        from hl_bot.execution.brackets import order_response_ok
+
+        if not orders:
+            return None
+        resp = self._exchange.bulk_cancel(
+            [{"coin": coin, "oid": int(oid)} for coin, oid in orders]
+        )
+        if not order_response_ok(resp):
+            raise RuntimeError(f"cancel failed: {resp}")
+        return resp
+
+    def resize_model3_brackets(
+        self,
+        coin: str,
+        side: str,
+        size: float,
+        stop_px: float,
+        tp_px: float,
+        sz_decimals: int,
+        cancel_oids: list[int] | tuple[int, ...] | None = None,
+        existing_legs: list[tuple[int, str]] | tuple[tuple[int, str], ...] | None = None,
+    ) -> Any:
+        """Resize reduce-only TP/SL to the live position size.
+
+        When both legs already rest, modify them in place. Otherwise cancel
+        and place a ``positionTpsl`` pair. Triggers are Decimal-quantized
+        before they hit the wire.
+        """
+        from hl_bot.execution.brackets import (
+            order_response_ok,
+            quantize_size,
+            quantize_trigger_px,
+            wire_float,
+        )
+
+        sz = wire_float(quantize_size(size, sz_decimals))
+        sl = wire_float(quantize_trigger_px(stop_px, sz_decimals))
+        tp = wire_float(quantize_trigger_px(tp_px, sz_decimals))
+        # Closing side: sell a long, buy a short.
+        is_buy = side == "short"
+        logger.warning(
+            "LIVE BRACKETS: %s %s sz=%s sl=%s tp=%s",
+            coin,
+            side,
+            sz,
+            sl,
+            tp,
+        )
+
+        def _leg(trigger: float, kind: str) -> dict[str, Any]:
+            return {
+                "coin": coin,
+                "is_buy": is_buy,
+                "sz": sz,
+                "limit_px": trigger,
+                "order_type": {
+                    "trigger": {
+                        "triggerPx": trigger,
+                        "isMarket": True,
+                        "tpsl": kind,
+                    }
+                },
+                "reduce_only": True,
+            }
+
+        # Prefer modify when both legs already rest. Cancel+replace opens a
+        # window where a crash leaves the position naked (the BLUR failure).
+        by_kind: dict[str, list[int]] = {}
+        for oid, kind in existing_legs or []:
+            if kind in {"tp", "sl"} and oid:
+                by_kind.setdefault(kind, []).append(int(oid))
+        both_legs = (
+            len(by_kind.get("sl", [])) == 1
+            and len(by_kind.get("tp", [])) == 1
+            and len(existing_legs or []) == 2
+        )
+        if both_legs:
+            modifies = [
+                {"oid": by_kind[kind][0], "order": _leg(trigger, kind)}
+                for kind, trigger in (("sl", sl), ("tp", tp))
+            ]
+            try:
+                modified = self._exchange.bulk_modify_orders_new(modifies)
+            except Exception:
+                logger.exception("bracket modify failed for %s; falling back to replace", coin)
+            else:
+                if order_response_ok(modified):
+                    return modified
+                logger.error("bracket modify rejected for %s: %s", coin, modified)
+
+        oids = [int(oid) for oid in (cancel_oids or []) if oid]
+        if oids:
+            cancel_resp = self._exchange.bulk_cancel(
+                [{"coin": coin, "oid": oid} for oid in oids]
+            )
+            if not order_response_ok(cancel_resp):
+                raise RuntimeError(f"bracket cancel failed for {coin}: {cancel_resp}")
+        resp = self._exchange.bulk_orders(
+            [_leg(sl, "sl"), _leg(tp, "tp")],
+            grouping="positionTpsl",
+        )
+        if not order_response_ok(resp):
+            raise RuntimeError(f"bracket place failed for {coin}: {resp}")
+        return resp
