@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hl_bot.strategy.model_b.risk import heal_stop, stop_is_valid, widen_stop_for_fill
+from hl_bot.strategy.model_b.risk import (
+    heal_stop,
+    place_stop,
+    stop_clears_fees,
+    stop_is_valid,
+    take_profit,
+    tp_is_valid,
+    widen_stop_for_fill,
+)
 from hl_bot.strategy.model_b.types import AloIntent, TradePrint
 
 # 0 = no maker timer. Cancel only when the thesis is stale.
@@ -49,6 +57,8 @@ class WorkingOrder:
     tif: str = "Alo"
     sweep_px: float | None = None
     tick: float = 1.0
+    pool_px: float | None = None
+    tp_r: float = 2.5
 
 
 @dataclass
@@ -128,6 +138,8 @@ class ThesisBook:
             tif="Alo",
             sweep_px=intent.sweep_px,
             tick=intent.tick if intent.tick > 0 else max(abs(intent.limit_px - intent.stop), 1e-12),
+            pool_px=intent.pool_px,
+            tp_r=intent.tp_r,
         )
         self._state(intent.coin).working = order
         return order
@@ -183,19 +195,38 @@ class ThesisBook:
         st = self._coins.get(coin.upper())
         return None if st is None else st.position
 
-    def _fill(self, order: WorkingOrder, price: float, ts: float) -> OpenPosition:
+    def _fill(
+        self,
+        order: WorkingOrder,
+        price: float,
+        ts: float,
+        size: float | None = None,
+    ) -> OpenPosition:
         st = self._state(order.coin)
-        stop = widen_stop_for_fill(order.side, price, order.stop, order.limit_px, order.tick)
-        if not stop_is_valid(order.side, price, stop):
-            nudge = order.tick if order.tick > 0 else max(abs(price) * 1e-6, 1e-8)
-            stop = price - nudge if order.side == "long" else price + nudge
+        # A partial or margin-trimmed fill brackets the filled size, not the
+        # size that was requested before the exchange cut it.
+        fill_size = order.size
+        if size is not None and float(size) > 0:
+            fill_size = float(size)
+        stop = widen_stop_for_fill(
+            order.side, price, order.stop, order.limit_px, order.tick, tp_r=order.tp_r
+        )
+        if not stop_is_valid(order.side, price, stop) or not stop_clears_fees(
+            price, stop, tick=order.tick, tp_r=order.tp_r
+        ):
+            pushed = place_stop(order.side, price, price, order.tick, tp_r=order.tp_r)
+            if pushed is not None:
+                stop = pushed
+        tp = take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
+        if not tp_is_valid(order.side, price, tp):
+            tp = order.take_profit
         pos = OpenPosition(
             coin=order.coin,
             side=order.side,
-            size=order.size,
+            size=fill_size,
             entry=price,
             stop=stop,
-            take_profit=order.take_profit,
+            take_profit=tp,
             swing_id=order.swing_id,
             opened_at=ts,
         )
@@ -244,6 +275,7 @@ class ThesisBook:
         price: float,
         ts: float,
         crossed: bool | None,
+        size: float | None = None,
     ) -> OpenPosition | CloseEvent | None:
         """Live fills.
 
@@ -264,7 +296,12 @@ class ThesisBook:
         order = st.working
         if oid is not None and order.oid is not None and oid != order.oid:
             return None
-        return self._fill(order, price if price > 0 else order.limit_px, ts)
+        return self._fill(
+            order,
+            price if price > 0 else order.limit_px,
+            ts,
+            size=size,
+        )
 
     def try_exit(self, coin: str, price: float) -> CloseEvent | None:
         """Stop or TP only. Flow / delta is not consulted."""

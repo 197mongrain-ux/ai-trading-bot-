@@ -4,9 +4,11 @@ Arm when the hunt coin, the allowed side, a far-enough confirmed swing,
 and the full tape (sweep, reclaim, absorb, window delta, last 15s) all
 pass, and the coin has no live thesis on that swing. Directional bias
 drops the other side. Bias NONE allows both. The order is a post-only Alo
-anchored at the sweep, sized from RISK_PER_TRADE of unified equity to a
-stop past the sweep and at least one tick beyond the Alo, with TP1 at ~2.5R and never beyond the
-untaken pool on that side.
+anchored at the sweep, sized from RISK_PER_TRADE of the spot USDC
+balance (not perp account value) to a stop past the further of the sweep
+extreme and the Alo. That distance is wide enough that 2.5R clears a
+maker+taker round trip — a one-tick stop fails closed. TP1 is ~2.5R
+(clamped to 1–3) and never beyond the untaken pool on that side.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from hl_bot.strategy.model_b.risk import (
     assert_policy,
     size_from_stop,
     place_stop,
+    stop_clears_fees,
     take_profit,
     tp_is_valid,
 )
@@ -104,6 +107,10 @@ class ModelBEngine:
         ``score``, when passed, is written on the log line unchanged
         (clamped to 0–9). It is not compared to 7/9 and it is not combined
         with any flow flag. The default score is tape density only.
+
+        ``equity`` is the spot USDC balance the 2% risk is taken from.
+        Paper tests pass that balance in. Live passes the spot read, not
+        perp account value.
         """
         coin_u = coin.upper()
         window = window_prints(prints, coin=coin_u, now=now)
@@ -191,8 +198,8 @@ class ModelBEngine:
             if limit is None:
                 return _done(NO_ALO, **fields)
 
-            stop = place_stop(side, metrics.sweep_price, limit, tick)
-            if stop is None or not (abs(limit - stop) >= tick * (1 - 1e-9)):
+            stop = place_stop(side, metrics.sweep_price, limit, tick, tp_r=self.tp_r)
+            if stop is None or not stop_clears_fees(limit, stop, tick=tick, tp_r=self.tp_r):
                 return _done(BAD_STOP, **fields)
 
             try:
@@ -230,6 +237,8 @@ class ModelBEngine:
                 work_sec=self.alo_timeout_sec,
                 sweep_px=metrics.sweep_price,
                 tick=tick,
+                pool_px=None if pool is None else pool.price,
+                tp_r=self.tp_r,
             )
             return _done(None, armed=True, intent=intent, **fields)
 

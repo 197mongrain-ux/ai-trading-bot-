@@ -126,7 +126,9 @@ def run_model_b(
         min_prints=settings.model_b_min_prints,
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
     )
-    # Account rails only. Position size is equity × RISK_PER_TRADE / stop.
+    # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
+    # Paper tests pass the running equity in place of that balance. Live
+    # reads spotClearinghouseState and does not use perp account value.
     risk = RiskManager(
         starting_equity=settings.starting_equity,
         risk_per_trade=settings.risk_per_trade,
@@ -241,6 +243,7 @@ def run_model_b(
                     price=fill.price,
                     ts=fill.ts,
                     crossed=fill.crossed,
+                    size=fill.size,
                 )
                 if isinstance(applied, OpenPosition):
                     summary["opens"] += 1
@@ -275,6 +278,28 @@ def run_model_b(
         active = session_coins(now)
         if allow is not None:
             active = tuple(c for c in active if c in allow)
+
+        # Live dollar risk is 2% of spot USDC. A missing read skips new
+        # arms. It is not replaced with perp account value or STARTING_EQUITY.
+        risk_base: float | None
+        if settings.is_live:
+            user = settings.account_address or getattr(live, "account_address", "") or ""
+            spot = info.spot_usdc_balance(user)
+            if spot is None or spot <= 0:
+                risk_base = None
+                logger.warning(
+                    "MODEL_B no spot USDC balance; skipping new arms "
+                    "(not sizing off perp account value)"
+                )
+            else:
+                risk_base = float(spot)
+                if iterations == 1:
+                    logger.info(
+                        "MODEL_B sizing off spot USDC %.4f (not perp account value)",
+                        risk_base,
+                    )
+        else:
+            risk_base = equity
 
         for coin in active:
             prints = feed.prints(coin)
@@ -337,6 +362,21 @@ def run_model_b(
                 continue
             if risk.halted_daily_loss or risk.killed:
                 continue
+            if risk_base is None:
+                summary["fails"] += 1
+                journal.log(
+                    "model_b_fail",
+                    entry_mode="model_b",
+                    coin=coin,
+                    fail_reason="NO_SPOT_USDC",
+                    armed=False,
+                )
+                logger.info(
+                    "MODEL_B FAIL %s reason=NO_SPOT_USDC "
+                    "(no spot USDC; not using perp account value)",
+                    coin,
+                )
+                continue
 
             try:
                 end_ms = int(now * 1000)
@@ -365,7 +405,7 @@ def run_model_b(
                 pools=pools,
                 best_bid=bid,
                 best_ask=ask,
-                equity=equity,
+                equity=risk_base,
                 tick=tick,
             )
             if not decision.armed or decision.intent is None:

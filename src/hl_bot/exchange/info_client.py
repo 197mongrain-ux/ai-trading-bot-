@@ -104,6 +104,50 @@ def _post_candle_snapshot(
         return int(exc.code), None
 
 
+def _post_info(base_url: str, payload: dict, timeout: float = 15.0) -> tuple[int, object]:
+    """One POST /info. No retries."""
+    url = base_url.rstrip("/") + "/info"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            status = int(getattr(resp, "status", 200) or 200)
+            return status, json.loads(raw.decode() or "null")
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), None
+
+
+def parse_spot_usdc_total(payload: object) -> float | None:
+    """USDC ``total`` from a ``spotClearinghouseState`` body.
+
+    Perp ``marginSummary.accountValue`` is not read. A payload with no
+    USDC row is ``None``, not zero, so a bad body cannot size a trade.
+    A present USDC total of 0 is a real empty balance.
+    """
+    if not isinstance(payload, dict):
+        return None
+    balances = payload.get("balances")
+    if not isinstance(balances, list):
+        return None
+    for row in balances:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("coin") or "").upper() != "USDC":
+            continue
+        try:
+            total = float(row.get("total"))
+        except (TypeError, ValueError):
+            return None
+        if total < 0:
+            return None
+        return total
+    return None
+
+
 def _parse_candle_rows(raw: object) -> list[dict[str, float]]:
     if not isinstance(raw, list):
         return []
@@ -158,6 +202,8 @@ class InfoClient:
         self._injected_bars: dict[str, list[dict[str, float]]] = {}
         self._candles = _CandleCache()
         self._now = time.time
+        self._has_injected_spot = False
+        self._injected_spot_usdc: float | None = None
 
     def _ensure_client(self) -> Any:
         if self._info is None:
@@ -288,6 +334,37 @@ class InfoClient:
         bars = _parse_candle_rows(raw)
         self._candles.store(key, bars, now)
         return _slice_bars(bars, start_ms, end_ms)
+
+    def spot_usdc_balance(self, user: str | None) -> float | None:
+        """Spot USDC ``total`` for ``user``. Not perp account value.
+
+        Model B sizes 2% of this balance. A thin perp ``accountValue`` is
+        the wrong base when the USDC sits in spot. ``None`` means the
+        balance could not be read — callers must not substitute perp AV.
+        An injected balance (tests) is returned without a network call.
+        """
+        if self._has_injected_spot:
+            return self._injected_spot_usdc
+        user = (user or "").strip()
+        if not user:
+            return None
+        try:
+            status, raw = _post_info(
+                self.base_url,
+                {"type": "spotClearinghouseState", "user": user},
+            )
+        except Exception as exc:
+            logger.warning("spotClearinghouseState failed: %s", exc)
+            return None
+        if status != 200:
+            logger.warning("spotClearinghouseState HTTP %s", status)
+            return None
+        return parse_spot_usdc_total(raw)
+
+    def inject_spot_usdc(self, balance: float | None) -> None:
+        """Force the spot USDC balance. ``None`` is a failed read, not zero."""
+        self._has_injected_spot = True
+        self._injected_spot_usdc = None if balance is None else float(balance)
 
     def inject_bars(self, bars: list[dict[str, float]], coin: str | None = None) -> None:
         """Inject synthetic bars (for tests / offline VWAP).

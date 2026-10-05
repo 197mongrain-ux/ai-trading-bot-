@@ -21,11 +21,13 @@ from hl_bot.exchange.hl_trades import (
     parse_user_fill,
     trades_subscribe,
     ws_url,
+    UserFill,
 )
 from hl_bot.exchange.info_client import (
     CANDLE_BACKOFF_BASE_SEC,
     CANDLE_TTL_SEC,
     InfoClient,
+    parse_spot_usdc_total,
 )
 from hl_bot.execution.loop import run_bot
 from hl_bot.execution.model_b_loop import format_model_b_fail, run_model_b
@@ -42,10 +44,12 @@ from hl_bot.strategy.model_b.risk import (
     STRATEGY_KILL_ENABLED,
     flow_exit_reason,
     heal_stop,
+    ROUND_TRIP_FEE_RATE,
     place_stop,
     size_from_stop,
     soft_prop_allows,
     stop_beyond_extreme,
+    stop_clears_fees,
     take_profit,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
@@ -641,17 +645,21 @@ def test_default_rests_alo_until_sweep_is_stale():
 
 
 def test_lit_short_stop_is_not_the_alo_tick():
-    """Joining the ask one tick above the sweep must not use that tick as the stop."""
+    """One tick past a LIT Alo is fee bleed. The stop has to clear 2.5R fees."""
     tick = 0.0001
     sweep = 3.9046
     limit = alo_limit("short", sweep, sweep, sweep + tick, tick)
     assert limit == pytest.approx(3.9047)
     naive = stop_beyond_extreme("short", sweep, tick)
     assert naive == pytest.approx(limit)
+    # The old 1-tick stop (3.9048, or the Alo tick itself) does not clear fees.
+    assert stop_clears_fees(limit, limit + tick, tick=tick) is False
     stop = place_stop("short", sweep, limit, tick)
     assert stop is not None
-    assert stop > limit
-    assert stop - limit == pytest.approx(tick)
+    assert stop == pytest.approx(3.9057)
+    dist = stop - limit
+    assert dist > tick * 2
+    assert 2.5 * dist >= limit * ROUND_TRIP_FEE_RATE
 
     now = _now()
     book = ThesisBook()
@@ -661,20 +669,120 @@ def test_lit_short_stop_is_not_the_alo_tick():
         limit_px=limit,
         size=10,
         stop=stop,
-        take_profit=limit - 2.5 * (stop - limit),
+        take_profit=limit - 2.5 * dist,
         swing_id="LIT:high:1",
         sweep_px=sweep,
         tick=tick,
+        tp_r=2.5,
     )
     book.post(intent, now)
-    # Fill improves onto the old 1-tick stop. The open stop has to move wider.
+    # Fill lands on the old 1-tick level. The open stop stays at real room.
     opened = book.apply_user_fill(
         coin="LIT", oid=None, price=naive, ts=now + 1, crossed=False
     )
     assert opened is not None
     assert opened.entry == pytest.approx(naive)
-    assert opened.stop > opened.entry
-    assert opened.entry != opened.stop
+    assert opened.stop == pytest.approx(3.9057)
+    assert opened.stop - opened.entry > tick
+    assert stop_clears_fees(opened.entry, opened.stop, tick=tick)
+
+
+def test_eth_one_tick_arm_is_widened_past_liquidity():
+    """Live ETH long 14:38 ET: 2701.6 / 2701.5 / 2701.8 was one tick of R.
+
+    The stop is the fee room past the further of the sweep and the Alo,
+    not one tick. 2.5R of that distance clears the 6 bp round trip.
+    """
+    tick = 0.1
+    entry = 2701.6
+    one_tick = 2701.5
+    assert stop_clears_fees(entry, one_tick, tick=tick) is False
+    # Sweep extreme and Alo on the same tick: room is past that price.
+    stop = place_stop("long", entry, entry, tick)
+    assert stop == pytest.approx(2700.9)
+    dist = entry - stop
+    assert dist == pytest.approx(0.7)
+    assert 2.5 * dist >= entry * ROUND_TRIP_FEE_RATE
+    tp = take_profit("long", entry, stop, None, tp_r=2.5)
+    assert tp == pytest.approx(2703.35)
+    assert tp != pytest.approx(2701.8)
+    # Sweep a tick under the Alo: the anchor is the further (lower) price.
+    past_sweep = place_stop("long", 2701.5, entry, tick)
+    assert past_sweep == pytest.approx(2700.8)
+    assert entry - past_sweep > dist
+
+    now = _now()
+    t0 = now - 400
+    bars = [
+        {"t": t0, "o": 2710, "h": 2712, "l": 2708, "c": 2709, "v": 1},
+        {"t": t0 + 60, "o": 2709, "h": 2710, "l": 2702.0, "c": 2706, "v": 1},
+        {"t": t0 + 120, "o": 2706, "h": 2711, "l": 2705, "c": 2710, "v": 1},
+        {"t": t0 + 180, "o": 2710, "h": 2714, "l": 2707, "c": 2712, "v": 1},
+    ]
+    prints = _long_prints(now, sweep_px=2701.6, last_price=2704.0, final_price=2704.0)
+    # Prefix prints in the helper sit at 104. On an ETH swing those would
+    # be the sweep extreme, so rewrite them onto the reclaim price.
+    prints = [
+        replace(p, price=2704.0) if p.price == 104.0 else p
+        for p in prints
+    ]
+    decision = _decide(
+        prints,
+        bars,
+        [Pool("PDH", 2800.0, False)],
+        bid=2703.9,
+        ask=2704.1,
+        tick=tick,
+        equity=8000.0,
+    )
+    assert decision.armed is True
+    assert decision.fail_reason is None
+    intent = decision.intent
+    assert intent is not None
+    assert intent.limit_px == pytest.approx(2701.6)
+    assert intent.stop == pytest.approx(2700.9)
+    assert intent.take_profit == pytest.approx(2703.35)
+    assert intent.take_profit <= 2800
+    assert stop_clears_fees(intent.limit_px, intent.stop, tick=tick)
+    # 2% of 8000 over a 0.7 stop wants ~77x notional. The 20x cap trims it.
+    untrimmed = (8000.0 * 0.02) / 0.7
+    assert intent.size < untrimmed
+    assert intent.size * intent.limit_px <= 8000.0 * 20 + 1e-6
+    sized, _dollar = size_from_stop(8000.0, intent.limit_px, intent.stop, risk_pct=0.02)
+    assert intent.size == pytest.approx(sized)
+
+
+def test_brackets_use_filled_size_when_margin_trimmed():
+    """The exchange can fill less than the margin-capped order. Bracket that fill."""
+    now = _now()
+    entry = 2701.6
+    stop = place_stop("long", entry, entry, 0.1)
+    assert stop is not None
+    requested, _dollar = size_from_stop(8000.0, entry, stop, risk_pct=0.02)
+    assert requested * entry <= 8000.0 * 20 + 1e-6
+    book = ThesisBook()
+    intent = AloIntent(
+        coin="ETH",
+        side="long",
+        limit_px=entry,
+        size=requested,
+        stop=stop,
+        take_profit=take_profit("long", entry, stop, None),
+        swing_id="ETH:low:1",
+        sweep_px=entry,
+        tick=0.1,
+        tp_r=2.5,
+    )
+    book.post(intent, now, oid=4)
+    filled = requested / 4
+    opened = book.apply_user_fill(
+        coin="ETH", oid=4, price=entry, ts=now + 1, crossed=False, size=filled
+    )
+    assert opened is not None
+    assert opened.size == pytest.approx(filled)
+    assert opened.size < requested
+    assert opened.stop == pytest.approx(stop)
+    assert stop_clears_fees(opened.entry, opened.stop, tick=0.1)
 
 
 def test_no_second_alo_no_average_down_no_market_and_stop_consumes_thesis():
@@ -1127,6 +1235,7 @@ def test_live_path_places_alo_not_market(tmp_path):
     now = _now()
     info = InfoClient()
     info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(5000.0)
     feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
 
     class FakeLive:
@@ -1178,3 +1287,167 @@ def test_live_path_places_alo_not_market(tmp_path):
     assert fake.alos[0][0] == "BTC"
     assert fake.alos[0][1] is True
     assert fake.markets == []
+
+
+def test_spot_usdc_total_ignores_perp_account_value():
+    assert parse_spot_usdc_total(
+        {
+            "balances": [
+                {"coin": "USDC", "token": 0, "hold": "10", "total": "8000.5"},
+                {"coin": "HYPE", "total": "3"},
+            ]
+        }
+    ) == pytest.approx(8000.5)
+    # A present zero is an empty wallet, not a missing read.
+    assert parse_spot_usdc_total({"balances": [{"coin": "USDC", "total": "0"}]}) == 0
+    # Perp clearinghouse account value is not a sizing base.
+    assert parse_spot_usdc_total({"marginSummary": {"accountValue": "12.5"}}) is None
+    assert parse_spot_usdc_total({"balances": [{"coin": "HYPE", "total": "3"}]}) is None
+
+
+def test_live_size_is_two_percent_of_spot_usdc_not_starting_equity(tmp_path):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(2500.0)
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            self.alos.append(size)
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 3}}]}}}
+
+    fake = FakeLive()
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            starting_equity=9000.0,
+            trading_mode="live",
+            i_understand_live_trading=True,
+            private_key="0x" + "ab" * 32,
+            network="testnet",
+            journal_path=str(tmp_path / "spot.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=1,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["arms"] == 1
+    # 2% of spot 2500 / $1 stop = 50. 2% of STARTING_EQUITY 9000 would be 180.
+    assert fake.alos == [pytest.approx(50.0)]
+
+
+def test_live_without_spot_usdc_does_not_arm(tmp_path):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(None)
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+
+        def place_alo(self, *args, **kwargs):
+            self.alos.append(args)
+            raise AssertionError("sized without spot USDC")
+
+    fake = FakeLive()
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            starting_equity=5000.0,
+            trading_mode="live",
+            i_understand_live_trading=True,
+            private_key="0x" + "cd" * 32,
+            network="testnet",
+            journal_path=str(tmp_path / "nosspot.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=1,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["arms"] == 0
+    assert fake.alos == []
+    assert summary["fails"] >= 1
+    rows = TradeJournal(tmp_path / "nosspot.jsonl").read_all()
+    assert any(r.get("fail_reason") == "NO_SPOT_USDC" for r in rows)
+
+
+def test_live_brackets_use_filled_alo_size(tmp_path):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.stops = []
+            self.tps = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 11}}]}}}
+
+        def set_stop_loss(self, coin, is_buy, size, trigger_px):
+            self.stops.append((size, trigger_px))
+
+        def set_take_profit(self, coin, is_buy, size, trigger_px):
+            self.tps.append((size, trigger_px))
+
+    fake = FakeLive()
+
+    def sleep_fn(_sec):
+        feed._fills.append(UserFill("BTC", 11, 99.0, 40.0, now + 1, False))
+
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            trading_mode="live",
+            i_understand_live_trading=True,
+            private_key="0x" + "ef" * 32,
+            network="testnet",
+            journal_path=str(tmp_path / "fill.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=2,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["arms"] == 1
+    assert summary["opens"] == 1
+    assert fake.stops and fake.stops[0][0] == pytest.approx(40.0)
+    assert fake.tps and fake.tps[0][0] == pytest.approx(40.0)
+    assert fake.stops[0][1] == pytest.approx(98.0)
+    rows = TradeJournal(tmp_path / "fill.jsonl").read_all()
+    opened = [r for r in rows if r["event"] == "open"]
+    assert opened and opened[0]["size"] == pytest.approx(40.0)

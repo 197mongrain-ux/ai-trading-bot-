@@ -177,7 +177,7 @@ class Settings:
             if abs(self.risk_per_trade - 0.02) > 1e-12:
                 raise ValueError(
                     f"RISK_PER_TRADE={self.risk_per_trade} — Model B sizes at "
-                    "RISK_PER_TRADE=0.02 (2% of unified equity)."
+                    "RISK_PER_TRADE=0.02 (max 2% of spot USDC, not perp account value)."
                 )
         elif not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
@@ -291,7 +291,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_min_prints = density_min_prints()
     else:
         model_b_min_prints = MIN_PRINTS
-    # Model B is 2% of unified equity. Scalp stays at 0.5% when the var is unset.
+    # Model B is max 2% of spot USDC. Scalp stays at 0.5% when the var is unset.
     risk_default = 0.02 if entry_mode == "model_b" else 0.005
     # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
     max_open = _int("MAX_OPEN_POSITIONS", 0)
