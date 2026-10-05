@@ -94,3 +94,61 @@ class LiveExchange:
         return self._exchange.order(
             coin, is_buy, size, trigger_px, order_type, reduce_only=True
         )
+
+    def place_alo(
+        self,
+        coin: str,
+        is_buy: bool,
+        size: float,
+        limit_px: float,
+        leverage: int = 20,
+    ) -> Any:
+        """Post-only Alo. Model B never crosses and never falls back to market.
+
+        40× is rejected. Leverage is updated to 20 before the order.
+        """
+        if int(leverage) != 20:
+            raise ValueError(f"Model B is 20x only (40x off); got {leverage}")
+        logger.warning(
+            "LIVE ALO: %s %s size=%.6f px=%.6f lev=20x tif=Alo",
+            "BUY" if is_buy else "SELL",
+            coin,
+            size,
+            limit_px,
+        )
+        try:
+            self._exchange.update_leverage(20, coin, is_cross=True)
+        except Exception as exc:
+            logger.error("update_leverage failed: %s", exc)
+        order_type = {"limit": {"tif": "Alo"}}
+        return self._exchange.order(
+            coin,
+            is_buy,
+            size,
+            limit_px,
+            order_type,
+            reduce_only=False,
+        )
+
+    def cancel_order(self, coin: str, oid: int) -> Any:
+        """Cancel a resting Alo. Used when the 20s work window expires."""
+        logger.warning("LIVE CANCEL: %s oid=%s", coin, oid)
+        return self._exchange.cancel(coin, oid)
+
+    def set_take_profit(
+        self, coin: str, is_buy: bool, size: float, trigger_px: float
+    ) -> Any:
+        """Reduce-only TP trigger. Not a flow exit."""
+        logger.warning(
+            "LIVE TP: %s trigger=%.6f size=%.6f", coin, trigger_px, size
+        )
+        order_type = {
+            "trigger": {
+                "triggerPx": trigger_px,
+                "isMarket": True,
+                "tpsl": "tp",
+            }
+        }
+        return self._exchange.order(
+            coin, is_buy, size, trigger_px, order_type, reduce_only=True
+        )

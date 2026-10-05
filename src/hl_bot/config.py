@@ -111,8 +111,12 @@ class Settings:
     reset_daily_risk: bool = False
 
     # --- Entry mode / OTE add-on ---
-    # breakout | ote | both (default both: prefer OTE when in zone, else breakout)
+    # breakout | ote | both | model_b
+    # model_b is a separate hunt (sweep/reclaim Alo). It does not wrap
+    # breakout/OTE and it does not use the score as a gate.
     entry_mode: str = "both"
+    # Model B TP1 multiple before the pool cap. Default 2.5, must stay in [1, 3].
+    model_b_tp_r: float = 2.5
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -169,6 +173,10 @@ class Settings:
             )
         if not (1.0 <= self.tp_r_multiple <= 3.0):
             raise ValueError(f"TP_R_MULTIPLE={self.tp_r_multiple} must be in [1, 3].")
+        if (self.entry_mode or "").strip().lower() == "model_b" and self.leverage != 20:
+            raise ValueError(
+                f"LEVERAGE={self.leverage} — Model B is 20x only (40x off)."
+            )
         if self.leverage < 1 or self.leverage > 20:
             raise ValueError(f"LEVERAGE={self.leverage} must be in [1, 20].")
         if self.stop_pct <= 0:
@@ -200,9 +208,13 @@ class Settings:
                 f"ENTRY_COOLDOWN_SEC={self.entry_cooldown_sec} must be >= 0."
             )
         mode = (self.entry_mode or "").strip().lower()
-        if mode not in {"breakout", "ote", "both"}:
+        if mode not in {"breakout", "ote", "both", "model_b"}:
             raise ValueError(
-                f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both."
+                f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both|model_b."
+            )
+        if not (1.0 <= self.model_b_tp_r <= 3.0):
+            raise ValueError(
+                f"MODEL_B_TP_R={self.model_b_tp_r} must be in [1, 3]."
             )
         if self.ote_lookback_bars < 3:
             raise ValueError(
@@ -305,6 +317,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
         entry_mode=(os.getenv("ENTRY_MODE", "both").strip().lower() or "both"),
+        model_b_tp_r=_float("MODEL_B_TP_R", 2.5),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

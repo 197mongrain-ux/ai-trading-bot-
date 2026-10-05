@@ -47,7 +47,7 @@ ICT-lite pullback entry alongside the 1m breakout scalp. **OTE ≈ the 62%–79%
 
 **Short:** mirror (VWAP short bias, swing high→low impulse, OTE zone on the retrace up).
 
-**`ENTRY_MODE`** = `breakout` | `ote` | `both` (default **`both`**):
+**`ENTRY_MODE`** = `breakout` | `ote` | `both` | `model_b` (default **`both`**):
 - `breakout` — existing N-bar micro breakout only.
 - `ote` — OTE pullback only (reasons: `ote_long` / `ote_short` / `ote_no_swing` / `ote_outside_zone`).
 - `both` — **prefer OTE when mark is in the zone**; otherwise try breakout. Session / vol / HTF / cooldown filters still apply before either path.
@@ -57,6 +57,43 @@ Long OTE zone = `[110 − 0.79×10, 110 − 0.62×10]` = **`[102.1, 103.8]`**.
 Mark 103.0 inside → `ote_long`. With `STOP_PCT=0.0015`, pct stop ≈ 102.845; zone stop at 102.1 is wider → use pct stop 102.845 so risk stays 0.15%.
 
 Env knobs: `ENTRY_MODE`, `OTE_LOOKBACK_BARS`, `OTE_FIB_SHALLOW`, `OTE_FIB_DEEP`, `OTE_STOP_BUFFER_BPS`, `OTE_REQUIRE_CLOSE`, `OTE_USE_HTF_SWINGS`. Journal `open` events log `entry_mode` + `reason`.
+
+### Model B (testnet hunt this week)
+
+`ENTRY_MODE=model_b` is a **separate** entry mode. It does not run inside the VWAP breakout/OTE path, and it does not sit on top of a Model 3 score door. A 7/9 or 9/9 score is written to the journal and then ignored. A low score does not block. `HEAVY` / `VOL_OK` is a tag only. There is no `FLOW_OK` pre-place gate.
+
+```bash
+# .env — paper first, then testnet live with the usual gate
+TRADING_MODE=paper
+HL_NETWORK=testnet
+# HL_API_URL=https://api.hyperliquid-testnet.xyz
+ENTRY_MODE=model_b
+LEVERAGE=20          # 20x only; 40x is rejected
+MODEL_B_TP_R=2.5     # clamped to [1, 3], then capped at the untaken pool
+```
+
+```bash
+python -m hl_bot run
+```
+
+`SYMBOLS` is not the hunt list in this mode. The clock picks the coins (America/New_York):
+
+| When | Coins |
+|------|--------|
+| 09:00–16:00 ET (16:00 exclusive) | BTC, ETH, NEAR, PUMP, SOL, LIT, AAVE, ONDO, WLD, TAO |
+| After hours | BTC, ETH, SOL |
+
+What it does:
+
+- **Bias** is the nearest untaken pool (PDH / PDL / WKH / WKL). Pool above price drops shorts; pool below drops longs; no pool or a tie drops both. Bias never arms. The pool is the TP cap, not the entry.
+- **Data** is aggressor trade prints `{ts, coin, price, size, side}` from the Hyperliquid trades websocket (`B` = buy aggressor, `A` = sell aggressor). A print with no side fails closed as `NO_SIDE`. Book depth is not an entry input. Best bid/ask is used only to keep the Alo from crossing.
+- **Arm** on the latest confirmed 1-minute swing opposite the bias (long = swing low, short = swing high), ignoring a swing closer than 3 ticks to the last trade. The 90s window needs at least 30 prints (`THIN_TAPE` otherwise). Long: a print at least 1 tick through the swing low, last trade back above it, absorb (sell size sweep→reclaim / buy size reclaim→now) ≥ 1.5, window delta not negative, last 15s delta not negative. Short is the mirror.
+- **Order** is a post-only Alo immediately, never a market. Long rests at the swept low, or the best bid if that low would cross. Short mirrors. It works for 20s. Unfilled cancel ends that thesis until a new swing. One thesis per coin: no average-down, no second Alo, no re-entry after cancel or stop on that swing.
+- **Risk** is 2% of equity divided by the stop distance. The stop is 1 tick past the sweep extreme. This 2% is **not** `RISK_PER_TRADE` (that knob stays the scalp 0.25–0.5% check). TP1 is ~2.5R and is never placed beyond the untaken pool. A heal cannot replace a wider stop with a tighter one. Soft-prop, strategy kill, and flow exits are off.
+
+Every arm and fail is journaled (`model_b_arm` / `model_b_fail`) with coin, bias, pool, swing, sweep price, absorb, window delta, last-15s delta, score, volume tag, and one fail reason: `NO_SIDE`, `THIN_TAPE`, `NO_SWEEP`, `NO_RECLAIM`, `ABSORB`, `DELTA`, `LAST_15s` (plus `NO_BIAS`, `NO_SWING`, `OUT_OF_SESSION`, `THESIS_DONE`, `SECOND_ALO`, `AVERAGE_DOWN` when the hunt never reaches the tape).
+
+Testnet live still needs `TRADING_MODE=live` and `I_UNDERSTAND_LIVE_TRADING=true`. The operator kill switch still flattens. That is account safety, not a score kill.
 
 
 ## Watching on TradingView
@@ -157,7 +194,7 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `HTF_CONFIRM` | `true` | Require 5m VWAP bias alignment |
 | `HTF_INTERVAL` | `5m` | HTF candle interval |
 | `ENTRY_COOLDOWN_SEC` | `120` | Block re-entry after stop-out (same symbol) |
-| `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` (prefer OTE in zone) |
+| `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` \| `model_b` |
 | `OTE_LOOKBACK_BARS` | `45` | Impulse swing lookback (1m or HTF) |
 | `SCALE_OUT_ENABLED` | `true` | Sell into strength at `SCALE_OUT_R` |
 | `SCALE_OUT_R` | `1.0` | Unrealized R to scale out |
@@ -261,8 +298,11 @@ src/hl_bot/
     vwap.py              # VWAP bias + micro breakout / OTE + filters
     ote.py               # OTE Fib zone helpers (impulse / zone / stop)
     filters.py           # vol / session / HTF / cooldown helpers
+    model_b/             # ENTRY_MODE=model_b sweep/reclaim Alo (score is log-only)
     ai_signal.py         # stub (unused)
-  execution/loop.py      # main loop (per-symbol)
+  exchange/hl_trades.py  # aggressor trade-print feed (fail closed without side)
+  execution/loop.py      # main loop (per-symbol); model_b dispatches out
+  execution/model_b_loop.py
 src/dashboard/
   state.py               # journal → open positions / stats / status
   marks.py               # optional Hyperliquid allMids

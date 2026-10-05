@@ -1,0 +1,776 @@
+"""Model B: tape, bias, Alo, thesis, TP cap, and ENTRY_MODE wiring."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from hl_bot.config import Settings, load_settings
+from hl_bot.exchange.hl_trades import (
+    HyperliquidTradeFeed,
+    MemoryFeed,
+    map_aggressor_side,
+    parse_bbo,
+    parse_hl_trade,
+    parse_l2_top,
+    parse_user_fill,
+    trades_subscribe,
+    ws_url,
+)
+from hl_bot.exchange.info_client import InfoClient
+from hl_bot.execution.loop import run_bot
+from hl_bot.execution.model_b_loop import run_model_b
+from hl_bot.journal import TradeJournal
+from hl_bot.strategy.model_b.alo import alo_limit
+from hl_bot.strategy.model_b.bias import resolve_bias
+from hl_bot.strategy.model_b.engine import ModelBEngine
+from hl_bot.strategy.model_b.pools import pools_from_bars
+from hl_bot.strategy.model_b.risk import (
+    FLOW_EXIT_ENABLED,
+    LEVERAGE,
+    RISK_PCT,
+    SOFT_PROP_ENABLED,
+    STRATEGY_KILL_ENABLED,
+    flow_exit_reason,
+    heal_stop,
+    size_from_stop,
+    soft_prop_allows,
+    take_profit,
+)
+from hl_bot.strategy.model_b.score import log_only_score, volume_tag
+from hl_bot.strategy.model_b.thesis import ThesisBook
+from hl_bot.strategy.model_b.types import Pool, TradePrint
+from hl_bot.strategy.model_b.universe import (
+    AFTER_HOURS_COINS,
+    NY_COINS,
+    session_coins,
+)
+from hl_bot.strategy.vwap import VwapTrendScalp
+
+NY = ZoneInfo("America/New_York")
+
+
+def _now() -> float:
+    return datetime(2026, 10, 5, 10, 0, tzinfo=NY).timestamp()
+
+
+def _bars(now: float, low: float = 100.0) -> list[dict]:
+    t0 = now - 400
+    return [
+        {"t": t0, "o": 110, "h": 112, "l": 108, "c": 109, "v": 1},
+        {"t": t0 + 60, "o": 109, "h": 110, "l": low, "c": 106, "v": 1},
+        {"t": t0 + 120, "o": 106, "h": 111, "l": 105, "c": 110, "v": 1},
+        {"t": t0 + 180, "o": 110, "h": 114, "l": 107, "c": 112, "v": 1},
+    ]
+
+
+def _long_prints(
+    now: float,
+    *,
+    sweep_sz: float = 7.5,
+    reclaim_sz: float = 1.0,
+    late_sz: float = 0.5,
+    last_price: float = 104.0,
+    final_price: float | None = None,
+    sweep_px: float = 99.0,
+    n_prefix: int = 20,
+    extra: list[tuple] | None = None,
+) -> list[TradePrint]:
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset: float, price: float, size: float, side: str | None) -> None:
+        nonlocal seq
+        prints.append(
+            TradePrint(
+                ts=now + offset,
+                coin="BTC",
+                price=price,
+                size=size,
+                side=side,
+                seq=seq,
+            )
+        )
+        seq += 1
+
+    # Keep the whole window inside the last ~55s so a 20s-later re-check
+    # still contains the sweep (the 90s window has not dropped it).
+    for i in range(n_prefix):
+        add(-55 + i * 0.3, 104.0, 0.5, "buy")
+    add(-40, sweep_px, sweep_sz, "sell")
+    add(-38, sweep_px, sweep_sz, "sell")
+    for i in range(8):
+        add(-30 + i * 0.2, last_price, reclaim_sz, "buy")
+    add(-10, last_price, late_sz, "buy")
+    add(-1, final_price if final_price is not None else last_price, late_sz, "buy")
+    for item in extra or []:
+        add(*item)
+    return prints
+
+
+def _decide(prints, bars, pools, **kw):
+    now = kw.pop("now", _now())
+    engine = kw.pop("engine", None) or ModelBEngine(tp_r=kw.pop("tp_r", 2.5))
+    return engine.evaluate(
+        kw.pop("coin", "BTC"),
+        now=now,
+        prints=prints,
+        bars=bars,
+        pools=pools,
+        best_bid=kw.pop("bid", 103.0),
+        best_ask=kw.pop("ask", 105.0),
+        equity=kw.pop("equity", 5000.0),
+        tick=kw.pop("tick", 1.0),
+        score=kw.pop("score", None),
+    )
+
+
+def _pass_case(**kw):
+    now = kw.pop("now", _now())
+    pools = kw.pop("pools", [Pool("PDH", 130.0, taken=False)])
+    return _decide(_long_prints(now, **{k: kw.pop(k) for k in list(kw) if k in {
+        "sweep_sz", "reclaim_sz", "late_sz", "last_price", "final_price",
+        "sweep_px", "n_prefix", "extra",
+    }}), _bars(now), pools, now=now, **kw)
+
+
+# --- universe ---------------------------------------------------------------
+
+
+def test_ny_session_universe_and_after_hours():
+    assert session_coins(datetime(2026, 10, 5, 9, 0, tzinfo=NY)) == NY_COINS
+    assert session_coins(datetime(2026, 10, 5, 15, 59, tzinfo=NY)) == NY_COINS
+    assert "TAO" in session_coins(datetime(2026, 10, 5, 9, 0, tzinfo=NY))
+    assert session_coins(datetime(2026, 10, 5, 16, 0, tzinfo=NY)) == AFTER_HOURS_COINS
+    assert session_coins(datetime(2026, 10, 5, 8, 59, tzinfo=NY)) == AFTER_HOURS_COINS
+    # Weekend uses the same clock. Saturday morning is still the NY list.
+    assert "TAO" in session_coins(datetime(2026, 10, 10, 10, 0, tzinfo=NY))
+    assert NY_COINS == (
+        "BTC", "ETH", "NEAR", "PUMP", "SOL", "LIT", "AAVE", "ONDO", "WLD", "TAO",
+    )
+
+
+def test_tao_after_hours_is_out_of_session():
+    now = datetime(2026, 10, 5, 16, 30, tzinfo=NY).timestamp()
+    decision = _decide(
+        _long_prints(now),
+        _bars(now),
+        [Pool("PDH", 130, False)],
+        now=now,
+        coin="TAO",
+    )
+    assert decision.fail_reason == "OUT_OF_SESSION"
+    assert decision.armed is False
+
+
+# --- bias -------------------------------------------------------------------
+
+
+def test_bias_pool_above_drops_shorts_and_below_drops_longs():
+    assert resolve_bias(100, [Pool("PDH", 110, False)]).side == "long"
+    assert resolve_bias(100, [Pool("PDL", 90, False)]).side == "short"
+    # Taken pool is ignored; the remaining pool sets the side.
+    bias = resolve_bias(
+        100,
+        [Pool("PDH", 101, taken=True), Pool("PDL", 90, taken=False)],
+    )
+    assert bias.side == "short"
+    assert bias.pool is not None and bias.pool.name == "PDL"
+
+
+def test_bias_tie_or_none_drops_both_and_does_not_arm():
+    assert resolve_bias(100, [Pool("PDH", 110, False), Pool("PDL", 90, False)]).side == "NONE"
+    assert resolve_bias(100, []).side == "NONE"
+    decision = _pass_case(pools=[])
+    assert decision.fail_reason == "NO_BIAS"
+    assert decision.armed is False
+    assert decision.bias == "NONE"
+
+
+def test_long_setup_does_not_arm_when_bias_is_short():
+    decision = _pass_case(pools=[Pool("PDL", 90.0, taken=False)])
+    assert decision.bias == "short"
+    assert decision.armed is False
+    assert decision.intent is None
+
+
+# --- tape fails -------------------------------------------------------------
+
+
+def test_long_reclaim_absorb_and_deltas_arm():
+    decision = _pass_case()
+    assert decision.armed is True
+    assert decision.fail_reason is None
+    assert decision.bias == "long"
+    assert decision.pool == "PDH@130"
+    assert decision.swing == pytest.approx(100)
+    assert decision.sweep_price == pytest.approx(99)
+    assert decision.absorb == pytest.approx(15 / 9)
+    assert decision.window_delta is not None and decision.window_delta > 0
+    assert decision.last_15s_delta is not None and decision.last_15s_delta >= 0
+    assert decision.volume_tag == "VOL_OK"
+    assert decision.score == log_only_score(32)
+    assert decision.score < 7
+    intent = decision.intent
+    assert intent is not None
+    assert intent.tif == "Alo"
+    assert intent.market_fallback is False
+    assert intent.leverage == 20
+    assert intent.limit_px == pytest.approx(99)
+    assert intent.stop == pytest.approx(98)
+    assert intent.take_profit == pytest.approx(101.5)
+    assert intent.take_profit <= 130
+    assert intent.size == pytest.approx(100)  # 5000 * 2% / 1
+
+
+def test_absorb_boundary():
+    # 8*1.0 + 2*1.0 = 10 buy after reclaim, 2*7.5 = 15 sell → 1.5 exactly.
+    exact = _pass_case(reclaim_sz=1.0, late_sz=1.0)
+    assert exact.armed is True
+    assert exact.absorb == pytest.approx(1.5)
+
+    # 14.9 / 10 = 1.49
+    under = _pass_case(sweep_sz=7.45, reclaim_sz=1.0, late_sz=1.0)
+    assert under.armed is False
+    assert under.fail_reason == "ABSORB"
+    assert under.absorb == pytest.approx(1.49)
+
+
+def test_no_reclaim():
+    decision = _pass_case(final_price=96.0)
+    assert decision.fail_reason == "NO_RECLAIM"
+    assert decision.armed is False
+    assert decision.sweep_price == pytest.approx(99)
+
+
+def test_thin_tape_and_no_side_priority():
+    now = _now()
+    thin = _decide(_long_prints(now)[:29], _bars(now), [Pool("PDH", 130, False)])
+    assert thin.fail_reason == "THIN_TAPE"
+    assert thin.armed is False
+
+    sideless = _long_prints(now)
+    sideless[3] = replace(sideless[3], side=None)
+    decision = _decide(sideless, _bars(now), [Pool("PDH", 130, False)])
+    assert decision.fail_reason == "NO_SIDE"
+
+    # Fewer than 30 prints, one without a side: fail closed, not THIN_TAPE.
+    short_tape = _long_prints(now)[:10]
+    short_tape[0] = replace(short_tape[0], side=None)
+    assert _decide(short_tape, _bars(now), [Pool("PDH", 130, False)]).fail_reason == "NO_SIDE"
+
+
+def test_each_tape_fail_reason():
+    assert _pass_case(sweep_px=104.0).fail_reason == "NO_SWEEP"
+    assert _pass_case(reclaim_sz=3.0).fail_reason == "ABSORB"
+    assert _pass_case(sweep_sz=100.0).fail_reason == "DELTA"
+    last15 = _pass_case(extra=[(-5.0, 104.0, 3.0, "sell")])
+    assert last15.fail_reason == "LAST_15s"
+    assert last15.window_delta is not None and last15.window_delta > 0
+    assert last15.last_15s_delta is not None and last15.last_15s_delta < 0
+
+
+def test_score_does_not_arm_or_block_and_volume_is_not_a_veto():
+    low = _pass_case(score=1)
+    assert low.armed is True
+    assert low.score == 1
+    assert low.volume_tag == "VOL_OK"
+
+    zero = _pass_case(score=0)
+    assert zero.armed is True
+
+    high = _pass_case(sweep_px=104.0, score=9)
+    assert high.armed is False
+    assert high.score == 9
+    assert high.fail_reason == "NO_SWEEP"
+
+    # Default density score hits 9/9 on a thick tape and still does not arm.
+    now = _now()
+    thick = []
+    for i in range(90):
+        thick.append(
+            TradePrint(ts=now - 80 + i * 0.5, coin="BTC", price=104.0, size=0.2, side="buy", seq=i)
+        )
+    dense = _decide(thick, _bars(now), [Pool("PDH", 130, False)])
+    assert dense.score == 9
+    assert dense.fail_reason == "NO_SWEEP"
+    assert dense.armed is False
+
+    # HEAVY tag with a failed absorb does not sneak an entry through.
+    heavy_prints = _long_prints(now, reclaim_sz=3.0)
+    base = len(heavy_prints)
+    for i in range(40):
+        heavy_prints.append(
+            TradePrint(
+                ts=now - 0.5,
+                coin="BTC",
+                price=104.0,
+                size=1.0,
+                side="buy",
+                seq=base + i,
+            )
+        )
+    heavy = _decide(heavy_prints, _bars(now), [Pool("PDH", 130, False)])
+    assert heavy.volume_tag == "HEAVY"
+    assert volume_tag(len(heavy_prints)) == "HEAVY"
+    assert heavy.armed is False
+    assert heavy.fail_reason == "ABSORB"
+
+
+def test_swing_closer_than_3_ticks_is_ignored():
+    now = _now()
+    t0 = now - 500
+    bars = [
+        {"t": t0, "o": 110, "h": 112, "l": 110, "c": 110, "v": 1},
+        {"t": t0 + 60, "o": 110, "h": 111, "l": 100, "c": 108, "v": 1},
+        {"t": t0 + 120, "o": 108, "h": 112, "l": 108, "c": 109, "v": 1},
+        {"t": t0 + 180, "o": 109, "h": 111, "l": 107, "c": 108, "v": 1},
+        {"t": t0 + 240, "o": 108, "h": 110, "l": 102, "c": 106, "v": 1},
+        {"t": t0 + 300, "o": 106, "h": 112, "l": 106, "c": 110, "v": 1},
+        {"t": t0 + 360, "o": 110, "h": 114, "l": 109, "c": 112, "v": 1},
+    ]
+    # Last trade 104 is 2 ticks from the recent swing (102) and 4 from 100.
+    decision = _decide(_long_prints(now), bars, [Pool("PDH", 130, False)])
+    assert decision.swing == pytest.approx(100)
+    assert decision.armed is True
+
+    # Exactly 3 ticks is kept.
+    exact = _decide(
+        _long_prints(now, last_price=103.0),
+        _bars(now),
+        [Pool("PDH", 130, False)],
+    )
+    assert exact.swing == pytest.approx(100)
+    assert exact.armed is True
+
+    # Only a 2-tick swing → nothing to arm.
+    near = _decide(
+        _long_prints(now, last_price=102.0),
+        _bars(now),
+        [Pool("PDH", 130, False)],
+    )
+    assert near.fail_reason == "NO_SWING"
+    assert near.armed is False
+
+
+def test_short_mirror_arms_and_caps_context():
+    now = _now()
+    t0 = now - 400
+    bars = [
+        {"t": t0, "o": 90, "h": 90, "l": 80, "c": 88, "v": 1},
+        {"t": t0 + 60, "o": 88, "h": 100, "l": 85, "c": 90, "v": 1},
+        {"t": t0 + 120, "o": 90, "h": 96, "l": 84, "c": 86, "v": 1},
+        {"t": t0 + 180, "o": 86, "h": 95, "l": 83, "c": 90, "v": 1},
+    ]
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq))
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, 96.0, 0.5, "sell")
+    add(-40, 101.0, 7.5, "buy")
+    add(-38, 101.0, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, 96.0, 1.0, "sell")
+    add(-10, 96.0, 0.5, "sell")
+    add(-1, 96.0, 0.5, "sell")
+
+    decision = _decide(
+        prints,
+        bars,
+        [Pool("PDL", 80.0, taken=False)],
+        bid=95.0,
+        ask=96.5,
+    )
+    assert decision.bias == "short"
+    assert decision.armed is True
+    assert decision.absorb == pytest.approx(15 / 9)
+    assert decision.window_delta is not None and decision.window_delta < 0
+    intent = decision.intent
+    assert intent is not None
+    assert intent.side == "short"
+    assert intent.limit_px == pytest.approx(101)
+    assert intent.stop == pytest.approx(102)
+    assert intent.take_profit == pytest.approx(98.5)
+    assert intent.take_profit >= 80
+    assert intent.tif == "Alo"
+
+
+# --- alo / risk / thesis ----------------------------------------------------
+
+
+def test_alo_anchor_never_crosses():
+    assert alo_limit("long", 99, 103, 105, 1) == pytest.approx(99)
+    # Swept low would lift the ask → join the bid.
+    assert alo_limit("long", 106, 104, 105, 1) == pytest.approx(104)
+    # Locked book: do not send.
+    assert alo_limit("long", 106, 105, 105, 1) is None
+    # No ask → cannot prove the buy rests.
+    assert alo_limit("long", 99, 103, None, 1) is None
+
+    assert alo_limit("short", 101, 95, 96, 1) == pytest.approx(101)
+    assert alo_limit("short", 90, 95, 96, 1) == pytest.approx(96)
+    assert alo_limit("short", 90, 95, 95, 1) is None
+    assert alo_limit("short", 101, None, 96, 1) is None
+
+
+def test_tp_capped_by_pool_and_r_band():
+    # 2.5R inside the pool.
+    assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(101.5)
+    # 2.5R would print through the pool → cap at the pool, even inside 1R.
+    assert take_profit("long", 99, 98, 100.2, tp_r=2.5) == pytest.approx(100.2)
+    # Requested 4R clamps to 3R, then the pool still wins.
+    assert take_profit("long", 100, 90, 125, tp_r=4) == pytest.approx(125)
+    assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(130)
+    # Sub-1R request is lifted to 1R before the cap.
+    assert take_profit("long", 100, 90, None, tp_r=0.2) == pytest.approx(110)
+    # Short mirror: cap is the higher price (closer to entry).
+    assert take_profit("short", 101, 102, 80, tp_r=2.5) == pytest.approx(98.5)
+    assert take_profit("short", 101, 102, 99, tp_r=2.5) == pytest.approx(99)
+
+
+def test_size_is_two_percent_and_rejects_40x():
+    size, dollar = size_from_stop(5000, 99, 98)
+    assert dollar == pytest.approx(100)
+    assert size == pytest.approx(100)
+    assert RISK_PCT == pytest.approx(0.02)
+    assert LEVERAGE == 20
+    with pytest.raises(ValueError, match="20x"):
+        size_from_stop(5000, 99, 98, leverage=40)
+
+
+def test_heal_keeps_wider_stop_and_flow_does_not_exit():
+    assert heal_stop("long", 98, 99) == pytest.approx(98)
+    assert heal_stop("long", 99, 98) == pytest.approx(98)
+    assert heal_stop("short", 102, 101) == pytest.approx(102)
+    assert heal_stop("short", 101, 102) == pytest.approx(102)
+    assert soft_prop_allows() is False
+    assert SOFT_PROP_ENABLED is False
+    assert STRATEGY_KILL_ENABLED is False
+    assert FLOW_EXIT_ENABLED is False
+    assert flow_exit_reason(window_delta=-50, last_15s_delta=-10) is None
+
+
+def test_twenty_second_cancel_ends_thesis_until_new_swing():
+    now = _now()
+    bars = _bars(now)
+    prints = _long_prints(now)
+    pools = [Pool("PDH", 130, False)]
+    engine = ModelBEngine()
+    first = _decide(prints, bars, pools, engine=engine)
+    assert first.intent is not None
+    engine.thesis.post(first.intent, now)
+    assert engine.thesis.block_reason("BTC", "other-swing") == "SECOND_ALO"
+    assert engine.thesis.expire(now + 19.9) == []
+    cancelled = engine.thesis.expire(now + 20)
+    assert len(cancelled) == 1
+    assert cancelled[0].tif == "Alo"
+    # Same bars → same swing id. The tape is still inside the 90s window.
+    again = _decide(prints, bars, pools, now=now + 20, engine=engine)
+    assert again.fail_reason == "THESIS_DONE"
+    assert engine.thesis.block_reason("BTC", "BTC:low:999.00000000:1") is None
+
+
+def test_no_second_alo_no_average_down_no_market_and_stop_consumes_thesis():
+    now = _now()
+    book = ThesisBook()
+    decision = _decide(_long_prints(now), _bars(now), [Pool("PDH", 130, False)])
+    intent = decision.intent
+    assert intent is not None
+    book.post(intent, now)
+    with pytest.raises(ValueError, match="market fallback"):
+        book.post(replace(intent, market_fallback=True, tif="Ioc"), now + 1)
+    with pytest.raises(ValueError, match="SECOND_ALO"):
+        book.post(replace(intent, swing_id="other"), now + 1)
+
+    sell = TradePrint(
+        ts=now + 1,
+        coin="BTC",
+        price=intent.limit_px,
+        size=1,
+        side="sell",
+        seq=0,
+    )
+    pos = book.try_fill_from_prints([sell])
+    assert pos is not None
+    assert book.block_reason("BTC", "brand-new-swing") == "AVERAGE_DOWN"
+    # A sell-heavy print that does not reach the stop is not an exit.
+    assert flow_exit_reason() is None
+    assert book.try_exit("BTC", intent.limit_px) is None
+    # Heal cannot tighten the stop that was placed past the sweep.
+    assert book.propose_stop("BTC", intent.stop + 0.5) == pytest.approx(intent.stop)
+    closed = book.try_exit("BTC", intent.stop)
+    assert closed is not None and closed.reason == "stop"
+    assert book.block_reason("BTC", intent.swing_id) == "THESIS_DONE"
+
+
+def test_taker_user_fill_does_not_open_a_position():
+    now = _now()
+    book = ThesisBook()
+    decision = _decide(_long_prints(now), _bars(now), [Pool("PDH", 130, False)])
+    assert decision.intent is not None
+    book.post(decision.intent, now, oid=7)
+    assert book.apply_user_fill(
+        coin="BTC", oid=7, price=decision.intent.limit_px, ts=now + 1, crossed=True
+    ) is None
+    assert book.position("BTC") is None
+    opened = book.apply_user_fill(
+        coin="BTC", oid=7, price=decision.intent.limit_px, ts=now + 1, crossed=False
+    )
+    assert opened is not None
+    assert book.working("BTC") is None
+
+
+# --- feed -------------------------------------------------------------------
+
+
+def test_trade_feed_aggressor_side_fail_closed():
+    assert map_aggressor_side("B") == "buy"
+    assert map_aggressor_side("A") == "sell"
+    assert map_aggressor_side(None) is None
+    assert map_aggressor_side("Z") is None
+    assert ws_url("testnet") == "wss://api.hyperliquid-testnet.xyz/ws"
+    assert ws_url("mainnet") == "wss://api.hyperliquid.xyz/ws"
+    assert trades_subscribe("BTC")["subscription"]["type"] == "trades"
+
+    buy = parse_hl_trade(
+        {
+            "coin": "btc",
+            "side": "B",
+            "px": "100",
+            "sz": "0.5",
+            "time": 1_700_000_000_000,
+            "users": ["0xbuyer", "0xseller"],
+        }
+    )
+    assert buy is not None
+    assert buy.side == "buy"
+    assert buy.coin == "BTC"
+    assert buy.ts == pytest.approx(1_700_000_000)
+
+    # Addresses are not a side. Missing side stays None.
+    missing = parse_hl_trade(
+        {
+            "coin": "ETH",
+            "px": "10",
+            "sz": "1",
+            "time": 1_700_000_000_100,
+            "users": ["0xbuyer", "0xseller"],
+        }
+    )
+    assert missing is not None and missing.side is None
+
+    feed = HyperliquidTradeFeed(network="testnet", coins=("BTC", "ETH"))
+    stored = feed.ingest(
+        {
+            "channel": "trades",
+            "data": [
+                {"coin": "BTC", "side": "A", "px": "99", "sz": "0.2", "time": 1_700_000_000_200},
+                {"coin": "BTC", "px": "99", "sz": "0.1", "time": 1_700_000_000_300},
+            ],
+        }
+    )
+    assert [p.side for p in stored] == ["sell", None]
+    assert feed.prints("BTC")[1].side is None
+
+    parsed = parse_bbo(
+        {"coin": "BTC", "bbo": [{"px": "100", "sz": "1", "n": 2}, {"px": "101", "sz": "3", "n": 1}]}
+    )
+    assert parsed == ("BTC", 100.0, 101.0)
+    # Only the top of an l2 book is kept.
+    top = parse_l2_top(
+        {
+            "coin": "SOL",
+            "levels": [
+                [{"px": "10", "sz": "1"}, {"px": "9", "sz": "4"}],
+                [{"px": "11", "sz": "2"}, {"px": "12", "sz": "8"}],
+            ],
+        }
+    )
+    assert top == ("SOL", 10.0, 11.0)
+
+    maker = parse_user_fill(
+        {"coin": "BTC", "px": "99", "sz": "1", "time": 1_700_000_000_000, "oid": 5, "crossed": False}
+    )
+    assert maker is not None and maker.crossed is False
+    unknown = parse_user_fill(
+        {"coin": "BTC", "px": "99", "sz": "1", "time": 1_700_000_000_000, "oid": 5}
+    )
+    assert unknown is not None and unknown.crossed is None
+
+
+def test_pools_from_bars_mark_taken_levels():
+    now = _now()
+    today = datetime.fromtimestamp(now, tz=NY).date()
+    yesterday = datetime(today.year, today.month, today.day, 12, 0, tzinfo=NY).timestamp() - 86400
+    bars = [
+        {"t": yesterday, "o": 100, "h": 120, "l": 80, "c": 110, "v": 1},
+        {"t": now - 120, "o": 100, "h": 121, "l": 90, "c": 100, "v": 1},
+    ]
+    pools = pools_from_bars(bars, now, last_price=100)
+    by_name = {p.name: p for p in pools}
+    assert by_name["PDH"].price == pytest.approx(120)
+    assert by_name["PDH"].taken is True  # today's high 121
+    assert by_name["PDL"].price == pytest.approx(80)
+    assert by_name["PDL"].taken is False
+
+
+# --- wiring -----------------------------------------------------------------
+
+
+def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "paper")
+    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("ENTRY_MODE", "model_b")
+    monkeypatch.setenv("LEVERAGE", "20")
+    monkeypatch.setenv("MODEL_B_TP_R", "2.5")
+    settings = load_settings()
+    assert settings.entry_mode == "model_b"
+    assert settings.model_b_tp_r == pytest.approx(2.5)
+    assert settings.leverage == 20
+
+    with pytest.raises(ValueError, match="20x"):
+        Settings(entry_mode="model_b", leverage=40).validate()
+    with pytest.raises(ValueError, match="20x"):
+        Settings(entry_mode="model_b", leverage=10).validate()
+    # Breakout/OTE mode is unchanged.
+    Settings(entry_mode="both", leverage=20).validate()
+
+
+def test_vwap_does_not_absorb_model_b():
+    strat = VwapTrendScalp(entry_mode="model_b", htf_confirm=False)
+    assert strat.entry_mode == "model_b"
+    sig = strat._pick_entry("long", 100.0, [], 90.0, None)
+    assert sig.side == "flat"
+    assert sig.reason == "model_b_separate"
+
+
+def test_run_bot_routes_to_model_b(monkeypatch):
+    called = {}
+
+    def fake(settings, **kwargs):
+        called["mode"] = settings.entry_mode
+        called["kwargs"] = kwargs
+        return {"entry_mode": "model_b", "arms": 0}
+
+    monkeypatch.setattr("hl_bot.execution.model_b_loop.run_model_b", fake)
+    summary = run_bot(Settings(entry_mode="model_b"), max_iterations=1, sleep_fn=lambda *_: None)
+    assert called["mode"] == "model_b"
+    assert summary["entry_mode"] == "model_b"
+
+
+def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
+    now = _now()
+    clock = {"t": now}
+    prints = _long_prints(now)
+    bars = _bars(now)
+    info = InfoClient()
+    info.inject_bars(bars, coin="BTC")
+    feed = MemoryFeed(prints, bbo={"BTC": (103.0, 105.0)})
+    journal = tmp_path / "trades.jsonl"
+    sleeps = {"n": 0}
+
+    def sleep_fn(_sec):
+        sleeps["n"] += 1
+        if sleeps["n"] == 1:
+            clock["t"] = now + 20
+
+    summary = run_model_b(
+        Settings(entry_mode="model_b", journal_path=str(journal), loop_interval_sec=0),
+        max_iterations=2,
+        info=info,
+        feed=feed,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: clock["t"],
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda coin, now_, bars_, last: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 1
+    rows = TradeJournal(journal).read_all()
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert len(arms) == 1
+    arm = arms[0]
+    for key in (
+        "coin",
+        "bias",
+        "pool",
+        "swing",
+        "sweep_price",
+        "absorb",
+        "window_delta",
+        "last_15s_delta",
+        "score",
+        "volume_tag",
+    ):
+        assert key in arm
+    assert arm["fail_reason"] is None
+    assert arm["volume_tag"] == "VOL_OK"
+    fails = [r for r in rows if r["event"] == "model_b_fail"]
+    assert any(r["fail_reason"] == "THESIS_DONE" for r in fails)
+    assert not any(r["event"] == "open" and r.get("reason") != "alo_fill" for r in rows)
+
+
+def test_live_path_places_alo_not_market(tmp_path):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+            self.markets = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            assert leverage == 20
+            self.alos.append((coin, is_buy, size, limit_px))
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 11}}]}}}
+
+        def market_open(self, *args, **kwargs):
+            raise AssertionError("market fallback")
+
+        def cancel_order(self, coin, oid):
+            self.markets.append(("cancel", coin, oid))
+
+        def market_close(self, *args, **kwargs):
+            raise AssertionError("market close on entry")
+
+    fake = FakeLive()
+    settings = Settings(
+        entry_mode="model_b",
+        trading_mode="live",
+        i_understand_live_trading=True,
+        private_key="0x" + "ab" * 32,
+        network="testnet",
+        journal_path=str(tmp_path / "live.jsonl"),
+        loop_interval_sec=0,
+    )
+    summary = run_model_b(
+        settings,
+        max_iterations=1,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["mode"] == "LIVE"
+    assert summary["arms"] == 1
+    assert len(fake.alos) == 1
+    assert fake.alos[0][0] == "BTC"
+    assert fake.alos[0][1] is True
+    assert fake.markets == []
