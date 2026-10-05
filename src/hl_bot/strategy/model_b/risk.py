@@ -1,6 +1,8 @@
 """Model B risk. Fixed policy — not the scalp 0.5% / VWAP stop.
 
-- Stop sits 1 tick past the sweep extreme (beyond the liquidity that printed).
+- Stop sits past the sweep extreme, and at least one tick beyond the Alo.
+  A short that ceils onto the ask, or a long that floors onto the bid, must
+  not land on the same tick as the stop.
 - Size = unified equity × ``RISK_PER_TRADE`` / stop distance. Model B requires
   that fraction to be 0.02. Notional capped at 20× equity.
 - 20× only. 40× is rejected.
@@ -23,6 +25,9 @@ DEFAULT_TP_R = 2.5
 TP_R_MIN = 1.0
 TP_R_MAX = 3.0
 STOP_PAST_EXTREME_TICKS = 1.0
+# Room versus the resting Alo, not only versus the sweep print.
+# One tick past the extreme can equal a ceil/floor limit on the next tick.
+STOP_MIN_TICKS_FROM_ENTRY = 1.0
 
 SOFT_PROP_ENABLED = False
 STRATEGY_KILL_ENABLED = False
@@ -52,6 +57,49 @@ def stop_beyond_extreme(side: str, extreme: float, tick: float) -> float:
     if side == "long":
         return extreme - STOP_PAST_EXTREME_TICKS * tick
     return extreme + STOP_PAST_EXTREME_TICKS * tick
+
+
+def place_stop(side: str, extreme: float, entry: float, tick: float) -> float | None:
+    """Stop past the swept liquidity and strictly beyond the Alo.
+
+    The wider of "1 tick past the extreme" and "1 tick past the resting
+    price" is snapped away from the entry onto the tick grid. ``None``
+    when that distance is not a full tick (the arm must fail closed).
+    """
+    if tick <= 0 or extreme <= 0 or entry <= 0:
+        return None
+    past_extreme = stop_beyond_extreme(side, extreme, tick)
+    room = STOP_MIN_TICKS_FROM_ENTRY * tick
+    if side == "long":
+        stop = min(past_extreme, entry - room)
+        stop = math.floor(stop / tick + 1e-9) * tick
+        if stop <= 0 or entry - stop < tick * (1 - 1e-9):
+            return None
+        return stop
+    stop = max(past_extreme, entry + room)
+    stop = math.ceil(stop / tick - 1e-9) * tick
+    if stop - entry < tick * (1 - 1e-9):
+        return None
+    return stop
+
+
+def widen_stop_for_fill(side: str, fill: float, stop: float, limit: float, tick: float) -> float:
+    """Keep a stop that still has a full tick of room after the fill price.
+
+    A one-tick price improvement can land on a stop that was measured from
+    the limit. Push wider. Never tighten a stop that already has room.
+    """
+    if tick <= 0 or fill <= 0:
+        return stop
+    pushed = place_stop(side, fill, fill, tick)
+    if pushed is None:
+        offset = abs(limit - stop)
+        if offset < tick * (1 - 1e-9):
+            offset = tick
+        pushed = fill - offset if side == "long" else fill + offset
+    if side == "long":
+        return min(stop, pushed)
+    return max(stop, pushed)
 
 
 def size_from_stop(

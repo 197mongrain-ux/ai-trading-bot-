@@ -67,7 +67,10 @@ class AloIntent:
     tif: str = "Alo"
     market_fallback: bool = False
     leverage: int = 20
-    work_sec: float = 20.0
+    # 0 = rest until the thesis is stale. A positive value is an optional timer.
+    work_sec: float = 0.0
+    sweep_px: float | None = None
+    tick: float = 0.0
 
 
 @dataclass

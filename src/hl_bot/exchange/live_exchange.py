@@ -131,7 +131,7 @@ class LiveExchange:
         )
 
     def cancel_order(self, coin: str, oid: int) -> Any:
-        """Cancel a resting Alo. Used when the 20s work window expires."""
+        """Cancel a resting Alo when the thesis is stale or an optional timer elapses."""
         logger.warning("LIVE CANCEL: %s oid=%s", coin, oid)
         return self._exchange.cancel(coin, oid)
 

@@ -1,8 +1,10 @@
 """Model B hunt loop.
 
 Selected with ``ENTRY_MODE=model_b``. Breakout / OTE stay on their own
-path. This loop never market-opens. Unfilled Alos are cancelled at 20s
-and that swing thesis is done. Exits are stop and TP only.
+path. This loop never market-opens. A resting Alo stays until the thesis
+is stale (a print through the sweep extreme that does not fill it).
+``MODEL_B_ALO_TIMEOUT_SEC=0`` (the default) disables the clock cancel.
+Exits are stop and TP only.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -116,12 +118,13 @@ def run_model_b(
                 base_url=settings.api_url,
             )
 
-    book = ThesisBook()
+    book = ThesisBook(work_sec=settings.model_b_alo_timeout_sec)
     engine = ModelBEngine(
         thesis=book,
         tp_r=settings.model_b_tp_r,
         risk_pct=settings.risk_per_trade,
         min_prints=settings.model_b_min_prints,
+        alo_timeout_sec=settings.model_b_alo_timeout_sec,
     )
     # Account rails only. Position size is equity × RISK_PER_TRADE / stop.
     risk = RiskManager(
@@ -146,6 +149,7 @@ def run_model_b(
         risk_per_trade=settings.risk_per_trade,
         tp_r=settings.model_b_tp_r,
         min_prints=settings.model_b_min_prints,
+        alo_timeout_sec=settings.model_b_alo_timeout_sec,
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -203,27 +207,31 @@ def run_model_b(
                 logger.error("Kill switch / drawdown — exiting Model B loop")
                 break
 
-        for order in book.expire(now):
+        def _cancel_working(order, reason: str) -> None:
             summary["cancels"] += 1
             journal.log(
                 "model_b_cancel",
                 coin=order.coin,
                 swing_id=order.swing_id,
                 limit_px=order.limit_px,
-                reason="unfilled_20s",
+                reason=reason,
                 entry_mode="model_b",
             )
             logger.info(
-                "MODEL_B CANCEL %s swing=%s px=%s after 20s — thesis done",
+                "MODEL_B CANCEL %s swing=%s px=%s reason=%s — thesis done",
                 order.coin,
                 order.swing_id,
                 order.limit_px,
+                reason,
             )
             if live is not None and order.oid is not None:
                 try:
                     live.cancel_order(order.coin, order.oid)
                 except Exception:
                     logger.exception("LIVE cancel failed for %s", order.coin)
+
+        for order in book.expire(now):
+            _cancel_working(order, "unfilled_timeout")
 
         if settings.is_live:
             for fill in feed.take_user_fills():
@@ -294,6 +302,9 @@ def run_model_b(
                         pos.stop,
                         pos.take_profit,
                     )
+
+            for order in book.cancel_if_stale(coin, prints):
+                _cancel_working(order, "thesis_stale")
 
             last = prints[-1].price if prints else None
             # Paper exits on price. Live exits come from user fills (stop/TP

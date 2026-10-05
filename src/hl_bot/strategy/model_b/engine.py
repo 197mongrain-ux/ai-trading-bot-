@@ -5,7 +5,7 @@ and the full tape (sweep, reclaim, absorb, window delta, last 15s) all
 pass, and the coin has no live thesis on that swing. Directional bias
 drops the other side. Bias NONE allows both. The order is a post-only Alo
 anchored at the sweep, sized from RISK_PER_TRADE of unified equity to a
-stop one tick past the extreme, with TP1 at ~2.5R and never beyond the
+stop past the sweep and at least one tick beyond the Alo, with TP1 at ~2.5R and never beyond the
 untaken pool on that side.
 """
 
@@ -17,8 +17,7 @@ from hl_bot.strategy.model_b.risk import (
     MODEL_B_RISK_PCT,
     assert_policy,
     size_from_stop,
-    stop_beyond_extreme,
-    stop_is_valid,
+    place_stop,
     take_profit,
     tp_is_valid,
 )
@@ -67,18 +66,23 @@ class ModelBEngine:
         tp_r: float = 2.5,
         risk_pct: float = MODEL_B_RISK_PCT,
         min_prints: int = MIN_PRINTS,
+        alo_timeout_sec: float = 0.0,
     ):
         assert_policy()
         if risk_pct <= 0:
             raise ValueError("risk_pct must be > 0")
         if int(min_prints) < 1:
             raise ValueError("min_prints must be >= 1")
-        self.thesis = thesis or ThesisBook()
+        if float(alo_timeout_sec) < 0:
+            raise ValueError("alo_timeout_sec must be >= 0")
+        self.thesis = thesis or ThesisBook(work_sec=float(alo_timeout_sec))
         self.tp_r = float(tp_r)
         # From RISK_PER_TRADE. Model B settings validation requires 0.02.
         self.risk_pct = float(risk_pct)
         # Mainnet default is 30. Testnet settings pass the density-scaled floor.
         self.min_prints = int(min_prints)
+        # 0 rests the maker until the thesis is stale. No default 20s cancel.
+        self.alo_timeout_sec = float(alo_timeout_sec)
 
     def evaluate(
         self,
@@ -187,8 +191,8 @@ class ModelBEngine:
             if limit is None:
                 return _done(NO_ALO, **fields)
 
-            stop = stop_beyond_extreme(side, metrics.sweep_price, tick)
-            if not stop_is_valid(side, limit, stop):
+            stop = place_stop(side, metrics.sweep_price, limit, tick)
+            if stop is None or not (abs(limit - stop) >= tick * (1 - 1e-9)):
                 return _done(BAD_STOP, **fields)
 
             try:
@@ -223,7 +227,9 @@ class ModelBEngine:
                 tif="Alo",
                 market_fallback=False,
                 leverage=20,
-                work_sec=20.0,
+                work_sec=self.alo_timeout_sec,
+                sweep_px=metrics.sweep_price,
+                tick=tick,
             )
             return _done(None, armed=True, intent=intent, **fields)
 

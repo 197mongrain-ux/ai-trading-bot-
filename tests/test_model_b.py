@@ -42,8 +42,10 @@ from hl_bot.strategy.model_b.risk import (
     STRATEGY_KILL_ENABLED,
     flow_exit_reason,
     heal_stop,
+    place_stop,
     size_from_stop,
     soft_prop_allows,
+    stop_beyond_extreme,
     take_profit,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
@@ -56,7 +58,7 @@ from hl_bot.strategy.model_b.tape import (
     window_prints,
 )
 from hl_bot.strategy.model_b.thesis import ThesisBook
-from hl_bot.strategy.model_b.types import Pool, TradePrint
+from hl_bot.strategy.model_b.types import AloIntent, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import (
     AFTER_HOURS_COINS,
     NY_COINS,
@@ -602,7 +604,7 @@ def test_heal_keeps_wider_stop_and_flow_does_not_exit():
     assert flow_exit_reason(window_delta=-50, last_15s_delta=-10) is None
 
 
-def test_twenty_second_cancel_ends_thesis_until_new_swing():
+def test_default_rests_alo_until_sweep_is_stale():
     now = _now()
     bars = _bars(now)
     prints = _long_prints(now)
@@ -610,16 +612,69 @@ def test_twenty_second_cancel_ends_thesis_until_new_swing():
     engine = ModelBEngine()
     first = _decide(prints, bars, pools, engine=engine)
     assert first.intent is not None
+    assert first.intent.work_sec == 0
+    assert first.intent.limit_px != first.intent.stop
     engine.thesis.post(first.intent, now)
     assert engine.thesis.block_reason("BTC", "other-swing") == "SECOND_ALO"
-    assert engine.thesis.expire(now + 19.9) == []
-    cancelled = engine.thesis.expire(now + 20)
+    # No clock cancel, including the old 20s mark.
+    assert engine.thesis.expire(now + 20) == []
+    assert engine.thesis.expire(now + 3600) == []
+    # A print through the swept low that does not sell into the bid cancels.
+    through = TradePrint(
+        ts=now + 5,
+        coin="BTC",
+        price=first.intent.sweep_px - 1,
+        size=1,
+        side="buy",
+        seq=1,
+    )
+    cancelled = engine.thesis.cancel_if_stale("BTC", [through])
     assert len(cancelled) == 1
-    assert cancelled[0].tif == "Alo"
-    # Same bars → same swing id. The tape is still inside the 90s window.
-    again = _decide(prints, bars, pools, now=now + 20, engine=engine)
+    again = _decide(prints, bars, pools, now=now + 5, engine=engine)
     assert again.fail_reason == "THESIS_DONE"
-    assert engine.thesis.block_reason("BTC", "BTC:low:999.00000000:1") is None
+
+    # The optional timer still cancels when MODEL_B_ALO_TIMEOUT_SEC is set.
+    timed = ThesisBook(work_sec=20)
+    timed.post(first.intent, now)
+    assert timed.expire(now + 19.9) == []
+    assert len(timed.expire(now + 20)) == 1
+
+
+def test_lit_short_stop_is_not_the_alo_tick():
+    """Joining the ask one tick above the sweep must not use that tick as the stop."""
+    tick = 0.0001
+    sweep = 3.9046
+    limit = alo_limit("short", sweep, sweep, sweep + tick, tick)
+    assert limit == pytest.approx(3.9047)
+    naive = stop_beyond_extreme("short", sweep, tick)
+    assert naive == pytest.approx(limit)
+    stop = place_stop("short", sweep, limit, tick)
+    assert stop is not None
+    assert stop > limit
+    assert stop - limit == pytest.approx(tick)
+
+    now = _now()
+    book = ThesisBook()
+    intent = AloIntent(
+        coin="LIT",
+        side="short",
+        limit_px=limit,
+        size=10,
+        stop=stop,
+        take_profit=limit - 2.5 * (stop - limit),
+        swing_id="LIT:high:1",
+        sweep_px=sweep,
+        tick=tick,
+    )
+    book.post(intent, now)
+    # Fill improves onto the old 1-tick stop. The open stop has to move wider.
+    opened = book.apply_user_fill(
+        coin="LIT", oid=None, price=naive, ts=now + 1, crossed=False
+    )
+    assert opened is not None
+    assert opened.entry == pytest.approx(naive)
+    assert opened.stop > opened.entry
+    assert opened.entry != opened.stop
 
 
 def test_no_second_alo_no_average_down_no_market_and_stop_consumes_thesis():
@@ -959,6 +1014,10 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.model_b_tp_r == pytest.approx(2.5)
     assert settings.leverage == 20
     assert settings.model_b_min_prints == density_min_prints() == 3
+    assert settings.model_b_alo_timeout_sec == 0
+    monkeypatch.setenv("MODEL_B_ALO_TIMEOUT_SEC", "15")
+    assert load_settings().model_b_alo_timeout_sec == pytest.approx(15)
+    monkeypatch.delenv("MODEL_B_ALO_TIMEOUT_SEC")
 
     monkeypatch.delenv("RISK_PER_TRADE")
     assert load_settings().risk_per_trade == pytest.approx(0.02)
@@ -997,7 +1056,7 @@ def test_run_bot_routes_to_model_b(monkeypatch):
     assert summary["entry_mode"] == "model_b"
 
 
-def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
+def test_paper_loop_rests_alo_until_sweep_prints_through(tmp_path):
     now = _now()
     clock = {"t": now}
     prints = _long_prints(now)
@@ -1011,7 +1070,13 @@ def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
     def sleep_fn(_sec):
         sleeps["n"] += 1
         if sleeps["n"] == 1:
-            clock["t"] = now + 20
+            # Well past the old 20s timeout. The Alo must still be working.
+            clock["t"] = now + 60
+        elif sleeps["n"] == 2:
+            feed._prints.append(
+                TradePrint(ts=clock["t"] + 1, coin="BTC", price=90.0, size=1, side="buy", seq=999)
+            )
+            clock["t"] = clock["t"] + 1
 
     summary = run_model_b(
         Settings(
@@ -1020,7 +1085,7 @@ def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
             journal_path=str(journal),
             loop_interval_sec=0,
         ),
-        max_iterations=2,
+        max_iterations=3,
         info=info,
         feed=feed,
         sleep_fn=sleep_fn,
@@ -1051,8 +1116,10 @@ def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
         assert key in arm
     assert arm["fail_reason"] is None
     assert arm["volume_tag"] == "VOL_OK"
-    fails = [r for r in rows if r["event"] == "model_b_fail"]
-    assert any(r["fail_reason"] == "THESIS_DONE" for r in fails)
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert len(cancels) == 1
+    assert cancels[0]["reason"] == "thesis_stale"
+    assert not any(r.get("reason") == "unfilled_20s" for r in rows)
     assert not any(r["event"] == "open" and r.get("reason") != "alo_fill" for r in rows)
 
 

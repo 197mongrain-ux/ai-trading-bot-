@@ -121,6 +121,8 @@ class Settings:
     # 90s print floor. Mainnet stays 30. Testnet auto-scales by tape density
     # unless MODEL_B_MIN_PRINTS is set. See tape.density_min_prints.
     model_b_min_prints: int = 30
+    # 0 = rest the maker Alo until the thesis is stale. No default 20s cancel.
+    model_b_alo_timeout_sec: float = 0.0
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -230,6 +232,10 @@ class Settings:
         if self.model_b_min_prints < 1:
             raise ValueError(
                 f"MODEL_B_MIN_PRINTS={self.model_b_min_prints} must be >= 1."
+            )
+        if self.model_b_alo_timeout_sec < 0:
+            raise ValueError(
+                f"MODEL_B_ALO_TIMEOUT_SEC={self.model_b_alo_timeout_sec} must be >= 0."
             )
         if self.ote_lookback_bars < 3:
             raise ValueError(
@@ -345,6 +351,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         entry_mode=entry_mode,
         model_b_tp_r=_float("MODEL_B_TP_R", 2.5),
         model_b_min_prints=model_b_min_prints,
+        model_b_alo_timeout_sec=_float("MODEL_B_ALO_TIMEOUT_SEC", 0.0),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

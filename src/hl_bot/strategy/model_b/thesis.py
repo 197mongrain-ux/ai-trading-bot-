@@ -1,22 +1,38 @@
 """One thesis per coin.
 
 No average-down, no second Alo, no market fallback, no re-entry on the
-same swing after a 20s cancel or a stop. A new swing id may start a new
-thesis once the coin is flat and no order is working.
+same swing after a stale cancel or a stop. A new swing id may start a new
+thesis once the coin is flat and no order is working. The maker rests
+until that thesis is outdated. A clock timeout is off unless ``work_sec``
+is set above zero.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hl_bot.strategy.model_b.risk import heal_stop
+from hl_bot.strategy.model_b.risk import heal_stop, stop_is_valid, widen_stop_for_fill
 from hl_bot.strategy.model_b.types import AloIntent, TradePrint
 
-WORK_SEC = 20.0
+# 0 = no maker timer. Cancel only when the thesis is stale.
+WORK_SEC = 0.0
 
 SECOND_ALO = "SECOND_ALO"
 AVERAGE_DOWN = "AVERAGE_DOWN"
 THESIS_DONE = "THESIS_DONE"
+
+
+def _print_stales_order(order: WorkingOrder, print_: TradePrint) -> bool:
+    """True when price traded through the sweep and did not fill the Alo."""
+    if order.sweep_px is None or print_.side not in ("buy", "sell"):
+        return False
+    if order.side == "long":
+        through = print_.price < order.sweep_px - 1e-9
+        fills = print_.side == "sell" and print_.price <= order.limit_px + 1e-9
+    else:
+        through = print_.price > order.sweep_px + 1e-9
+        fills = print_.side == "buy" and print_.price >= order.limit_px - 1e-9
+    return through and not fills
 
 
 @dataclass
@@ -31,6 +47,8 @@ class WorkingOrder:
     posted_at: float
     oid: object | None = None
     tif: str = "Alo"
+    sweep_px: float | None = None
+    tick: float = 1.0
 
 
 @dataclass
@@ -108,15 +126,20 @@ class ThesisBook:
             posted_at=float(now),
             oid=oid,
             tif="Alo",
+            sweep_px=intent.sweep_px,
+            tick=intent.tick if intent.tick > 0 else max(abs(intent.limit_px - intent.stop), 1e-12),
         )
         self._state(intent.coin).working = order
         return order
 
     def expire(self, now: float) -> list[WorkingOrder]:
-        """Cancel working orders that have rested ``work_sec`` without a fill.
+        """Cancel on the optional timer. ``work_sec <= 0`` never fires.
 
-        The swing is consumed. That thesis is done until a new swing id.
+        The default is no timer. The swing is consumed when a timer is set
+        and elapses, same as a stale cancel: that thesis is done.
         """
+        if self.work_sec <= 0:
+            return []
         cancelled: list[WorkingOrder] = []
         for st in self._coins.values():
             order = st.working
@@ -128,6 +151,30 @@ class ThesisBook:
                 cancelled.append(order)
         return cancelled
 
+    def cancel_if_stale(self, coin: str, prints: list[TradePrint]) -> list[WorkingOrder]:
+        """Cancel a resting Alo whose sweep extreme has been printed through.
+
+        A long is stale when a later print trades strictly below the swept
+        low and does not fill the bid. A short is stale when a later print
+        trades strictly above the swept high and does not fill the ask.
+        A print that fills the resting order is not a cancel. The swing is
+        consumed either way once cancelled.
+        """
+        st = self._coins.get(coin.upper())
+        if st is None or st.working is None or st.position is not None:
+            return []
+        order = st.working
+        if order.sweep_px is None:
+            return []
+        for print_ in sorted(prints, key=lambda p: (p.ts, p.seq)):
+            if print_.coin.upper() != order.coin or print_.ts + 1e-9 < order.posted_at:
+                continue
+            if _print_stales_order(order, print_):
+                st.consumed.add(order.swing_id)
+                st.working = None
+                return [order]
+        return []
+
     def working(self, coin: str) -> WorkingOrder | None:
         st = self._coins.get(coin.upper())
         return None if st is None else st.working
@@ -138,12 +185,16 @@ class ThesisBook:
 
     def _fill(self, order: WorkingOrder, price: float, ts: float) -> OpenPosition:
         st = self._state(order.coin)
+        stop = widen_stop_for_fill(order.side, price, order.stop, order.limit_px, order.tick)
+        if not stop_is_valid(order.side, price, stop):
+            nudge = order.tick if order.tick > 0 else max(abs(price) * 1e-6, 1e-8)
+            stop = price - nudge if order.side == "long" else price + nudge
         pos = OpenPosition(
             coin=order.coin,
             side=order.side,
             size=order.size,
             entry=price,
-            stop=order.stop,
+            stop=stop,
             take_profit=order.take_profit,
             swing_id=order.swing_id,
             opened_at=ts,
