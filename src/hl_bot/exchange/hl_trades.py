@@ -31,6 +31,25 @@ _BUY = {"B", "BUY", "BID"}
 _SELL = {"A", "SELL", "ASK", "S"}
 
 
+# Hyperliquid closes a socket that never sends an application ping
+# (`{"method":"ping"}`) with close code 1000 and reason "Expired".
+# websocket-client protocol pings are answered at the gateway and do not
+# keep that session alive, so they are not used.
+APP_PING_SEC = 20.0
+
+
+def app_ping() -> dict:
+    return {"method": "ping"}
+
+
+def normalize_coin(raw: object) -> str:
+    """Hunt symbols are bare uppercase perps: ``BTC``, not ``btc`` or ``BTC-PERP``."""
+    coin = str(raw or "").strip().upper()
+    if coin.endswith("-PERP"):
+        coin = coin[: -len("-PERP")].strip()
+    return coin
+
+
 def ws_url(network: str) -> str:
     if (network or "").strip().lower() == "testnet":
         return "wss://api.hyperliquid-testnet.xyz/ws"
@@ -89,7 +108,7 @@ def parse_hl_trade(raw: dict, *, seq: int = 0) -> TradePrint | None:
     size = _as_float(raw.get("sz", raw.get("size")))
     if price is None or size is None or price <= 0 or size <= 0:
         return None
-    coin = str(raw.get("coin") or "").upper()
+    coin = normalize_coin(raw.get("coin"))
     if not coin:
         return None
     ts = _ts_seconds(raw.get("time", raw.get("ts")))
@@ -113,7 +132,7 @@ def parse_bbo(data: dict) -> tuple[str, float | None, float | None] | None:
     """Top of book only. Deeper levels are not read."""
     if not isinstance(data, dict):
         return None
-    coin = str(data.get("coin") or "").upper()
+    coin = normalize_coin(data.get("coin"))
     bbo = data.get("bbo")
     if not coin or not isinstance(bbo, (list, tuple)) or len(bbo) < 2:
         return None
@@ -124,7 +143,7 @@ def parse_l2_top(data: dict) -> tuple[str, float | None, float | None] | None:
     """Best bid/ask from an l2Book snapshot. Levels below the top are discarded."""
     if not isinstance(data, dict):
         return None
-    coin = str(data.get("coin") or "").upper()
+    coin = normalize_coin(data.get("coin"))
     levels = data.get("levels")
     if not coin or not isinstance(levels, (list, tuple)) or len(levels) < 2:
         return None
@@ -155,7 +174,7 @@ class UserFill:
 def parse_user_fill(raw: dict) -> UserFill | None:
     if not isinstance(raw, dict):
         return None
-    coin = str(raw.get("coin") or "").upper()
+    coin = normalize_coin(raw.get("coin"))
     price = _as_float(raw.get("px"))
     size = _as_float(raw.get("sz"))
     ts = _ts_seconds(raw.get("time"))
@@ -226,17 +245,20 @@ class HyperliquidTradeFeed:
         self._lock = threading.Lock()
         self._seq = count()
         self._maxlen = maxlen
+        self._seen: set[tuple[str, int | str]] = set()
+        self._seen_order: deque[tuple[str, int | str]] = deque()
         self._stop = False
+        self._ping_stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ws = None
 
     def prints(self, coin: str) -> list[TradePrint]:
         with self._lock:
-            return list(self._prints.get(coin.upper(), ()))
+            return list(self._prints.get(normalize_coin(coin), ()))
 
     def bbo(self, coin: str) -> tuple[float | None, float | None]:
         with self._lock:
-            return self._bbo.get(coin.upper(), (None, None))
+            return self._bbo.get(normalize_coin(coin), (None, None))
 
     def take_user_fills(self) -> list[UserFill]:
         with self._lock:
@@ -250,6 +272,50 @@ class HyperliquidTradeFeed:
             bucket = deque(maxlen=self._maxlen)
             self._prints[print_.coin] = bucket
         bucket.append(print_)
+
+    def _mark_new(self, coin: str, tid: object) -> bool:
+        """False when this trade id was already stored. Missing tid is kept.
+
+        Reconnect snapshots repeat the last trades. Counting them twice
+        would fake a thick tape. The print buffer itself is not cleared
+        on reconnect.
+        """
+        if isinstance(tid, bool) or tid is None or tid == "":
+            return True
+        if not isinstance(tid, (int, str)):
+            tid = str(tid)
+        key = (coin, tid)
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        self._seen_order.append(key)
+        cap = max(self._maxlen * 4, 1)
+        while len(self._seen_order) > cap:
+            self._seen.discard(self._seen_order.popleft())
+        return True
+
+    def resubscribe_payloads(self) -> list[dict]:
+        """Messages sent on every socket open, including after ``Expired``.
+
+        Trades are subscribed before BBO and user fills so one bad send
+        cannot skip the tape. The trailing ping is the application heartbeat.
+        """
+        payloads: list[dict] = []
+        for coin in self.coins:
+            payloads.append(trades_subscribe(coin))
+        for coin in self.coins:
+            payloads.append(bbo_subscribe(coin))
+        if self.user:
+            payloads.append(user_fills_subscribe(self.user))
+        payloads.append(app_ping())
+        return payloads
+
+    def _send_subscriptions(self, ws) -> None:
+        for payload in self.resubscribe_payloads():
+            try:
+                ws.send(json.dumps(payload))
+            except Exception:
+                logger.exception("trade feed send failed (%s)", payload.get("method"))
 
     def ingest(self, message: dict | list) -> list[TradePrint]:
         """Parse one websocket payload. Returns newly stored prints."""
@@ -271,7 +337,12 @@ class HyperliquidTradeFeed:
 
         data = message.get("data")
         if channel == "trades":
-            rows = data if isinstance(data, list) else []
+            if isinstance(data, list):
+                rows = data
+            elif isinstance(data, dict):
+                rows = [data]
+            else:
+                rows = []
             stored: list[TradePrint] = []
             with self._lock:
                 for row in rows:
@@ -279,6 +350,8 @@ class HyperliquidTradeFeed:
                         continue
                     parsed = parse_hl_trade(row, seq=next(self._seq))
                     if parsed is None:
+                        continue
+                    if not self._mark_new(parsed.coin, row.get("tid")):
                         continue
                     self._store_print(parsed)
                     stored.append(parsed)
@@ -326,18 +399,21 @@ class HyperliquidTradeFeed:
             logger.warning("trade feed not started (%s); tape will fail closed", exc)
             return False
 
-        coins = self.coins
-        user = self.user
         url = self.url
 
         def on_open(ws) -> None:
-            for coin in coins:
-                ws.send(json.dumps(trades_subscribe(coin)))
-                ws.send(json.dumps(bbo_subscribe(coin)))
-            if user:
-                ws.send(json.dumps(user_fills_subscribe(user)))
+            self._send_subscriptions(ws)
+            logger.info(
+                "trade feed subscribed %s coins on %s (buffer kept)",
+                len(self.coins),
+                url,
+            )
 
         def on_message(ws, message: str) -> None:
+            if isinstance(message, bytes):
+                message = message.decode("utf-8", errors="replace")
+            if message == "Websocket connection established.":
+                return
             try:
                 payload = json.loads(message)
             except json.JSONDecodeError:
@@ -358,28 +434,63 @@ class HyperliquidTradeFeed:
         def on_error(ws, error) -> None:
             logger.warning("trade feed error: %s", error)
 
+        def on_close(ws, code, reason) -> None:
+            # Includes "Expired" (code 1000). The outer loop opens a new
+            # socket and on_open resubscribes. Prints already stored stay.
+            logger.warning("trade feed closed (%s): %s — resubscribing", code, reason)
+
         def runner() -> None:
             while not self._stop:
+                self._ping_stop.clear()
+                holder: dict = {}
+
+                def on_open_ping(ws, _holder=holder) -> None:
+                    _holder["ws"] = ws
+                    on_open(ws)
+
+                def ping_loop() -> None:
+                    while not self._ping_stop.wait(APP_PING_SEC):
+                        if self._stop:
+                            return
+                        ws = holder.get("ws")
+                        if ws is None:
+                            continue
+                        try:
+                            ws.send(json.dumps(app_ping()))
+                        except Exception:
+                            logger.debug("trade feed ping failed", exc_info=True)
+
                 try:
                     self._ws = websocket.WebSocketApp(
                         url,
-                        on_open=on_open,
+                        on_open=on_open_ping,
                         on_message=on_message,
                         on_error=on_error,
+                        on_close=on_close,
                     )
-                    self._ws.run_forever(ping_interval=20, ping_timeout=10)
+                    pinger = threading.Thread(
+                        target=ping_loop, name="hl-model-b-ping", daemon=True
+                    )
+                    pinger.start()
+                    # No ping_interval: protocol pings do not stop "Expired".
+                    self._ws.run_forever()
                 except Exception:
                     logger.exception("trade feed disconnected")
+                finally:
+                    self._ping_stop.set()
+                    holder.clear()
                 if not self._stop:
                     time.sleep(2)
 
         self._stop = False
+        self._ping_stop.clear()
         self._thread = threading.Thread(target=runner, name="hl-model-b-trades", daemon=True)
         self._thread.start()
         return True
 
     def close(self) -> None:
         self._stop = True
+        self._ping_stop.set()
         ws = self._ws
         if ws is not None:
             try:

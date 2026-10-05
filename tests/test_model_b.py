@@ -12,7 +12,9 @@ from hl_bot.config import Settings, load_settings
 from hl_bot.exchange.hl_trades import (
     HyperliquidTradeFeed,
     MemoryFeed,
+    app_ping,
     map_aggressor_side,
+    normalize_coin,
     parse_bbo,
     parse_hl_trade,
     parse_l2_top,
@@ -20,7 +22,11 @@ from hl_bot.exchange.hl_trades import (
     trades_subscribe,
     ws_url,
 )
-from hl_bot.exchange.info_client import InfoClient
+from hl_bot.exchange.info_client import (
+    CANDLE_BACKOFF_BASE_SEC,
+    CANDLE_TTL_SEC,
+    InfoClient,
+)
 from hl_bot.execution.loop import run_bot
 from hl_bot.execution.model_b_loop import run_model_b
 from hl_bot.journal import TradeJournal
@@ -41,6 +47,7 @@ from hl_bot.strategy.model_b.risk import (
     take_profit,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
+from hl_bot.strategy.model_b.tape import MIN_PRINTS, window_prints
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import Pool, TradePrint
 from hl_bot.strategy.model_b.universe import (
@@ -694,6 +701,178 @@ def test_trade_feed_aggressor_side_fail_closed():
         {"coin": "BTC", "px": "99", "sz": "1", "time": 1_700_000_000_000, "oid": 5}
     )
     assert unknown is not None and unknown.crossed is None
+
+
+def test_trade_feed_reconnect_keeps_buffer_and_resubscribes():
+    """Expired reconnect must resubscribe without wiping or double-counting prints.
+
+    The trades channel only snapshots the last few prints. A fresh socket
+    stays under 30 until live prints arrive. Replaying that snapshot on
+    reconnect must not fake a thick tape, and the prints already stored
+    must still be there.
+    """
+    assert normalize_coin("btc-perp") == "BTC"
+    assert app_ping() == {"method": "ping"}
+
+    feed = HyperliquidTradeFeed(network="testnet", coins=("BTC", "ETH"), user="0xabc")
+    payloads = feed.resubscribe_payloads()
+    assert [p["subscription"]["coin"] for p in payloads if p.get("subscription", {}).get("type") == "trades"] == [
+        "BTC",
+        "ETH",
+    ]
+    assert payloads[-1] == {"method": "ping"}
+    assert any(p.get("subscription", {}).get("type") == "userFills" for p in payloads)
+
+    sent: list[dict] = []
+
+    class _WS:
+        def send(self, raw: str) -> None:
+            sent.append(__import__("json").loads(raw))
+
+    now_ms = 1_700_000_000_000
+    now = now_ms / 1000
+    feed._send_subscriptions(_WS())
+    assert sent[0]["subscription"]["type"] == "trades"
+    assert sent[-1] == {"method": "ping"}
+
+    snapshot = {
+        "channel": "trades",
+        "data": [
+            {
+                "coin": "BTC-PERP",
+                "side": "B" if i % 2 == 0 else "A",
+                "px": "100",
+                "sz": "0.01",
+                "time": now_ms - (19 - i) * 1000,
+                "tid": i + 1,
+            }
+            for i in range(20)
+        ],
+    }
+    assert len(feed.ingest(snapshot)) == 20
+    assert feed.prints("btc")[0].coin == "BTC"
+    thin = window_prints(feed.prints("BTC"), coin="BTC", now=now)
+    assert len(thin) == 20
+    assert len(thin) < MIN_PRINTS
+
+    # Same snapshot again (reconnect ack). Buffer stays, count does not jump.
+    assert feed.ingest(snapshot) == []
+    assert len(feed.prints("BTC")) == 20
+
+    # Socket open after Expired sends the same subscriptions. Prints remain.
+    sent.clear()
+    feed._send_subscriptions(_WS())
+    assert sent[-1] == {"method": "ping"}
+    assert len(feed.prints("BTC")) == 20
+
+    live = {
+        "channel": "trades",
+        "data": {
+            "coin": "BTC",
+            "side": "A",
+            "px": "101",
+            "sz": "0.02",
+            "time": now_ms,
+            "tid": 500,
+        },
+    }
+    # One dict (not only a list) plus enough new ids to clear THIN_TAPE.
+    assert len(feed.ingest(live)) == 1
+    more = {
+        "channel": "trades",
+        "data": [
+            {
+                "coin": "BTC",
+                "side": "B",
+                "px": "101",
+                "sz": "0.02",
+                "time": now_ms,
+                "tid": 600 + i,
+            }
+            for i in range(MIN_PRINTS)
+        ],
+    }
+    assert len(feed.ingest(more)) == MIN_PRINTS
+    filled = window_prints(feed.prints("BTC"), coin="BTC", now=now)
+    assert len(filled) >= MIN_PRINTS
+    # Replaying the live batch does not inflate the window.
+    assert feed.ingest(more) == []
+    assert len(window_prints(feed.prints("BTC"), coin="BTC", now=now)) == len(filled)
+
+
+def test_candle_snapshot_caches_and_backs_off_on_429(monkeypatch):
+    calls: list[str] = []
+    mode = {"status": 200}
+
+    def fake_post(base_url, coin, interval, start_ms, end_ms, timeout=15.0):
+        calls.append(coin)
+        if mode["status"] != 200:
+            return mode["status"], None
+        return 200, [
+            {"t": start_ms + 1, "o": 1, "h": 3, "l": 0.5, "c": 2, "v": 4, "T": start_ms + 60_000}
+        ]
+
+    monkeypatch.setattr("hl_bot.exchange.info_client._post_candle_snapshot", fake_post)
+    client = InfoClient(base_url="https://example.invalid")
+    clock = {"t": 1_000_000.0}
+    client._now = lambda: clock["t"]
+
+    first = client.get_candles("BTC", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    second = client.get_candles("btc", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert calls == ["BTC"]
+    assert second == first
+    assert first[0]["h"] == 3
+
+    # Ten-coin scan while the snapshot is fresh must not hit the network.
+    for coin in ("ETH", "SOL", "BTC", "NEAR"):
+        if coin == "BTC":
+            client.get_candles(coin, "1m", start_ms=1, end_ms=2_000_000_000_000)
+        else:
+            mode["status"] = 200
+            client.get_candles(coin, "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert calls == ["BTC", "ETH", "SOL", "NEAR"]
+
+    clock["t"] = 1_000_000.0 + CANDLE_TTL_SEC
+    mode["status"] = 429
+    stale = client.get_candles("BTC", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert stale == first  # last-good, not an empty pool wipe
+    assert calls[-1] == "BTC"
+    # Same pass, other coins must not each fire their own 429.
+    before = len(calls)
+    client.get_candles("ETH", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    client.get_candles("SOL", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == before
+
+    # No tight retry: just inside the backoff window is still one attempt.
+    clock["t"] = 1_000_000.0 + CANDLE_TTL_SEC + CANDLE_BACKOFF_BASE_SEC - 1
+    client.get_candles("BTC", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == before
+
+    # Backoff elapsed → exactly one more try, then a doubled wait.
+    clock["t"] = 1_000_000.0 + CANDLE_TTL_SEC + CANDLE_BACKOFF_BASE_SEC
+    mode["status"] = 429
+    client.get_candles("BTC", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == before + 1
+    doubled = CANDLE_BACKOFF_BASE_SEC * 2
+    clock["t"] = 1_000_000.0 + CANDLE_TTL_SEC + CANDLE_BACKOFF_BASE_SEC + doubled - 1
+    client.get_candles("ETH", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == before + 1
+
+    # A success clears the backoff so the next 429 starts at the base delay.
+    clock["t"] = 1_000_000.0 + CANDLE_TTL_SEC + CANDLE_BACKOFF_BASE_SEC + doubled
+    mode["status"] = 200
+    healed = client.get_candles("ETH", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert healed[0]["c"] == 2
+    mode["status"] = 429
+    client.get_candles("SOL", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    after_reset = len(calls)
+    reset_at = clock["t"]
+    clock["t"] = reset_at + CANDLE_BACKOFF_BASE_SEC - 1
+    client.get_candles("SOL", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == after_reset
+    clock["t"] = reset_at + CANDLE_BACKOFF_BASE_SEC
+    client.get_candles("SOL", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert len(calls) == after_reset + 1
 
 
 def test_pools_from_bars_mark_taken_levels():

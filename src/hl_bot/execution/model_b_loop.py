@@ -310,6 +310,7 @@ def run_model_b(
             try:
                 end_ms = int(now * 1000)
                 start_ms = end_ms - 14 * 24 * 3600 * 1000
+                # Cached per coin. Do not retry here — a 429 must not spin.
                 bars = info.get_candles(coin, interval="1m", start_ms=start_ms, end_ms=end_ms)
             except Exception:
                 logger.exception("candles failed for %s", coin)
