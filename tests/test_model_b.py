@@ -47,7 +47,14 @@ from hl_bot.strategy.model_b.risk import (
     take_profit,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
-from hl_bot.strategy.model_b.tape import MIN_PRINTS, window_prints
+from hl_bot.strategy.model_b.tape import (
+    MAINNET_BTC_PRINTS_PER_MIN,
+    MIN_PRINTS,
+    MIN_PRINTS_FLOOR,
+    TESTNET_BTC_PRINTS_PER_MIN,
+    density_min_prints,
+    window_prints,
+)
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import Pool, TradePrint
 from hl_bot.strategy.model_b.universe import (
@@ -330,6 +337,40 @@ def test_no_reclaim():
     assert decision.fail_reason == "NO_RECLAIM"
     assert decision.armed is False
     assert decision.sweep_price == pytest.approx(99)
+
+
+def test_testnet_min_prints_follows_tape_density(monkeypatch):
+    """30 on mainnet. Testnet auto floor is the same density, bounded at 3."""
+    assert MAINNET_BTC_PRINTS_PER_MIN == 252
+    assert TESTNET_BTC_PRINTS_PER_MIN == 7
+    scaled = round(MIN_PRINTS * (TESTNET_BTC_PRINTS_PER_MIN / MAINNET_BTC_PRINTS_PER_MIN))
+    assert density_min_prints() == max(MIN_PRINTS_FLOOR, scaled) == 3
+
+    monkeypatch.delenv("MODEL_B_MIN_PRINTS", raising=False)
+    monkeypatch.setenv("HL_NETWORK", "mainnet")
+    monkeypatch.setenv("ENTRY_MODE", "both")
+    assert load_settings().model_b_min_prints == 30
+
+    monkeypatch.setenv("HL_NETWORK", "testnet")
+    assert load_settings().model_b_min_prints == 3
+
+    monkeypatch.setenv("MODEL_B_MIN_PRINTS", "12")
+    assert load_settings().model_b_min_prints == 12
+
+    now = _now()
+    quiet = _long_prints(now)[:12]
+    bars = _bars(now)
+    pools = [Pool("PDH", 130, False)]
+    mainnet = _decide(quiet, bars, pools, engine=ModelBEngine(min_prints=30))
+    assert mainnet.fail_reason == "THIN_TAPE"
+    assert mainnet.print_count == 12
+    assert mainnet.min_prints == 30
+    assert "prints=12/30" in format_model_b_fail(mainnet)
+
+    testnet = _decide(quiet, bars, pools, engine=ModelBEngine(min_prints=3))
+    assert testnet.fail_reason != "THIN_TAPE"
+    assert testnet.min_prints == 3
+    assert testnet.print_count == 12
 
 
 def test_thin_tape_and_no_side_priority():
@@ -917,6 +958,7 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.risk_per_trade == pytest.approx(0.02)
     assert settings.model_b_tp_r == pytest.approx(2.5)
     assert settings.leverage == 20
+    assert settings.model_b_min_prints == density_min_prints() == 3
 
     monkeypatch.delenv("RISK_PER_TRADE")
     assert load_settings().risk_per_trade == pytest.approx(0.02)

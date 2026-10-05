@@ -66,14 +66,19 @@ class ModelBEngine:
         thesis: ThesisBook | None = None,
         tp_r: float = 2.5,
         risk_pct: float = MODEL_B_RISK_PCT,
+        min_prints: int = MIN_PRINTS,
     ):
         assert_policy()
         if risk_pct <= 0:
             raise ValueError("risk_pct must be > 0")
+        if int(min_prints) < 1:
+            raise ValueError("min_prints must be >= 1")
         self.thesis = thesis or ThesisBook()
         self.tp_r = float(tp_r)
         # From RISK_PER_TRADE. Model B settings validation requires 0.02.
         self.risk_pct = float(risk_pct)
+        # Mainnet default is 30. Testnet settings pass the density-scaled floor.
+        self.min_prints = int(min_prints)
 
     def evaluate(
         self,
@@ -134,6 +139,7 @@ class ModelBEngine:
                 fail_reason=reason,
                 intent=intent,
                 print_count=len(window),
+                min_prints=self.min_prints,
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
@@ -228,7 +234,7 @@ class ModelBEngine:
         if window and missing_side(window):
             return _done(NO_SIDE)
 
-        if len(window) < MIN_PRINTS:
+        if len(window) < self.min_prints:
             return _done(THIN_TAPE)
 
         if last_px is None:

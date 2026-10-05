@@ -19,7 +19,16 @@ from dataclasses import dataclass
 from hl_bot.strategy.model_b.types import TradePrint
 
 WINDOW_SEC = 90.0
+# Mainnet floor. A 2026-10-05 NY-session sample on
+# wss://api.hyperliquid.xyz/ws (trades, BTC) saw 84 prints in 20s
+# (252/min). The subscribe snapshot of the last 30 spanned 10.2s.
 MIN_PRINTS = 30
+MAINNET_BTC_PRINTS_PER_MIN = 252.0
+# Same-day desk probe on testnet: ~7 BTC prints/min (~10.5 in a 90s window).
+TESTNET_BTC_PRINTS_PER_MIN = 7.0
+# Auto scale never drops below this. 30 * (7/252) rounds to 1, so the
+# testnet floor is this bound, not 1.
+MIN_PRINTS_FLOOR = 3
 LAST_SEC = 15.0
 ABSORB_MIN = 1.5
 SWEEP_TICKS = 1.0
@@ -33,6 +42,23 @@ DELTA = "DELTA"
 LAST_15S = "LAST_15s"
 
 TAPE_FAILS = (NO_SIDE, THIN_TAPE, NO_SWEEP, NO_RECLAIM, ABSORB, DELTA, LAST_15S)
+
+
+def density_min_prints(
+    base: int = MIN_PRINTS,
+    testnet_per_min: float = TESTNET_BTC_PRINTS_PER_MIN,
+    mainnet_per_min: float = MAINNET_BTC_PRINTS_PER_MIN,
+) -> int:
+    """Same density as ``base`` prints on mainnet, applied to the testnet rate.
+
+    ``max(MIN_PRINTS_FLOOR, round(base * testnet_rate / mainnet_rate))``.
+    Mainnet itself stays at ``base`` (30). This does not change absorb,
+    delta, or sweep rules.
+    """
+    if mainnet_per_min <= 0:
+        return int(base)
+    scaled = int(round(int(base) * (float(testnet_per_min) / float(mainnet_per_min))))
+    return max(MIN_PRINTS_FLOOR, scaled)
 
 
 @dataclass(frozen=True)

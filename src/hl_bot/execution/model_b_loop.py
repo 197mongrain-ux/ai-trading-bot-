@@ -23,7 +23,6 @@ from hl_bot.risk.manager import RiskManager
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import assert_leverage
-from hl_bot.strategy.model_b.tape import MIN_PRINTS
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
 
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def format_model_b_fail(decision) -> str:
-    """One desk line. THIN_TAPE adds ``prints=N/30`` so a quiet tape is visible."""
+    """One desk line. THIN_TAPE adds ``prints=N/M`` so a quiet tape is visible."""
     text = (
         f"MODEL_B FAIL {decision.coin} bias={decision.bias} pool={decision.pool} "
         f"swing={decision.swing} sweep={decision.sweep_price} "
@@ -39,7 +38,7 @@ def format_model_b_fail(decision) -> str:
         f"score={decision.score} vol={decision.volume_tag} reason={decision.fail_reason}"
     )
     if decision.fail_reason == "THIN_TAPE":
-        text += f" prints={decision.print_count}/{MIN_PRINTS}"
+        text += f" prints={decision.print_count}/{decision.min_prints}"
     return text
 
 
@@ -122,6 +121,7 @@ def run_model_b(
         thesis=book,
         tp_r=settings.model_b_tp_r,
         risk_pct=settings.risk_per_trade,
+        min_prints=settings.model_b_min_prints,
     )
     # Account rails only. Position size is equity × RISK_PER_TRADE / stop.
     risk = RiskManager(
@@ -145,6 +145,7 @@ def run_model_b(
         leverage=20,
         risk_per_trade=settings.risk_per_trade,
         tp_r=settings.model_b_tp_r,
+        min_prints=settings.model_b_min_prints,
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -164,6 +165,11 @@ def run_model_b(
     }
     iterations = 0
     allow = {c.upper() for c in coins} if coins is not None else None
+    logger.info(
+        "MODEL_B min_prints=%s network=%s",
+        settings.model_b_min_prints,
+        settings.network,
+    )
 
     while True:
         iterations += 1

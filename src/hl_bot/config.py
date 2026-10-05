@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from hl_bot.strategy.filters import parse_trade_hours
+from hl_bot.strategy.model_b.tape import MIN_PRINTS, density_min_prints
 
 load_dotenv()
 
@@ -117,6 +118,9 @@ class Settings:
     entry_mode: str = "both"
     # Model B TP1 multiple before the pool cap. Default 2.5, must stay in [1, 3].
     model_b_tp_r: float = 2.5
+    # 90s print floor. Mainnet stays 30. Testnet auto-scales by tape density
+    # unless MODEL_B_MIN_PRINTS is set. See tape.density_min_prints.
+    model_b_min_prints: int = 30
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -223,6 +227,10 @@ class Settings:
             raise ValueError(
                 f"MODEL_B_TP_R={self.model_b_tp_r} must be in [1, 3]."
             )
+        if self.model_b_min_prints < 1:
+            raise ValueError(
+                f"MODEL_B_MIN_PRINTS={self.model_b_min_prints} must be >= 1."
+            )
         if self.ote_lookback_bars < 3:
             raise ValueError(
                 f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
@@ -269,6 +277,14 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
 
     symbols = _parse_symbols()
     entry_mode = os.getenv("ENTRY_MODE", "both").strip().lower() or "both"
+    # Mainnet tape floor stays 30. Testnet uses the measured density ratio
+    # unless MODEL_B_MIN_PRINTS is set explicitly.
+    if os.getenv("MODEL_B_MIN_PRINTS", "").strip():
+        model_b_min_prints = _int("MODEL_B_MIN_PRINTS", MIN_PRINTS)
+    elif network == "testnet":
+        model_b_min_prints = density_min_prints()
+    else:
+        model_b_min_prints = MIN_PRINTS
     # Model B is 2% of unified equity. Scalp stays at 0.5% when the var is unset.
     risk_default = 0.02 if entry_mode == "model_b" else 0.005
     # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
@@ -328,6 +344,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
         entry_mode=entry_mode,
         model_b_tp_r=_float("MODEL_B_TP_R", 2.5),
+        model_b_min_prints=model_b_min_prints,
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

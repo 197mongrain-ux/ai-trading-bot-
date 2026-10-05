@@ -87,8 +87,10 @@ class Decision:
     armed: bool
     fail_reason: str | None
     intent: AloIntent | None = None
-    # Prints inside the 90s window. Logged on THIN_TAPE; not a second gate.
+    # Prints inside the 90s window, and the floor they were compared to.
+    # Logged on THIN_TAPE as prints=N/M. Not a second gate.
     print_count: int = 0
+    min_prints: int = 30
     extra: dict = field(default_factory=dict)
 
     def to_log(self) -> dict:
@@ -115,4 +117,5 @@ class Decision:
             "fail_reason": self.fail_reason,
             "armed": self.armed,
             "print_count": self.print_count,
+            "min_prints": self.min_prints,
         }
