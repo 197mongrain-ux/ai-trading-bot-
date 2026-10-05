@@ -28,7 +28,7 @@ from hl_bot.exchange.info_client import (
     InfoClient,
 )
 from hl_bot.execution.loop import run_bot
-from hl_bot.execution.model_b_loop import run_model_b
+from hl_bot.execution.model_b_loop import format_model_b_fail, run_model_b
 from hl_bot.journal import TradeJournal
 from hl_bot.strategy.model_b.alo import alo_limit
 from hl_bot.strategy.model_b.bias import resolve_bias
@@ -337,6 +337,12 @@ def test_thin_tape_and_no_side_priority():
     thin = _decide(_long_prints(now)[:29], _bars(now), [Pool("PDH", 130, False)])
     assert thin.fail_reason == "THIN_TAPE"
     assert thin.armed is False
+    assert thin.print_count == 29
+    assert thin.to_log()["print_count"] == 29
+    assert "prints=29/30" in format_model_b_fail(thin)
+    assert "prints=" not in format_model_b_fail(
+        _decide(_long_prints(now), _bars(now), [Pool("PDL", 90, False)])
+    )
 
     sideless = _long_prints(now)
     sideless[3] = replace(sideless[3], side=None)

@@ -23,10 +23,24 @@ from hl_bot.risk.manager import RiskManager
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import assert_leverage
+from hl_bot.strategy.model_b.tape import MIN_PRINTS
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
 
 logger = logging.getLogger(__name__)
+
+
+def format_model_b_fail(decision) -> str:
+    """One desk line. THIN_TAPE adds ``prints=N/30`` so a quiet tape is visible."""
+    text = (
+        f"MODEL_B FAIL {decision.coin} bias={decision.bias} pool={decision.pool} "
+        f"swing={decision.swing} sweep={decision.sweep_price} "
+        f"absorb={decision.absorb} dW={decision.window_delta} d15={decision.last_15s_delta} "
+        f"score={decision.score} vol={decision.volume_tag} reason={decision.fail_reason}"
+    )
+    if decision.fail_reason == "THIN_TAPE":
+        text += f" prints={decision.print_count}/{MIN_PRINTS}"
+    return text
 
 
 def _extract_oid(resp: object) -> object | None:
@@ -342,21 +356,7 @@ def run_model_b(
                 journal.log(
                     "model_b_fail", entry_mode="model_b", **decision.to_log()
                 )
-                logger.info(
-                    "MODEL_B FAIL %s bias=%s pool=%s swing=%s sweep=%s "
-                    "absorb=%s dW=%s d15=%s score=%s vol=%s reason=%s",
-                    decision.coin,
-                    decision.bias,
-                    decision.pool,
-                    decision.swing,
-                    decision.sweep_price,
-                    decision.absorb,
-                    decision.window_delta,
-                    decision.last_15s_delta,
-                    decision.score,
-                    decision.volume_tag,
-                    decision.fail_reason,
-                )
+                logger.info("%s", format_model_b_fail(decision))
                 continue
 
             intent = decision.intent

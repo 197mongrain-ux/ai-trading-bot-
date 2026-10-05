@@ -87,6 +87,8 @@ class Decision:
     armed: bool
     fail_reason: str | None
     intent: AloIntent | None = None
+    # Prints inside the 90s window. Logged on THIN_TAPE; not a second gate.
+    print_count: int = 0
     extra: dict = field(default_factory=dict)
 
     def to_log(self) -> dict:
@@ -112,4 +114,5 @@ class Decision:
             "volume_tag": self.volume_tag,
             "fail_reason": self.fail_reason,
             "armed": self.armed,
+            "print_count": self.print_count,
         }

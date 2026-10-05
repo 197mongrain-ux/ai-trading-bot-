@@ -94,7 +94,7 @@ What it does:
 - **Order** is a post-only Alo immediately, never a market. Long rests at the swept low, or the best bid if that low would cross. Short mirrors. It works for 20s. Unfilled cancel ends that thesis until a new swing. One thesis per coin: no average-down, no second Alo, no re-entry after cancel or stop on that swing.
 - **Risk** is `RISK_PER_TRADE` (Model B requires **0.02**, 2% of unified account equity) divided by the stop distance. The stop is 1 tick past the sweep extreme. TP1 is ~2.5R and is never placed beyond the untaken pool on that side. A heal cannot replace a wider stop with a tighter one. Soft-prop, strategy kill, and flow exits are off.
 
-Every arm and fail is journaled (`model_b_arm` / `model_b_fail`) with coin, bias, pool, swing, sweep price, absorb, window delta, last-15s delta, score, volume tag, and one fail reason: `NO_SIDE`, `THIN_TAPE`, `NO_SWEEP`, `NO_RECLAIM`, `ABSORB`, `DELTA`, `LAST_15s` (plus `NO_SWING`, `OUT_OF_SESSION`, `THESIS_DONE`, `SECOND_ALO`, `AVERAGE_DOWN` when the hunt never reaches the tape).
+Every arm and fail is journaled (`model_b_arm` / `model_b_fail`) with coin, bias, pool, swing, sweep price, absorb, window delta, last-15s delta, score, volume tag, and one fail reason: `NO_SIDE`, `THIN_TAPE`, `NO_SWEEP`, `NO_RECLAIM`, `ABSORB`, `DELTA`, `LAST_15s` (plus `NO_SWING`, `OUT_OF_SESSION`, `THESIS_DONE`, `SECOND_ALO`, `AVERAGE_DOWN` when the hunt never reaches the tape). A `THIN_TAPE` line also shows `prints=N/30` for the 90s window. The minimum stays 30.
 
 The operator kill switch still flattens. That is account safety, not a score kill. Unit tests stay offline; they do not need a testnet session.
 

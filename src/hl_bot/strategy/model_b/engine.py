@@ -133,6 +133,7 @@ class ModelBEngine:
                 armed=armed,
                 fail_reason=reason,
                 intent=intent,
+                print_count=len(window),
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
