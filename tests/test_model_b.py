@@ -113,7 +113,9 @@ def _long_prints(
 
 def _decide(prints, bars, pools, **kw):
     now = kw.pop("now", _now())
-    engine = kw.pop("engine", None) or ModelBEngine(tp_r=kw.pop("tp_r", 2.5))
+    risk_pct = kw.pop("risk_pct", 0.02)
+    tp_r = kw.pop("tp_r", 2.5)
+    engine = kw.pop("engine", None) or ModelBEngine(tp_r=tp_r, risk_pct=risk_pct)
     return engine.evaluate(
         kw.pop("coin", "BTC"),
         now=now,
@@ -125,6 +127,49 @@ def _decide(prints, bars, pools, **kw):
         equity=kw.pop("equity", 5000.0),
         tick=kw.pop("tick", 1.0),
         score=kw.pop("score", None),
+    )
+
+
+def _short_prints(now: float) -> list[TradePrint]:
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset: float, price: float, size: float, side: str) -> None:
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, 96.0, 0.5, "sell")
+    add(-40, 101.0, 7.5, "buy")
+    add(-38, 101.0, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, 96.0, 1.0, "sell")
+    add(-10, 96.0, 0.5, "sell")
+    add(-1, 96.0, 0.5, "sell")
+    return prints
+
+
+def _short_bars(now: float) -> list[dict]:
+    t0 = now - 400
+    return [
+        {"t": t0, "o": 90, "h": 90, "l": 80, "c": 88, "v": 1},
+        {"t": t0 + 60, "o": 88, "h": 100, "l": 85, "c": 90, "v": 1},
+        {"t": t0 + 120, "o": 90, "h": 96, "l": 84, "c": 86, "v": 1},
+        {"t": t0 + 180, "o": 86, "h": 95, "l": 83, "c": 90, "v": 1},
+    ]
+
+
+def _short_case(pools: list[Pool]):
+    now = _now()
+    return _decide(
+        _short_prints(now),
+        _short_bars(now),
+        pools,
+        bid=95.0,
+        ask=96.5,
     )
 
 
@@ -181,13 +226,38 @@ def test_bias_pool_above_drops_shorts_and_below_drops_longs():
     assert bias.pool is not None and bias.pool.name == "PDL"
 
 
-def test_bias_tie_or_none_drops_both_and_does_not_arm():
-    assert resolve_bias(100, [Pool("PDH", 110, False), Pool("PDL", 90, False)]).side == "NONE"
+def test_bias_tie_is_none():
+    tied = resolve_bias(100, [Pool("PDH", 110, False), Pool("PDL", 90, False)])
+    assert tied.side == "NONE"
+    assert tied.pool is None
+    assert tied.pool_above is not None and tied.pool_above.name == "PDH"
+    assert tied.pool_below is not None and tied.pool_below.name == "PDL"
     assert resolve_bias(100, []).side == "NONE"
-    decision = _pass_case(pools=[])
-    assert decision.fail_reason == "NO_BIAS"
-    assert decision.armed is False
-    assert decision.bias == "NONE"
+
+
+def test_none_bias_allows_both_sides():
+    # No pool: both sides allowed, and a valid long tape arms.
+    bare = _pass_case(pools=[])
+    assert bare.bias == "NONE"
+    assert bare.armed is True
+    assert bare.intent is not None and bare.intent.side == "long"
+    assert bare.pool is None
+    assert bare.intent.take_profit == pytest.approx(101.5)
+
+    # Exact tie is also NONE, and the long is capped by the pool above.
+    tie = _pass_case(pools=[Pool("PDH", 114.0, False), Pool("PDL", 94.0, False)])
+    assert tie.bias == "NONE"
+    assert tie.armed is True
+    assert tie.intent is not None and tie.intent.side == "long"
+    assert tie.pool == "PDH@114"
+    assert tie.intent.take_profit <= 114
+
+    # The same NONE filter arms a valid short.
+    short = _short_case([])
+    assert short.bias == "NONE"
+    assert short.armed is True
+    assert short.intent is not None and short.intent.side == "short"
+    assert short.pool is None
 
 
 def test_long_setup_does_not_arm_when_bias_is_short():
@@ -195,6 +265,15 @@ def test_long_setup_does_not_arm_when_bias_is_short():
     assert decision.bias == "short"
     assert decision.armed is False
     assert decision.intent is None
+    assert decision.fail_reason == "NO_SWING"
+
+
+def test_short_setup_does_not_arm_when_bias_is_long():
+    decision = _short_case([Pool("PDH", 130.0, taken=False)])
+    assert decision.bias == "long"
+    assert decision.armed is False
+    assert decision.intent is None
+    assert decision.fail_reason == "NO_SWING"
 
 
 # --- tape fails -------------------------------------------------------------
@@ -436,14 +515,25 @@ def test_tp_capped_by_pool_and_r_band():
     assert take_profit("short", 101, 102, 99, tp_r=2.5) == pytest.approx(99)
 
 
-def test_size_is_two_percent_and_rejects_40x():
-    size, dollar = size_from_stop(5000, 99, 98)
+def test_size_uses_risk_per_trade_and_rejects_40x():
+    size, dollar = size_from_stop(5000, 99, 98, risk_pct=0.02)
     assert dollar == pytest.approx(100)
     assert size == pytest.approx(100)
+    # The fraction is the argument, not a hidden constant.
+    half, half_dollar = size_from_stop(5000, 99, 98, risk_pct=0.01)
+    assert half_dollar == pytest.approx(50)
+    assert half == pytest.approx(50)
     assert RISK_PCT == pytest.approx(0.02)
     assert LEVERAGE == 20
     with pytest.raises(ValueError, match="20x"):
-        size_from_stop(5000, 99, 98, leverage=40)
+        size_from_stop(5000, 99, 98, risk_pct=0.02, leverage=40)
+
+    sized = _pass_case(risk_pct=0.02)
+    assert sized.intent is not None
+    assert sized.intent.size == pytest.approx(100)
+    other = _pass_case(risk_pct=0.01)
+    assert other.intent is not None
+    assert other.intent.size == pytest.approx(50)
 
 
 def test_heal_keeps_wider_stop_and_flow_does_not_exit():
@@ -626,22 +716,36 @@ def test_pools_from_bars_mark_taken_levels():
 
 
 def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
-    monkeypatch.setenv("TRADING_MODE", "paper")
-    monkeypatch.setenv("RISK_PER_TRADE", "0.005")
+    monkeypatch.setenv("TRADING_MODE", "live")
+    monkeypatch.setenv("HL_NETWORK", "testnet")
+    monkeypatch.setenv("I_UNDERSTAND_LIVE_TRADING", "true")
+    monkeypatch.setenv("HL_PRIVATE_KEY", "0x" + "ab" * 32)
+    monkeypatch.setenv("RISK_PER_TRADE", "0.02")
     monkeypatch.setenv("ENTRY_MODE", "model_b")
     monkeypatch.setenv("LEVERAGE", "20")
     monkeypatch.setenv("MODEL_B_TP_R", "2.5")
     settings = load_settings()
     assert settings.entry_mode == "model_b"
+    assert settings.trading_mode == "live"
+    assert settings.network == "testnet"
+    assert settings.is_live
+    assert settings.risk_per_trade == pytest.approx(0.02)
     assert settings.model_b_tp_r == pytest.approx(2.5)
     assert settings.leverage == 20
 
+    monkeypatch.delenv("RISK_PER_TRADE")
+    assert load_settings().risk_per_trade == pytest.approx(0.02)
+
     with pytest.raises(ValueError, match="20x"):
-        Settings(entry_mode="model_b", leverage=40).validate()
+        Settings(entry_mode="model_b", leverage=40, risk_per_trade=0.02).validate()
     with pytest.raises(ValueError, match="20x"):
-        Settings(entry_mode="model_b", leverage=10).validate()
-    # Breakout/OTE mode is unchanged.
+        Settings(entry_mode="model_b", leverage=10, risk_per_trade=0.02).validate()
+    with pytest.raises(ValueError, match="RISK_PER_TRADE"):
+        Settings(entry_mode="model_b", risk_per_trade=0.005).validate()
+    # Breakout/OTE mode keeps the scalp risk band.
     Settings(entry_mode="both", leverage=20).validate()
+    with pytest.raises(ValueError, match="RISK_PER_TRADE"):
+        Settings(entry_mode="both", risk_per_trade=0.02).validate()
 
 
 def test_vwap_does_not_absorb_model_b():
@@ -683,7 +787,12 @@ def test_paper_loop_posts_alo_then_20s_cancel_ends_thesis(tmp_path):
             clock["t"] = now + 20
 
     summary = run_model_b(
-        Settings(entry_mode="model_b", journal_path=str(journal), loop_interval_sec=0),
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(journal),
+            loop_interval_sec=0,
+        ),
         max_iterations=2,
         info=info,
         feed=feed,
@@ -748,6 +857,7 @@ def test_live_path_places_alo_not_market(tmp_path):
     fake = FakeLive()
     settings = Settings(
         entry_mode="model_b",
+        risk_per_trade=0.02,
         trading_mode="live",
         i_understand_live_trading=True,
         private_key="0x" + "ab" * 32,

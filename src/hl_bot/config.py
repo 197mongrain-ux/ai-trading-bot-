@@ -166,7 +166,14 @@ class Settings:
                 f"MAX_POSITIONS_PER_SYMBOL={self.max_positions_per_symbol} must be >= 0 "
                 "(0 = unlimited)."
             )
-        if not (0.0025 <= self.risk_per_trade <= 0.005):
+        mode_now = (self.entry_mode or "").strip().lower()
+        if mode_now == "model_b":
+            if abs(self.risk_per_trade - 0.02) > 1e-12:
+                raise ValueError(
+                    f"RISK_PER_TRADE={self.risk_per_trade} — Model B sizes at "
+                    "RISK_PER_TRADE=0.02 (2% of unified equity)."
+                )
+        elif not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
                 f"RISK_PER_TRADE={self.risk_per_trade} outside documented range "
                 "0.0025–0.005 (0.25%–0.5%)."
@@ -261,6 +268,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     api_url = os.getenv("HL_API_URL", default_url).strip() or default_url
 
     symbols = _parse_symbols()
+    entry_mode = os.getenv("ENTRY_MODE", "both").strip().lower() or "both"
+    # Model B is 2% of unified equity. Scalp stays at 0.5% when the var is unset.
+    risk_default = 0.02 if entry_mode == "model_b" else 0.005
     # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
     max_open = _int("MAX_OPEN_POSITIONS", 0)
     # MAX_POSITIONS_PER_SYMBOL: default 3; 0 = unlimited stacking per ticker
@@ -293,7 +303,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         max_open_positions=max_open,
         max_positions_per_symbol=max_per_sym,
         starting_equity=_float("STARTING_EQUITY", 5000.0),
-        risk_per_trade=_float("RISK_PER_TRADE", 0.005),
+        risk_per_trade=_float("RISK_PER_TRADE", risk_default),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.03),
         max_drawdown_pct=_float("MAX_DRAWDOWN_PCT", 0.08),
         max_trades_per_day=_int("MAX_TRADES_PER_DAY", 0),
@@ -316,7 +326,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         htf_interval=os.getenv("HTF_INTERVAL", "5m").strip() or "5m",
         entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
-        entry_mode=(os.getenv("ENTRY_MODE", "both").strip().lower() or "both"),
+        entry_mode=entry_mode,
         model_b_tp_r=_float("MODEL_B_TP_R", 2.5),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),

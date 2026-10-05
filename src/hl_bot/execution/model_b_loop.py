@@ -22,7 +22,7 @@ from hl_bot.journal import TradeJournal
 from hl_bot.risk.manager import RiskManager
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
-from hl_bot.strategy.model_b.risk import RISK_PCT, assert_leverage
+from hl_bot.strategy.model_b.risk import assert_leverage
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
 
@@ -68,7 +68,13 @@ def run_model_b(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     assert_leverage(settings.leverage)
+    settings.validate()
     mode = "LIVE" if settings.is_live else "PAPER"
+    if mode == "PAPER":
+        logger.warning(
+            "Model B paper run is for unit tests. Desk start is "
+            "TRADING_MODE=live HL_NETWORK=testnet ENTRY_MODE=model_b LEVERAGE=20"
+        )
     clock = now_fn or time.time
     info = info or InfoClient(base_url=settings.api_url)
 
@@ -98,11 +104,15 @@ def run_model_b(
             )
 
     book = ThesisBook()
-    engine = ModelBEngine(thesis=book, tp_r=settings.model_b_tp_r)
-    # Account rails only. Sizing is Model B's 2% / sweep stop, not this manager.
+    engine = ModelBEngine(
+        thesis=book,
+        tp_r=settings.model_b_tp_r,
+        risk_pct=settings.risk_per_trade,
+    )
+    # Account rails only. Position size is equity × RISK_PER_TRADE / stop.
     risk = RiskManager(
         starting_equity=settings.starting_equity,
-        risk_per_trade=RISK_PCT,
+        risk_per_trade=settings.risk_per_trade,
         max_daily_loss_pct=settings.max_daily_loss_pct,
         max_drawdown_pct=settings.max_drawdown_pct,
         max_trades_per_day=0,
@@ -119,7 +129,7 @@ def run_model_b(
         entry_mode="model_b",
         network=settings.network,
         leverage=20,
-        risk_pct=RISK_PCT,
+        risk_per_trade=settings.risk_per_trade,
         tp_r=settings.model_b_tp_r,
         soft_prop=False,
         strategy_kill=False,

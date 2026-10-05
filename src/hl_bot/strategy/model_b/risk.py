@@ -1,7 +1,8 @@
 """Model B risk. Fixed policy — not the scalp 0.5% / VWAP stop.
 
 - Stop sits 1 tick past the sweep extreme (beyond the liquidity that printed).
-- Size = equity × 2% / stop distance. Notional capped at 20× equity.
+- Size = unified equity × ``RISK_PER_TRADE`` / stop distance. Model B requires
+  that fraction to be 0.02. Notional capped at 20× equity.
 - 20× only. 40× is rejected.
 - TP1 defaults to 2.5R, clamped to [1.0, 3.0] before the pool cap.
   The pool cap may pull TP inside 1R. It may not push TP through the pool.
@@ -13,7 +14,10 @@ from __future__ import annotations
 
 import math
 
-RISK_PCT = 0.02
+# Locked Model B fraction. Sizing reads the caller's risk_pct (from
+# RISK_PER_TRADE). This constant is the value that setting must be.
+MODEL_B_RISK_PCT = 0.02
+RISK_PCT = MODEL_B_RISK_PCT
 LEVERAGE = 20
 DEFAULT_TP_R = 2.5
 TP_R_MIN = 1.0
@@ -55,16 +59,23 @@ def size_from_stop(
     entry: float,
     stop: float,
     *,
+    risk_pct: float,
     leverage: int = LEVERAGE,
 ) -> tuple[float, float]:
-    """Return ``(size, dollar_risk)`` from the real stop distance at 2% risk."""
+    """Return ``(size, dollar_risk)`` from stop distance and ``risk_pct``.
+
+    ``equity`` is unified account equity. ``risk_pct`` is ``RISK_PER_TRADE``
+    (0.02 for Model B). The fraction is not hard-wired inside this function.
+    """
     assert_leverage(leverage)
     if equity <= 0 or entry <= 0 or stop <= 0:
         raise ValueError("invalid size inputs")
+    if risk_pct <= 0:
+        raise ValueError("risk_pct must be > 0")
     dist = abs(entry - stop)
     if dist <= 0:
         raise ValueError("stop distance is zero")
-    dollar = equity * RISK_PCT
+    dollar = equity * float(risk_pct)
     size = dollar / dist
     max_notional = equity * LEVERAGE
     if size * entry > max_notional:
