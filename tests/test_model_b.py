@@ -32,7 +32,11 @@ from hl_bot.exchange.info_client import (
 from hl_bot.execution.loop import run_bot
 from hl_bot.execution.model_b_loop import format_model_b_fail, run_model_b
 from hl_bot.journal import TradeJournal
-from hl_bot.strategy.model_b.alo import alo_limit
+from hl_bot.strategy.model_b.alo import (
+    alo_limit,
+    distance_to_fill_bps,
+    is_closer_to_fill,
+)
 from hl_bot.strategy.model_b.bias import resolve_bias
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
@@ -61,7 +65,7 @@ from hl_bot.strategy.model_b.tape import (
     density_min_prints,
     window_prints,
 )
-from hl_bot.strategy.model_b.thesis import ThesisBook
+from hl_bot.strategy.model_b.thesis import ThesisBook, WorkingOrder
 from hl_bot.strategy.model_b.types import AloIntent, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import (
     AFTER_HOURS_COINS,
@@ -1451,3 +1455,167 @@ def test_live_brackets_use_filled_alo_size(tmp_path):
     rows = TradeJournal(tmp_path / "fill.jsonl").read_all()
     opened = [r for r in rows if r["event"] == "open"]
     assert opened and opened[0]["size"] == pytest.approx(40.0)
+
+
+def test_distance_to_fill_is_bps_and_tie_keeps_the_resting_order():
+    # Long 21 points under a 120 mid is much farther than 4 points under a 103 mid.
+    far = distance_to_fill_bps("long", 99.0, 120.0)
+    near = distance_to_fill_bps("long", 99.0, 103.0)
+    assert far == pytest.approx(21 / 120 * 10_000)
+    assert near == pytest.approx(4 / 103 * 10_000)
+    assert is_closer_to_fill(near, far)
+    assert is_closer_to_fill(far, near) is False
+    assert is_closer_to_fill(near, near) is False
+    # A short already through the market is as close as a maker gets.
+    assert distance_to_fill_bps("short", 85876.0, 86000.0) == 0.0
+
+
+def _retag(prints, coin: str):
+    return [replace(p, coin=coin) for p in prints]
+
+
+def _two_coin_hunt(tmp_path, *, btc_last: float, eth_last: float, iterations: int = 1):
+    now = _now()
+    btc = _long_prints(now, last_price=btc_last, final_price=btc_last, sweep_px=99.0)
+    eth = _retag(
+        _long_prints(now, last_price=eth_last, final_price=eth_last, sweep_px=99.0),
+        "ETH",
+    )
+    info = InfoClient()
+    bars = _bars(now)
+    info.inject_bars(bars, coin="BTC")
+    info.inject_bars(bars, coin="ETH")
+    feed = MemoryFeed(
+        btc + eth,
+        bbo={
+            "BTC": (btc_last - 1.0, btc_last + 1.0),
+            "ETH": (eth_last - 1.0, eth_last + 1.0),
+        },
+    )
+    journal = tmp_path / "closer.jsonl"
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(journal),
+            loop_interval_sec=0,
+        ),
+        max_iterations=iterations,
+        info=info,
+        feed=feed,
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC", "ETH"),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    return summary, TradeJournal(journal).read_all()
+
+
+def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path):
+    """BTC rests far under the market. ETH's limit is closer, so BTC is cancelled."""
+    summary, rows = _two_coin_hunt(tmp_path, btc_last=120.0, eth_last=103.0, iterations=2)
+    assert summary["arms"] == 2
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert len(cancels) == 1
+    assert cancels[0]["coin"] == "BTC"
+    assert cancels[0]["reason"] == "closer_ticker"
+    assert cancels[0]["winner"] == "ETH"
+    assert cancels[0]["margin_for_better"] is True
+    assert not any(r.get("reason") == "unfilled_20s" for r in rows)
+    # The cancelled swing stays done, so the next pass does not repost BTC.
+    assert any(r.get("coin") == "BTC" and r.get("fail_reason") == "THESIS_DONE" for r in rows)
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["BTC", "ETH"]
+
+
+def test_farther_ticker_does_not_cancel_the_closer_alo(tmp_path):
+    summary, rows = _two_coin_hunt(tmp_path, btc_last=103.0, eth_last=120.0)
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
+    fails = [r for r in rows if r.get("fail_reason") == "NOT_CLOSER"]
+    assert len(fails) == 1
+    assert fails[0]["coin"] == "ETH"
+    assert fails[0]["held_by"] == "BTC"
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+
+
+def test_filled_position_is_not_cancelled_for_a_closer_ticker(tmp_path):
+    """A fill keeps its brackets. The new coin may place because no Alo is resting."""
+    now = _now()
+    btc = _long_prints(now, last_price=120.0, final_price=120.0, sweep_px=99.0)
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_bars(now), coin="ETH")
+    feed = MemoryFeed(btc, bbo={"BTC": (119.0, 121.0)})
+    added = {"done": False}
+
+    def sleep_fn(_sec):
+        if added["done"]:
+            return
+        added["done"] = True
+        feed._prints.extend(
+            _retag(
+                _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+                "ETH",
+            )
+        )
+        feed._bbo["ETH"] = (102.0, 104.0)
+        feed._prints.append(
+            TradePrint(ts=now + 1, coin="BTC", price=99.0, size=1, side="sell", seq=800)
+        )
+
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(tmp_path / "filled.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=2,
+        info=info,
+        feed=feed,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC", "ETH"),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["cancels"] == 0
+    assert summary["opens"] == 1
+    assert summary["arms"] == 2
+    rows = TradeJournal(tmp_path / "filled.jsonl").read_all()
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+    assert not any(r["event"] == "close" for r in rows)
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
+
+
+def test_release_for_closer_refuses_an_open_position():
+    now = _now()
+    book = ThesisBook()
+    decision = _decide(_long_prints(now), _bars(now), [Pool("PDH", 130, False)])
+    intent = decision.intent
+    assert intent is not None
+    order = book.post(intent, now, oid=9)
+    sell = TradePrint(ts=now + 1, coin="BTC", price=intent.limit_px, size=1, side="sell", seq=0)
+    pos = book.try_fill_from_prints([sell])
+    assert pos is not None
+    assert book.release_for_closer("BTC") is None
+    assert book.position("BTC") is pos
+    book._state("BTC").working = WorkingOrder(
+        coin="BTC",
+        side="long",
+        limit_px=intent.limit_px,
+        size=intent.size,
+        stop=intent.stop,
+        take_profit=intent.take_profit,
+        swing_id=intent.swing_id,
+        posted_at=now,
+        oid=9,
+    )
+    assert book.release_for_closer("BTC") is None
+    assert book.position("BTC") is pos
+    assert book.working("BTC") is not None

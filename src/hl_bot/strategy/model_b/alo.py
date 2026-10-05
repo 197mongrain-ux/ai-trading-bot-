@@ -56,3 +56,42 @@ def alo_limit(
     if price <= best_bid:
         return None
     return price
+
+
+def market_ref(
+    best_bid: float | None,
+    best_ask: float | None,
+    last: float | None,
+) -> float | None:
+    """Mid when the book is two-sided, otherwise the last trade."""
+    if (
+        best_bid is not None
+        and best_ask is not None
+        and best_bid > 0
+        and best_ask > best_bid
+    ):
+        return (best_bid + best_ask) / 2.0
+    if last is not None and last > 0:
+        return float(last)
+    return None
+
+
+def distance_to_fill_bps(side: str, limit_px: float, ref_px: float) -> float | None:
+    """Basis points the market must travel before this Alo can fill.
+
+    A long rests under the market, so the gap is ``ref - limit``. A short
+    rests above it, so the gap is ``limit - ref``. Zero means the limit is
+    already at or through the reference (as close as a maker gets). Smaller
+    is closer to a fill. Bps, not ticks, so BTC and ETH gaps compare.
+    """
+    if side not in ("long", "short") or limit_px <= 0 or ref_px <= 0:
+        return None
+    gap = (ref_px - limit_px) if side == "long" else (limit_px - ref_px)
+    if gap <= 0:
+        return 0.0
+    return gap / ref_px * 10_000.0
+
+
+def is_closer_to_fill(challenger_bps: float, resting_bps: float) -> bool:
+    """True only when the challenger is strictly closer. A tie keeps the resting Alo."""
+    return float(challenger_bps) < float(resting_bps) - 1e-6

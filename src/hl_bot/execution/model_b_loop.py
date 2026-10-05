@@ -4,7 +4,9 @@ Selected with ``ENTRY_MODE=model_b``. Breakout / OTE stay on their own
 path. This loop never market-opens. A resting Alo stays until the thesis
 is stale (a print through the sweep extreme that does not fill it).
 ``MODEL_B_ALO_TIMEOUT_SEC=0`` (the default) disables the clock cancel.
-Exits are stop and TP only.
+Exits are stop and TP only. One unfilled Alo rests on the account at
+a time. A new coin takes that slot only when its limit is strictly
+closer to the market, in bps, than the order already working.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -22,6 +24,7 @@ from hl_bot.exchange.info_client import InfoClient
 from hl_bot.execution.loop import killswitch_active
 from hl_bot.journal import TradeJournal
 from hl_bot.risk.manager import RiskManager
+from hl_bot.strategy.model_b.alo import distance_to_fill_bps, is_closer_to_fill, market_ref
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import assert_leverage
@@ -209,7 +212,7 @@ def run_model_b(
                 logger.error("Kill switch / drawdown — exiting Model B loop")
                 break
 
-        def _cancel_working(order, reason: str) -> None:
+        def _cancel_working(order, reason: str, **extra) -> None:
             summary["cancels"] += 1
             journal.log(
                 "model_b_cancel",
@@ -218,13 +221,15 @@ def run_model_b(
                 limit_px=order.limit_px,
                 reason=reason,
                 entry_mode="model_b",
+                **extra,
             )
             logger.info(
-                "MODEL_B CANCEL %s swing=%s px=%s reason=%s — thesis done",
+                "MODEL_B CANCEL %s swing=%s px=%s reason=%s winner=%s — thesis done",
                 order.coin,
                 order.swing_id,
                 order.limit_px,
                 reason,
+                extra.get("winner"),
             )
             if live is not None and order.oid is not None:
                 try:
@@ -417,6 +422,75 @@ def run_model_b(
                 continue
 
             intent = decision.intent
+            # One unfilled Alo locks the margin. A second coin places only
+            # when its limit is strictly closer to the market (bps). The
+            # resting order is cancelled first so the new one is not rejected
+            # for insufficient margin. A filled position is never cancelled.
+            resting = [order for order in book.resting_orders() if order.coin != intent.coin]
+            if resting:
+                challenger_ref = market_ref(bid, ask, last)
+                challenger_bps = (
+                    distance_to_fill_bps(intent.side, intent.limit_px, challenger_ref)
+                    if challenger_ref is not None
+                    else None
+                )
+                held_by = None
+                held_bps = None
+                if challenger_bps is None:
+                    held_by = resting[0]
+                else:
+                    for order in resting:
+                        held_prints = feed.prints(order.coin)
+                        held_last = held_prints[-1].price if held_prints else None
+                        if bbo_for is not None:
+                            held_bid, held_ask = bbo_for(order.coin)
+                        else:
+                            held_bid, held_ask = feed.bbo(order.coin)
+                        held_ref = market_ref(held_bid, held_ask, held_last)
+                        order_bps = (
+                            distance_to_fill_bps(order.side, order.limit_px, held_ref)
+                            if held_ref is not None
+                            else None
+                        )
+                        if order_bps is None or not is_closer_to_fill(challenger_bps, order_bps):
+                            held_by = order
+                            held_bps = order_bps
+                            break
+                if held_by is not None:
+                    summary["fails"] += 1
+                    journal.log(
+                        "model_b_fail",
+                        entry_mode="model_b",
+                        **{
+                            **decision.to_log(),
+                            "fail_reason": "NOT_CLOSER",
+                            "armed": False,
+                            "held_by": held_by.coin,
+                            "challenger_bps": challenger_bps,
+                            "held_bps": held_bps,
+                        },
+                    )
+                    logger.info(
+                        "MODEL_B FAIL %s reason=NOT_CLOSER held_by=%s "
+                        "challenger_bps=%s held_bps=%s",
+                        coin,
+                        held_by.coin,
+                        challenger_bps,
+                        held_bps,
+                    )
+                    continue
+                for order in resting:
+                    released = book.release_for_closer(order.coin)
+                    if released is None:
+                        continue
+                    _cancel_working(
+                        released,
+                        "closer_ticker",
+                        winner=intent.coin,
+                        margin_for_better=True,
+                        challenger_bps=challenger_bps,
+                    )
+
             oid = None
             if live is not None:
                 try:

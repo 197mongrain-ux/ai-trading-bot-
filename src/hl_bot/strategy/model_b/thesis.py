@@ -191,6 +191,30 @@ class ThesisBook:
         st = self._coins.get(coin.upper())
         return None if st is None else st.working
 
+    def resting_orders(self) -> list[WorkingOrder]:
+        """Unfilled Alos. A coin that already has a position is left out."""
+        resting: list[WorkingOrder] = []
+        for st in self._coins.values():
+            if st.working is None or st.position is not None:
+                continue
+            resting.append(st.working)
+        return resting
+
+    def release_for_closer(self, coin: str) -> WorkingOrder | None:
+        """Cancel one unfilled Alo so a closer coin can use the margin.
+
+        An open position is not released: its reduce-only brackets stay.
+        The swing is consumed so this thesis does not immediately repost
+        and take the margin back.
+        """
+        st = self._coins.get(coin.upper())
+        if st is None or st.working is None or st.position is not None:
+            return None
+        order = st.working
+        st.consumed.add(order.swing_id)
+        st.working = None
+        return order
+
     def position(self, coin: str) -> OpenPosition | None:
         st = self._coins.get(coin.upper())
         return None if st is None else st.position
