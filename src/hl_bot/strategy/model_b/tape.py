@@ -8,11 +8,13 @@ Fail reasons, first match wins:
 Long, all true: a print at least 1 tick through the swing low; the last
 trade back above that low; absorb = sell size from sweep→reclaim / buy
 size from reclaim→now ≥ 1.3; 90s delta and last-15s delta at or above
-``-DELTA_FLAT_EPS``. Short is the mirror (buy/sell swapped, deltas at or
-below ``+DELTA_FLAT_EPS``).
+``-eps`` coins. Short is the mirror (buy/sell swapped, deltas at or
+below ``+eps``).
 
 Delta is coin size: sum of buy print sizes minus sum of sell print sizes.
-It is not dollars and not a ratio. The flat band is absolute coin size.
+It is not dollars and not a ratio. The flat band is a USDC notional
+(``DELTA_FLAT_USDC`` / mid) so SOL and BTC share the same dollar tolerance.
+``DELTA_FLAT_EPS`` is the coin-size fallback when that notional is 0.
 """
 
 from __future__ import annotations
@@ -39,11 +41,13 @@ LAST_SEC = 15.0
 # cleared. The closest ETH short peaked at 1.34. The floor is 1.3.
 ABSORB_MIN = 1.3
 SWEEP_TICKS = 1.0
-# Flat band in coin size (buy sz − sell sz), the same units as logged dW.
-# 2026-10-06 testnet majors that already passed sweep+reclaim+absorb were
-# vetoed at about −0.00 to −0.05. 0.05 coins lets that band through.
-# A short with dW +0.19 is still adverse and fails. 0 restores the strict
-# sign check (pass long only when dW >= 0, short only when dW <= 0).
+# Notional flat band. Divided by the coin's mid (else last) to get coin
+# size. 0.05 coins was ~$6 on SOL and ~$4k on BTC. $100 is the same
+# tolerance on both: about 0.67 SOL and about 0.0012 BTC at those prices.
+# 0 turns the notional off and the coin-size fallback below is used.
+DELTA_FLAT_USDC = 100.0
+# Coin-size fallback (buy sz − sell sz) when ``DELTA_FLAT_USDC`` is 0,
+# or when there is no price to convert with. 0 is the strict sign check.
 DELTA_FLAT_EPS = 0.05
 # Dust inside this was already treated as zero before the flat band.
 _DELTA_STRICT_EPS = 1e-9
@@ -125,6 +129,23 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     if numerator > 1e-12:
         return math.inf
     return None
+
+
+def flat_eps_coins(
+    usdc: float,
+    price: float | None,
+    coin_eps: float = DELTA_FLAT_EPS,
+) -> float:
+    """Coin-size flat band for one check.
+
+    ``usdc > 0`` and a positive price: ``usdc / price``. Otherwise the
+    coin-size fallback. ``0`` is the strict sign check.
+    """
+    if float(usdc) > 0 and price is not None and float(price) > 0:
+        return float(usdc) / float(price)
+    if float(coin_eps) <= 0:
+        return 0.0
+    return float(coin_eps)
 
 
 def _delta_aligned(side: str, value: float, eps: float = DELTA_FLAT_EPS) -> bool:

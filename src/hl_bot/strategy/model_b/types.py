@@ -115,6 +115,14 @@ class Decision:
     # passed a print the strict sign check would have failed. Null when
     # the delta was already non-adverse, and on every fail.
     delta_flat: str | None = None
+    # Coin size actually compared, and the price used to scale the USDC band.
+    delta_flat_eps: float | None = None
+    delta_flat_px: float | None = None
+    # BAD_TP log only. Null on an arm and on every other fail.
+    r_distance: float | None = None
+    pool_distance: float | None = None
+    pool_r: float | None = None
+    bad_tp_why: str | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -151,4 +159,10 @@ class Decision:
             "catalyst_flag": bool(self.catalyst_flag),
             "size_adjust": self.size_adjust,
             "delta_flat": self.delta_flat,
+            "delta_flat_eps": _num(self.delta_flat_eps),
+            "delta_flat_px": _num(self.delta_flat_px),
+            "r_distance": _num(self.r_distance),
+            "pool_distance": _num(self.pool_distance),
+            "pool_r": _num(self.pool_r),
+            "bad_tp_why": self.bad_tp_why,
         }

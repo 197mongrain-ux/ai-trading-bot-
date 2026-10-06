@@ -47,6 +47,11 @@ def format_model_b_fail(decision) -> str:
     )
     if decision.fail_reason == "THIN_TAPE":
         text += f" prints={decision.print_count}/{decision.min_prints}"
+    if decision.fail_reason == "BAD_TP":
+        text += (
+            f" r={decision.r_distance} pool_dist={decision.pool_distance} "
+            f"pool_r={decision.pool_r} why={decision.bad_tp_why}"
+        )
     return text
 
 
@@ -132,6 +137,7 @@ def run_model_b(
         min_prints=settings.model_b_min_prints,
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
         delta_flat_eps=settings.model_b_delta_flat_eps,
+        delta_flat_usdc=settings.model_b_delta_flat_usdc,
     )
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
@@ -159,6 +165,7 @@ def run_model_b(
         tp_r=settings.model_b_tp_r,
         min_prints=settings.model_b_min_prints,
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
+        delta_flat_usdc=settings.model_b_delta_flat_usdc,
         delta_flat_eps=settings.model_b_delta_flat_eps,
         soft_prop=False,
         strategy_kill=False,
@@ -479,12 +486,14 @@ def run_model_b(
 
             if decision.delta_flat:
                 logger.info(
-                    "MODEL_B DELTA_FLAT %s saved=%s dW=%s d15=%s eps=%s",
+                    "MODEL_B DELTA_FLAT %s saved=%s dW=%s d15=%s eps=%s usdc=%s px=%s",
                     decision.coin,
                     decision.delta_flat,
                     decision.window_delta,
                     decision.last_15s_delta,
-                    engine.delta_flat_eps,
+                    decision.delta_flat_eps,
+                    engine.delta_flat_usdc,
+                    decision.delta_flat_px,
                 )
 
             intent = decision.intent

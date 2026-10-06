@@ -11,16 +11,18 @@ and a stop wider than 1.5% of price are both armed; size is 2% of spot
 USDC over that distance. ``size_adjust=wide_stop`` is journaled when the
 distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
 side, stop == fill, one-tick collision). Window and last-15s delta may
-sit inside ``DELTA_FLAT_EPS`` coins of flat; a clearly adverse delta
-still fails. TP1 is ~1.5R (clamped to 1–2)
-and never beyond the untaken pool on that side. A session volume profile
+sit inside a flat band; a clearly adverse delta still fails. The band is
+``DELTA_FLAT_USDC`` (default $100) divided by the mid. TP1 is ~1.5R
+(clamped to 1–2) and never beyond the untaken pool on that side. A
+``BAD_TP`` fail logs the R distance and the pool R-multiple; it does not
+change that band. A session volume profile
 (POC / VAH / VAL / LVN) is written on the decision for the journal.
 Those tags do not arm, block, or move the stop.
 """
 
 from __future__ import annotations
 
-from hl_bot.strategy.model_b.alo import alo_limit
+from hl_bot.strategy.model_b.alo import alo_limit, market_ref
 from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
 from hl_bot.strategy.model_b.risk import (
     DEFAULT_TP_R,
@@ -33,6 +35,7 @@ from hl_bot.strategy.model_b.risk import (
     size_from_stop,
     stop_is_valid,
     take_profit,
+    tp_fail_detail,
     tp_is_valid,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
@@ -45,10 +48,12 @@ from hl_bot.strategy.model_b.swings import (
 )
 from hl_bot.strategy.model_b.tape import (
     DELTA_FLAT_EPS,
+    DELTA_FLAT_USDC,
     MIN_PRINTS,
     NO_SIDE,
     THIN_TAPE,
     analyze_tape,
+    flat_eps_coins,
     missing_side,
     window_prints,
 )
@@ -91,6 +96,7 @@ class ModelBEngine:
         min_prints: int = MIN_PRINTS,
         alo_timeout_sec: float = 0.0,
         delta_flat_eps: float = DELTA_FLAT_EPS,
+        delta_flat_usdc: float = DELTA_FLAT_USDC,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -104,6 +110,8 @@ class ModelBEngine:
             raise ValueError("alo_timeout_sec must be >= 0")
         if float(delta_flat_eps) < 0:
             raise ValueError("delta_flat_eps must be >= 0")
+        if float(delta_flat_usdc) < 0:
+            raise ValueError("delta_flat_usdc must be >= 0")
         self.thesis = thesis or ThesisBook(work_sec=float(alo_timeout_sec))
         self.tp_r = clamp_tp_r(tp_r)
         # From RISK_PER_TRADE. Model B settings validation requires 0.02.
@@ -112,8 +120,10 @@ class ModelBEngine:
         self.min_prints = int(min_prints)
         # 0 rests the maker until the thesis is stale. No default 20s cancel.
         self.alo_timeout_sec = float(alo_timeout_sec)
-        # Coin size. 0 is the strict sign check.
+        # Coin-size fallback. Used when delta_flat_usdc is 0, or no price.
         self.delta_flat_eps = float(delta_flat_eps)
+        # USDC notional. Divided by the mid to get the coin-size band.
+        self.delta_flat_usdc = float(delta_flat_usdc)
 
     def evaluate(
         self,
@@ -167,6 +177,12 @@ class ModelBEngine:
             pool_label: str | None = None,
             size_adjust: str | None = None,
             delta_flat: str | None = None,
+            delta_flat_eps: float | None = None,
+            delta_flat_px: float | None = None,
+            r_distance: float | None = None,
+            pool_distance: float | None = None,
+            pool_r: float | None = None,
+            bad_tp_why: str | None = None,
         ) -> Decision:
             ctx_side = vp_ctx.get("side")
             log_side = ctx_side if ctx_side in ("long", "short") else (
@@ -211,6 +227,12 @@ class ModelBEngine:
                 catalyst_flag=tags["catalyst_flag"],
                 size_adjust=size_adjust,
                 delta_flat=delta_flat,
+                delta_flat_eps=delta_flat_eps,
+                delta_flat_px=delta_flat_px,
+                r_distance=r_distance,
+                pool_distance=pool_distance,
+                pool_r=pool_r,
+                bad_tp_why=bad_tp_why,
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
@@ -223,8 +245,15 @@ class ModelBEngine:
                 last_px,
                 tick,
             )
+            ref_px = market_ref(
+                best_bid,
+                best_ask,
+                last_px if last_px and last_px > 0 else (mark if mark and mark > 0 else None),
+            )
+            eps_coin = flat_eps_coins(self.delta_flat_usdc, ref_px, self.delta_flat_eps)
+            scale = dict(delta_flat_eps=eps_coin, delta_flat_px=ref_px)
             if swing is None:
-                return _done(NO_SWING, pool_label=label)
+                return _done(NO_SWING, pool_label=label, **scale)
             vp_ctx["swing_ts"] = swing.ts
 
             metrics = analyze_tape(
@@ -233,7 +262,7 @@ class ModelBEngine:
                 swing=swing.price,
                 tick=tick,
                 now=now,
-                delta_flat_eps=self.delta_flat_eps,
+                delta_flat_eps=eps_coin,
             )
             fields = dict(
                 swing=swing.price,
@@ -242,6 +271,7 @@ class ModelBEngine:
                 window_delta=metrics.window_delta,
                 last_15=metrics.last_15s_delta,
                 pool_label=label,
+                **scale,
             )
             if metrics.fail_reason:
                 return _done(metrics.fail_reason, **fields)
@@ -303,7 +333,21 @@ class ModelBEngine:
                 tp_r=self.tp_r,
             )
             if not tp_is_valid(side, limit, tp):
-                return _done(BAD_TP, **fields)
+                detail = tp_fail_detail(
+                    side,
+                    limit,
+                    stop,
+                    None if pool is None else pool.price,
+                    tp,
+                )
+                return _done(
+                    BAD_TP,
+                    r_distance=detail["r_distance"],
+                    pool_distance=detail["pool_distance"],
+                    pool_r=detail["pool_r"],
+                    bad_tp_why=detail["why"],
+                    **fields,
+                )
 
             intent = AloIntent(
                 coin=coin_u,

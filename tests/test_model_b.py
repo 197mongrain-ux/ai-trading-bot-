@@ -63,18 +63,22 @@ from hl_bot.strategy.model_b.risk import (
     stop_beyond_extreme,
     stop_clears_fees,
     take_profit,
+    tp_fail_detail,
+    tp_is_valid,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
 from hl_bot.strategy.model_b.swings import atr14, local_bar_extreme
 from hl_bot.strategy.model_b.tape import (
     ABSORB_MIN,
     DELTA_FLAT_EPS,
+    DELTA_FLAT_USDC,
     MAINNET_BTC_PRINTS_PER_MIN,
     MIN_PRINTS,
     MIN_PRINTS_FLOOR,
     TESTNET_BTC_PRINTS_PER_MIN,
     _delta_aligned,
     density_min_prints,
+    flat_eps_coins,
     window_prints,
 )
 from hl_bot.strategy.model_b.thesis import ThesisBook, WorkingOrder
@@ -474,20 +478,29 @@ def test_each_tape_fail_reason():
 
 
 def test_flat_delta_band_passes_and_adverse_still_fails():
-    """Near-zero coin-size delta passes. A clearly adverse print still fails.
+    """$100 of coin imbalance is flat. A larger notional still fails.
 
-    Delta is buy size minus sell size. The 2026-10-06 flat majors sat around
-    −0.05 coins. A short at +0.19 stays DELTA. eps=0 is the old sign check.
+    Delta is buy size minus sell size. The band is USDC / mid. 0.05 coins
+    stays the fallback when the USDC notional is 0. eps=0 is the strict check.
     """
+    assert DELTA_FLAT_USDC == pytest.approx(100)
     assert DELTA_FLAT_EPS == pytest.approx(0.05)
+    assert flat_eps_coins(100, 150) == pytest.approx(100 / 150)
+    assert flat_eps_coins(100, 86000) == pytest.approx(100 / 86000)
+    assert flat_eps_coins(100, 150) > 0.05
+    assert flat_eps_coins(100, 86000) < 0.05
+    sol_eps = flat_eps_coins(100, 150)
+    btc_eps = flat_eps_coins(100, 86000)
+    assert _delta_aligned("short", 0.19, sol_eps)
+    assert not _delta_aligned("short", 1.1, sol_eps)
+    assert not _delta_aligned("long", -0.05, btc_eps)
+    assert _delta_aligned("long", -0.0005, btc_eps)
+    assert flat_eps_coins(0, 150, 0.05) == pytest.approx(0.05)
+    assert flat_eps_coins(0, 150, 0) == 0
     assert _delta_aligned("long", -0.05, DELTA_FLAT_EPS)
     assert not _delta_aligned("long", -0.06, DELTA_FLAT_EPS)
-    assert _delta_aligned("short", 0.05, DELTA_FLAT_EPS)
-    assert not _delta_aligned("short", 0.19, DELTA_FLAT_EPS)
     assert _delta_aligned("long", -1e-9, 0.0)
     assert not _delta_aligned("long", -0.01, 0.0)
-    assert _delta_aligned("short", 1e-9, 0.0)
-    assert not _delta_aligned("short", 0.01, 0.0)
 
     # Base window delta is +4. A 4.04 sell outside the last 15s leaves dW −0.04.
     flat = _pass_case(extra=[(-20.0, 104.0, 4.04, "sell")])
@@ -513,17 +526,34 @@ def test_flat_delta_band_passes_and_adverse_still_fails():
     assert both.window_delta == pytest.approx(-0.04)
     assert both.last_15s_delta == pytest.approx(-0.04)
 
-    outside = _pass_case(extra=[(-20.0, 104.0, 4.06, "sell")])
+    # −0.06 coins at a ~104 mid is about $6, inside the $100 band.
+    small = _pass_case(extra=[(-20.0, 104.0, 4.06, "sell")])
+    assert small.armed is True
+    assert small.delta_flat == "window"
+    assert small.window_delta == pytest.approx(-0.06)
+    assert small.delta_flat_eps == pytest.approx(100 / 104)
+    assert small.delta_flat_px == pytest.approx(104)
+
+    # −1.20 coins at that mid is about $125, still DELTA.
+    outside = _pass_case(extra=[(-20.0, 104.0, 5.20, "sell")])
     assert outside.armed is False
     assert outside.fail_reason == "DELTA"
     assert outside.delta_flat is None
-    assert outside.window_delta == pytest.approx(-0.06)
+    assert outside.window_delta == pytest.approx(-1.20)
+
+    coin_band = _pass_case(
+        extra=[(-20.0, 104.0, 4.06, "sell")],
+        engine=ModelBEngine(delta_flat_usdc=0, delta_flat_eps=0.05),
+    )
+    assert coin_band.armed is False
+    assert coin_band.fail_reason == "DELTA"
+    assert coin_band.delta_flat_eps == pytest.approx(0.05)
 
     assert _pass_case(sweep_sz=100.0).fail_reason == "DELTA"
 
     strict = _pass_case(
         extra=[(-20.0, 104.0, 4.04, "sell")],
-        engine=ModelBEngine(delta_flat_eps=0.0),
+        engine=ModelBEngine(delta_flat_usdc=0, delta_flat_eps=0.0),
     )
     assert strict.armed is False
     assert strict.fail_reason == "DELTA"
@@ -554,10 +584,19 @@ def test_flat_delta_band_passes_and_adverse_still_fails():
         TradePrint(ts=now - 20, coin="BTC", price=96.0, size=4.19, side="buy", seq=1000)
     )
     blocked = _decide(short_adverse, _short_bars(now), [], bid=95.0, ask=96.5)
-    assert blocked.armed is False
-    assert blocked.fail_reason == "DELTA"
+    assert blocked.armed is True
+    assert blocked.delta_flat == "window"
     assert blocked.window_delta == pytest.approx(0.19)
-    assert blocked.delta_flat is None
+
+    short_wide = _short_prints(now)
+    short_wide.append(
+        TradePrint(ts=now - 20, coin="BTC", price=96.0, size=5.20, side="buy", seq=1001)
+    )
+    wide_block = _decide(short_wide, _short_bars(now), [], bid=95.0, ask=96.5)
+    assert wide_block.armed is False
+    assert wide_block.fail_reason == "DELTA"
+    assert wide_block.window_delta == pytest.approx(1.20)
+    assert wide_block.delta_flat is None
 
     short_strict_prints = _short_prints(now)
     short_strict_prints.append(
@@ -569,7 +608,7 @@ def test_flat_delta_band_passes_and_adverse_still_fails():
         [],
         bid=95.0,
         ask=96.5,
-        engine=ModelBEngine(delta_flat_eps=0.0),
+        engine=ModelBEngine(delta_flat_usdc=0, delta_flat_eps=0.0),
     )
     assert short_strict.armed is False
     assert short_strict.fail_reason == "DELTA"
@@ -601,12 +640,70 @@ def test_flat_delta_save_is_logged(tmp_path, caplog):
         )
     assert summary["arms"] == 1
     assert any(
-        "MODEL_B DELTA_FLAT" in record.message and "saved=window" in record.message
+        "MODEL_B DELTA_FLAT" in record.message
+        and "saved=window" in record.message
+        and "usdc=100.0" in record.message
+        and "px=104.0" in record.message
         for record in caplog.records
     )
     arm = next(row for row in TradeJournal(journal).read_all() if row["event"] == "model_b_arm")
     assert arm["delta_flat"] == "window"
     assert arm["window_delta"] == pytest.approx(-0.04)
+    assert arm["delta_flat_eps"] == pytest.approx(100 / 104)
+    assert arm["delta_flat_px"] == pytest.approx(104)
+
+
+def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
+    """A pool inside 1R is still a valid TP. BAD_TP only logs the geometry."""
+    close = tp_fail_detail("long", 100.0, 99.0, 100.4, 100.0)
+    assert close["why"] == "pool_too_close"
+    assert close["r_distance"] == pytest.approx(1.0)
+    assert close["pool_distance"] == pytest.approx(0.4)
+    assert close["pool_r"] == pytest.approx(0.4)
+
+    far = tp_fail_detail("long", 100.0, 99.0, 103.0, 100.0)
+    assert far["why"] == "over_2r"
+    assert far["pool_r"] == pytest.approx(3.0)
+
+    under = tp_fail_detail("long", 100.0, 99.0, None, 100.0)
+    assert under["why"] == "under_1r"
+    assert under["pool_distance"] is None
+
+    fees = tp_fail_detail("long", 100.0, 99.99, None, 100.0)
+    assert fees["why"] == "fees"
+
+    short = tp_fail_detail("short", 100.0, 101.0, 99.6, 100.0)
+    assert short["why"] == "pool_too_close"
+    assert short["pool_distance"] == pytest.approx(0.4)
+
+    # Pool cap inside 1R stays a legal TP. The band is unchanged.
+    capped = take_profit("long", 99.0, 97.97, 99.4, tp_r=1.5)
+    assert capped == pytest.approx(99.4)
+    assert tp_is_valid("long", 99.0, capped)
+
+    armed = _pass_case()
+    assert armed.armed is True
+    assert armed.bad_tp_why is None
+    assert armed.intent is not None and armed.intent.take_profit > armed.intent.limit_px
+
+    def on_entry(side, entry, stop, pool_price, tp_r=1.5):
+        del side, stop, pool_price, tp_r
+        return entry
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.engine.take_profit", on_entry)
+    failed = _pass_case()
+    assert failed.armed is False
+    assert failed.intent is None
+    assert failed.fail_reason == "BAD_TP"
+    assert failed.r_distance == pytest.approx(1.03)
+    assert failed.pool_distance == pytest.approx(31.0)
+    assert failed.pool_r == pytest.approx(31.0 / 1.03)
+    assert failed.bad_tp_why == "over_2r"
+    assert failed.to_log()["bad_tp_why"] == "over_2r"
+    text = format_model_b_fail(failed)
+    assert "reason=BAD_TP" in text
+    assert "why=over_2r" in text
+    assert "pool_r=" in text
 
 
 def test_score_does_not_arm_or_block_and_volume_is_not_a_veto():
@@ -1567,7 +1664,14 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.leverage == 20
     assert settings.model_b_min_prints == density_min_prints() == 3
     assert settings.model_b_alo_timeout_sec == 0
+    assert settings.model_b_delta_flat_usdc == pytest.approx(100)
     assert settings.model_b_delta_flat_eps == pytest.approx(0.05)
+    monkeypatch.setenv("MODEL_B_DELTA_FLAT_USDC", "50")
+    assert load_settings().model_b_delta_flat_usdc == pytest.approx(50)
+    monkeypatch.setenv("MODEL_B_DELTA_FLAT_USDC", "-1")
+    with pytest.raises(ValueError, match="MODEL_B_DELTA_FLAT_USDC"):
+        load_settings()
+    monkeypatch.setenv("MODEL_B_DELTA_FLAT_USDC", "100")
     monkeypatch.setenv("MODEL_B_DELTA_FLAT_EPS", "0")
     assert load_settings().model_b_delta_flat_eps == pytest.approx(0.0)
     monkeypatch.setenv("MODEL_B_DELTA_FLAT_EPS", "-0.01")

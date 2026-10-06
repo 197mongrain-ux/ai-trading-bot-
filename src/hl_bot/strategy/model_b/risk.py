@@ -381,6 +381,61 @@ def take_profit(
     return raw
 
 
+def tp_fail_detail(
+    side: str,
+    entry: float,
+    stop: float,
+    pool_price: float | None,
+    tp: float,
+) -> dict[str, float | str | None]:
+    """Measurements for a ``BAD_TP`` log line. Does not accept or reject.
+
+    ``r_distance`` is the entry→stop distance (1R in price). ``pool_distance``
+    and ``pool_r`` are that same direction: positive when the pool is in
+    front of the entry. ``why`` is ``pool_too_close`` (pool inside 1R),
+    ``over_2r`` (pool or the rejected TP beyond 2R), ``fees`` (1R shorter
+    than the round-trip fee), or ``under_1r``.
+    """
+    r_distance = abs(float(entry) - float(stop))
+    pool_distance: float | None
+    if pool_price is None or float(entry) <= 0 or float(pool_price) <= 0:
+        pool_distance = None
+    elif side == "long":
+        pool_distance = float(pool_price) - float(entry)
+    else:
+        pool_distance = float(entry) - float(pool_price)
+    pool_r = (
+        pool_distance / r_distance
+        if pool_distance is not None and r_distance > 0
+        else None
+    )
+    if side == "long":
+        tp_dist = float(tp) - float(entry)
+    else:
+        tp_dist = float(entry) - float(tp)
+    tp_r = tp_dist / r_distance if r_distance > 0 else None
+    if pool_r is not None and 0 < pool_r < 1.0 - 1e-12:
+        why = "pool_too_close"
+    elif pool_r is not None and pool_r > 2.0 + 1e-12:
+        why = "over_2r"
+    elif tp_r is not None and tp_r > 2.0 + 1e-12:
+        why = "over_2r"
+    elif (
+        r_distance > 0
+        and float(entry) > 0
+        and r_distance < abs(float(entry)) * ROUND_TRIP_FEE_RATE - 1e-12
+    ):
+        why = "fees"
+    else:
+        why = "under_1r"
+    return {
+        "r_distance": r_distance,
+        "pool_distance": pool_distance,
+        "pool_r": pool_r,
+        "why": why,
+    }
+
+
 def tp_is_valid(side: str, entry: float, tp: float) -> bool:
     if side == "long":
         return tp > entry
