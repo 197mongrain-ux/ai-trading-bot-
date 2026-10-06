@@ -8,7 +8,9 @@ anchored at the sweep, sized from RISK_PER_TRADE of the spot USDC
 balance (not perp account value). The stop is past the sweep liquidity
 (wick, swing, local 1m extreme, plus buffer). A stop that would only
 exist because of the 0.15% floor fails closed. TP1 is ~1.5R (clamped
-to 1–2) and never beyond the untaken pool on that side.
+to 1–2) and never beyond the untaken pool on that side. A session
+volume profile (POC / VAH / VAL / LVN) is written on the decision for
+the journal. Those tags do not arm, block, or move the stop.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ from hl_bot.strategy.model_b.tape import (
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import session_coins
+from hl_bot.strategy.model_b.vp_log import vp_error_fields, vp_log_fields
+from hl_bot.strategy.volume_profile import VP_AS_FILTER, VP_ENABLED, VP_ENTRIES
 
 OUT_OF_SESSION = "OUT_OF_SESSION"
 NO_SWING = "NO_SWING"
@@ -80,6 +84,9 @@ class ModelBEngine:
         alo_timeout_sec: float = 0.0,
     ):
         assert_policy()
+        # Profile tags are journal-only. These switches must not become a gate.
+        if VP_AS_FILTER or VP_ENTRIES or VP_ENABLED:
+            raise RuntimeError("Model B volume profile is log-only")
         if risk_pct <= 0:
             raise ValueError("risk_pct must be > 0")
         if int(min_prints) < 1:
@@ -130,6 +137,9 @@ class ModelBEngine:
         tag = volume_tag(len(window))
         last_px = window[-1].price if window else (mark if mark and mark > 0 else None)
         bias = resolve_bias(last_px, pools) if last_px is not None else resolve_bias(0, [])
+        # Filled by attempt() for the log line only. The arm math below
+        # does not read it.
+        vp_ctx: dict[str, object] = {"side": None, "swing_ts": None}
 
         def _done(
             reason: str | None,
@@ -143,6 +153,23 @@ class ModelBEngine:
             intent: AloIntent | None = None,
             pool_label: str | None = None,
         ) -> Decision:
+            ctx_side = vp_ctx.get("side")
+            log_side = ctx_side if ctx_side in ("long", "short") else (
+                bias.side if bias.side in ("long", "short") else None
+            )
+            swing_ts = vp_ctx.get("swing_ts")
+            try:
+                tags = vp_log_fields(
+                    bars,
+                    now=now,
+                    prints=prints,
+                    side=log_side if isinstance(log_side, str) else None,
+                    sweep=sweep,
+                    swing_ts=float(swing_ts) if isinstance(swing_ts, (int, float)) else None,
+                    ref_price=last_px,
+                )
+            except Exception:
+                tags = vp_error_fields()
             return Decision(
                 coin=coin_u,
                 bias=bias.side,
@@ -159,9 +186,19 @@ class ModelBEngine:
                 intent=intent,
                 print_count=len(window),
                 min_prints=self.min_prints,
+                vp_poc=tags["vp_poc"],
+                vp_vah=tags["vp_vah"],
+                vp_val=tags["vp_val"],
+                nearest_lvn_on_side=tags["nearest_lvn_on_side"],
+                sweep_to_val_bps=tags["sweep_to_val_bps"],
+                sweep_to_lvn_bps=tags["sweep_to_lvn_bps"],
+                vp_tag=tags["vp_tag"],
+                catalyst_flag=tags["catalyst_flag"],
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
+            vp_ctx["side"] = side
+            vp_ctx["swing_ts"] = None
             label = format_pool(pool)
             kind = "low" if side == "long" else "high"
             swing = select_swing(
@@ -171,6 +208,7 @@ class ModelBEngine:
             )
             if swing is None:
                 return _done(NO_SWING, pool_label=label)
+            vp_ctx["swing_ts"] = swing.ts
 
             metrics = analyze_tape(
                 window,

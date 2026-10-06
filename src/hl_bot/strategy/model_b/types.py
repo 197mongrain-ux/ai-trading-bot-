@@ -98,6 +98,15 @@ class Decision:
     print_count: int = 0
     min_prints: int = 30
     extra: dict = field(default_factory=dict)
+    # Session volume profile. Logged only. evaluate() does not read these.
+    vp_poc: float | None = None
+    vp_vah: float | None = None
+    vp_val: float | None = None
+    nearest_lvn_on_side: float | None = None
+    sweep_to_val_bps: float | None = None
+    sweep_to_lvn_bps: float | None = None
+    vp_tag: str = "none"
+    catalyst_flag: bool = False
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -124,4 +133,12 @@ class Decision:
             "armed": self.armed,
             "print_count": self.print_count,
             "min_prints": self.min_prints,
+            "vp_poc": _num(self.vp_poc),
+            "vp_vah": _num(self.vp_vah),
+            "vp_val": _num(self.vp_val),
+            "nearest_lvn_on_side": _num(self.nearest_lvn_on_side),
+            "sweep_to_val_bps": _num(self.sweep_to_val_bps),
+            "sweep_to_lvn_bps": _num(self.sweep_to_lvn_bps),
+            "vp_tag": self.vp_tag,
+            "catalyst_flag": bool(self.catalyst_flag),
         }

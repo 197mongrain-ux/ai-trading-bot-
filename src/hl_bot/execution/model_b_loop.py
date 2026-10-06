@@ -40,7 +40,8 @@ def format_model_b_fail(decision) -> str:
         f"MODEL_B FAIL {decision.coin} bias={decision.bias} pool={decision.pool} "
         f"swing={decision.swing} sweep={decision.sweep_price} "
         f"absorb={decision.absorb} dW={decision.window_delta} d15={decision.last_15s_delta} "
-        f"score={decision.score} vol={decision.volume_tag} reason={decision.fail_reason}"
+        f"score={decision.score} vol={decision.volume_tag} reason={decision.fail_reason} "
+        f"vp={decision.vp_tag}"
     )
     if decision.fail_reason == "THIN_TAPE":
         text += f" prints={decision.print_count}/{decision.min_prints}"
@@ -568,7 +569,7 @@ def run_model_b(
             logger.info(
                 "MODEL_B ARM %s %s alo=%s stop=%s tp=%s size=%s "
                 "bias=%s pool=%s swing=%s sweep=%s absorb=%s "
-                "dW=%s d15=%s score=%s vol=%s",
+                "dW=%s d15=%s score=%s vol=%s vp=%s",
                 intent.coin,
                 intent.side,
                 intent.limit_px,
@@ -584,6 +585,7 @@ def run_model_b(
                 decision.last_15s_delta,
                 decision.score,
                 decision.volume_tag,
+                decision.vp_tag,
             )
 
         equity_mark = equity

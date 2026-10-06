@@ -1854,3 +1854,147 @@ def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
     assert cancelled[0]["remainder"] == "cancelled"
     assert cancelled[0]["position_kept"] is True
     assert cancelled[0].get("size") == pytest.approx(97.087378 - 0.00136)
+
+
+_VP_KEYS = (
+    "vp_poc",
+    "vp_vah",
+    "vp_val",
+    "nearest_lvn_on_side",
+    "sweep_to_val_bps",
+    "sweep_to_lvn_bps",
+    "vp_tag",
+    "catalyst_flag",
+)
+
+
+def test_vp_tags_are_logged_and_do_not_change_the_arm(monkeypatch):
+    """Tags ride on the decision. They do not move the Alo, stop, size, or TP."""
+    from hl_bot.strategy.volume_profile import (
+        VP_AS_FILTER,
+        VP_ENABLED,
+        VP_ENTRIES,
+        VolumeProfile,
+    )
+
+    assert VP_AS_FILTER is False and VP_ENTRIES is False and VP_ENABLED is False
+    now = _now()
+    prints = _long_prints(now)
+    bars = _bars(now)
+    pools = [Pool("PDH", 130.0, False)]
+    base = _decide(prints, bars, pools)
+    assert base.armed is True
+    intent = base.intent
+    assert intent is not None
+    assert base.vp_tag == "none"
+    assert base.vp_poc is None
+    assert base.catalyst_flag is False
+    logged = base.to_log()
+    for key in _VP_KEYS:
+        assert key in logged
+
+    def rich(*_args, **_kwargs):
+        return VolumeProfile(
+            poc=110.0,
+            vah=111.0,
+            val=99.0,
+            lvns=(98.0, 112.0),
+            total_volume=1.0,
+            bar_count=40,
+            ok=True,
+            error=None,
+        )
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.vp_log.compute_profile", rich)
+    tagged = _decide(prints, bars, pools)
+    assert tagged.armed is True
+    assert tagged.fail_reason is None
+    tagged_intent = tagged.intent
+    assert tagged_intent is not None
+    assert tagged_intent.limit_px == pytest.approx(intent.limit_px)
+    assert tagged_intent.stop == pytest.approx(intent.stop)
+    assert tagged_intent.size == pytest.approx(intent.size)
+    assert tagged_intent.take_profit == pytest.approx(intent.take_profit)
+    assert tagged.vp_tag == "val"
+    assert tagged.vp_val == pytest.approx(99.0)
+    assert tagged.nearest_lvn_on_side == pytest.approx(98.0)
+    assert tagged.catalyst_flag is False
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("profile down")
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.vp_log.compute_profile", boom)
+    broken = _decide(prints, bars, pools)
+    assert broken.armed is True
+    assert broken.intent is not None
+    assert broken.intent.stop == pytest.approx(intent.stop)
+    assert broken.intent.size == pytest.approx(intent.size)
+    assert broken.intent.limit_px == pytest.approx(intent.limit_px)
+    assert broken.intent.take_profit == pytest.approx(intent.take_profit)
+    assert broken.vp_tag == "vp_error"
+    assert broken.vp_poc is None
+    assert broken.sweep_to_val_bps is None
+    assert broken.catalyst_flag is False
+
+    thin = _decide(_long_prints(now)[:5], bars, pools)
+    assert thin.armed is False
+    assert thin.fail_reason == "THIN_TAPE"
+    assert thin.vp_tag == "vp_error"
+    assert thin.intent is None
+
+
+def test_vp_fields_land_on_arm_and_fail_journal_rows(tmp_path):
+    now = _now()
+    journal = tmp_path / "vp.jsonl"
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(journal),
+            loop_interval_sec=0,
+        ),
+        max_iterations=1,
+        info=info,
+        feed=MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)}),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    assert summary["arms"] == 1
+    arm = next(r for r in TradeJournal(journal).read_all() if r["event"] == "model_b_arm")
+    for key in _VP_KEYS:
+        assert key in arm
+    assert arm["vp_tag"] == "none"
+    assert arm["catalyst_flag"] is False
+    assert arm["vp_poc"] is None
+
+    fail_journal = tmp_path / "vp-fail.jsonl"
+    failed = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(fail_journal),
+            loop_interval_sec=0,
+        ),
+        max_iterations=1,
+        info=info,
+        feed=MemoryFeed(_long_prints(now)[:5], bbo={"BTC": (103.0, 105.0)}),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    assert failed["arms"] == 0
+    row = next(r for r in TradeJournal(fail_journal).read_all() if r["event"] == "model_b_fail")
+    assert row["fail_reason"] == "THIN_TAPE"
+    for key in _VP_KEYS:
+        assert key in row
+    assert row["vp_tag"] == "none"
+    assert row["catalyst_flag"] is False
