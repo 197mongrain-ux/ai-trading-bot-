@@ -121,7 +121,8 @@ class Settings:
     # model_b is a separate hunt (sweep/reclaim Alo). It does not wrap
     # breakout/OTE and it does not use the score as a gate.
     entry_mode: str = "both"
-    # Model B TP1 multiple before the pool cap. Default 1.5, must stay in [1, 2].
+    # Model B TP multiple when no liquidity sits in front of the entry.
+    # Default 1.5, must stay in [1, 2]. A swing or pool is the target instead.
     model_b_tp_r: float = 1.5
     # 90s print floor. Mainnet stays 30. Testnet auto-scales by tape density
     # unless MODEL_B_MIN_PRINTS is set. See tape.density_min_prints.

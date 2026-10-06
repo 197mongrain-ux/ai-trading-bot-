@@ -12,9 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from hl_bot.strategy.model_b.risk import (
-    arm_take_profit,
     collides_with_fill,
     heal_stop,
+    locked_take_profit,
     place_stop,
     stop_is_valid,
     widen_stop_for_fill,
@@ -288,16 +288,30 @@ class ThesisBook:
             if not stop_is_valid(order.side, price, stop) or collides_with_fill(
                 price, stop, order.tick
             ):
-                pushed = place_stop(order.side, price, price, order.tick, tp_r=order.tp_r)
+                pushed = place_stop(
+                    order.side,
+                    price,
+                    price,
+                    order.tick,
+                    tp_r=order.tp_r,
+                    clear_wick_room=False,
+                )
                 if (
                     pushed is not None
                     and stop_is_valid(order.side, price, pushed)
                     and not collides_with_fill(price, pushed, order.tick)
                 ):
                     stop = pushed
-            tp = arm_take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
-            if tp is None:
-                tp = order.take_profit
+            # The arm's liquidity level wins over a 2R price stored on the
+            # order. A tight stop must not pull this back to 2R.
+            tp = locked_take_profit(
+                order.side,
+                price,
+                order.take_profit,
+                order.pool_px,
+                stop,
+                tp_r=order.tp_r,
+            )
             pos = OpenPosition(
                 coin=order.coin,
                 side=order.side,
@@ -314,6 +328,8 @@ class ThesisBook:
             assert pos is not None
             pos.entry = (pos.entry * pos.size + price * added) / (pos.size + added)
             pos.size = pos.size + added
+            # A drip changes size only. Recomputing R here is what put a
+            # liquidity TP back at 2R on every partial fill.
         pos.remainder_kept = remainder_kept
         pos.remainder_size = remainder
         pos.fill_added = added

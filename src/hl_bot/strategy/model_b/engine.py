@@ -5,20 +5,22 @@ and the full tape (sweep, reclaim, absorb, window delta, last 15s) all
 pass, and the coin has no live thesis on that swing. Directional bias
 drops the other side. Bias NONE allows both. The order is a post-only Alo
 anchored at the sweep, sized from RISK_PER_TRADE of the spot USDC
-balance (not perp account value). The stop is past the sweep liquidity
-(wick, swing, local 1m extreme, plus buffer). A tight structural stop
-and a stop wider than 1.5% of price are both armed; size is 2% of spot
-USDC over that distance. ``size_adjust=wide_stop`` is journaled when the
-distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
-side, stop == fill, one-tick collision). Window and last-15s delta may
-sit inside a flat band; a clearly adverse delta still fails. The band is
+balance (not perp account value). The stop is past opposing liquidity.
+A real wick more than one tick past the fill keeps its buffer. A stop
+that would otherwise be a few ticks off the fill clears the next
+opposing print outside wick room, or the room itself. A stop wider
+than 1.5% of price is still armed; size is 2% of spot USDC over that
+distance. ``size_adjust=wide_stop`` is journaled when the distance is
+past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong side,
+stop == fill, one-tick collision). Window and last-15s delta may sit
+inside a flat band; a clearly adverse delta still fails. The band is
 the larger of ``DELTA_FLAT_USDC`` / mid (default $100) and
-``DELTA_FLAT_EPS`` (default 0.05 coins). TP1 is 1.5R when the pool
-is inside the 1–2 band, and 2R when the pool is farther than that.
-The distance is the structural stop ``place_stop`` just returned, the
-same one the size uses. A pool past 2R does not fail the idea. ``BAD_TP``
-is only a target that is not strictly beyond the entry, and that fail
-logs the R distance and the pool R-multiple. A session volume profile
+``DELTA_FLAT_EPS`` (default 0.05 coins). TP is the nearest confirmed
+swing or untaken pool in the trade direction, even past 2R. With no
+such level the target is 1.5R of the stop just placed, the same
+distance the size uses. ``BAD_TP`` is only a target that is not
+strictly beyond the entry, and that fail logs the R distance and the
+pool R-multiple. A session volume profile
 (POC / VAH / VAL / LVN) is written on the decision for the journal.
 Those tags do not arm, block, or move the stop.
 """
@@ -34,6 +36,7 @@ from hl_bot.strategy.model_b.risk import (
     assert_policy,
     clamp_tp_r,
     collides_with_fill,
+    next_liquidity,
     place_stop,
     size_adjust_tag,
     size_from_stop,
@@ -43,6 +46,7 @@ from hl_bot.strategy.model_b.risk import (
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
 from hl_bot.strategy.model_b.swings import (
     atr14,
+    closed_prices,
     confirmed_swings,
     local_bar_extreme,
     select_swing,
@@ -305,6 +309,32 @@ class ModelBEngine:
             if limit is None:
                 return _done(NO_ALO, **fields)
 
+            # Stop side: every closed extreme, confirmed swings, and
+            # untaken pools beyond the fill. TP side: confirmed swings
+            # and untaken pools only. A bar wick is not a target.
+            if side == "long":
+                stop_field, stop_kind, tp_kind = "l", "low", "high"
+            else:
+                stop_field, stop_kind, tp_kind = "h", "high", "low"
+            further = closed_prices(bars, field=stop_field, now=now)
+            further.extend(
+                item.price for item in confirmed_swings(bars, kind=stop_kind, now=now)
+            )
+            tp_levels = [
+                item.price for item in confirmed_swings(bars, kind=tp_kind, now=now)
+            ]
+            for item in pools:
+                if item.taken or item.price <= 0:
+                    continue
+                if side == "long":
+                    if item.price < limit:
+                        further.append(item.price)
+                    elif item.price > limit:
+                        tp_levels.append(item.price)
+                elif item.price > limit:
+                    further.append(item.price)
+                elif item.price < limit:
+                    tp_levels.append(item.price)
             stop = place_stop(
                 side,
                 metrics.sweep_price,
@@ -314,6 +344,7 @@ class ModelBEngine:
                 swing=swing.price,
                 local_extreme=local_bar_extreme(bars, side=side, now=now),
                 atr=atr14(bars, now=now),
+                further=further,
             )
             # Flow already passed. A structural stop past the wick is armed.
             # Tight room and a distance past 1.5% change the size. They do
@@ -338,14 +369,17 @@ class ModelBEngine:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
 
-            # Same structural stop size_from_stop just used. A pool past
-            # 2R is capped at 2R of this distance and still arms.
-            pool_px = None if pool is None else pool.price
+            # Nearest liquidity in front of the trade. Past 2R is still
+            # that level. No level: 1.5R of the stop the size just used.
+            target = next_liquidity(side, limit, tick, tp_levels)
+            logged_pool = target if target is not None else (
+                None if pool is None else pool.price
+            )
             tp = arm_take_profit(
                 side,
                 limit,
                 stop,
-                pool_px,
+                target,
                 tp_r=self.tp_r,
             )
             if tp is None:
@@ -353,7 +387,7 @@ class ModelBEngine:
                     side,
                     limit,
                     stop,
-                    pool_px,
+                    logged_pool,
                     limit,
                 )
                 return _done(
@@ -379,7 +413,7 @@ class ModelBEngine:
                 work_sec=self.alo_timeout_sec,
                 sweep_px=metrics.sweep_price,
                 tick=tick,
-                pool_px=None if pool is None else pool.price,
+                pool_px=target,
                 tp_r=self.tp_r,
             )
             return _done(
@@ -409,7 +443,7 @@ class ModelBEngine:
         elif bias.side == "short":
             sides = [("short", bias.pool)]
         else:
-            # NONE: both directions are allowed. Each side is capped by the
+            # NONE: both directions are allowed. Each side targets the
             # untaken pool on that side when one exists.
             sides = [("long", bias.pool_above), ("short", bias.pool_below)]
 

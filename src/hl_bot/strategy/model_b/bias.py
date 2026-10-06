@@ -6,7 +6,7 @@ Pools are PDH, PDL, WKH, WKL.
 - nearest untaken pool below price → short only (longs dropped)
 - no untaken pool, or an exact tie above and below → NONE (both sides allowed)
 
-The pool is the TP cap for that direction, not the entry. A pool already
+The pool is a TP liquidity target for that direction, not the entry. A pool already
 traded (``taken``) is ignored. Price sitting on the level counts as taken.
 """
 

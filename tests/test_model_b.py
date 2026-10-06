@@ -1,4 +1,4 @@
-"""Model B: tape, bias, Alo, thesis, TP cap, and ENTRY_MODE wiring."""
+"""Model B: tape, bias, Alo, thesis, liquidity TP, and ENTRY_MODE wiring."""
 
 from __future__ import annotations
 
@@ -64,6 +64,8 @@ from hl_bot.strategy.model_b.risk import (
     BTC_FREE_MARGIN_RESERVE,
     initial_margin,
     leaves_btc_headroom,
+    locked_take_profit,
+    next_liquidity,
     non_btc_margin_cap,
     place_stop,
     size_adjust_tag,
@@ -110,8 +112,9 @@ def _now() -> float:
 def _tight_bars(now: float, low: float = 100.0) -> list[dict]:
     """Same swing as ``_bars``, without the wick that widens the stop.
 
-    The anchor stays on the sweep. At tick 0.01 the stop is 3 ticks away,
-    the 20× notional cap binds, and one ticket uses the whole balance.
+    The anchor stays on the sweep, so the stop clears wick room instead of
+    resting a few ticks off the fill. Two of those tickets still do not
+    fit in a 5000 balance.
     """
     bars = _bars(now, low=low)
     bars[-1]["l"] = low
@@ -386,9 +389,9 @@ def test_long_reclaim_absorb_and_deltas_arm():
     # the 0.15% floor (~98.85) and not one point under the sweep.
     assert intent.stop == pytest.approx(97.97)
     assert intent.stop < 99 * (1.0 - 0.0015)
-    # Pool 130 is past 2R of the structural stop. Target is the band max.
-    assert intent.take_profit == pytest.approx(99 + 2.0 * (99 - 97.97))
-    assert intent.take_profit <= 130
+    # PDH 130 is the next liquidity. It is the target, not 2R of the wick.
+    assert intent.take_profit == pytest.approx(130)
+    assert intent.pool_px == pytest.approx(130)
     assert intent.size == pytest.approx(97.087378)  # 5000 * 2% / 1.03
     # Inside 1.5% of entry. Not the wide-stop reduction.
     assert decision.size_adjust is None
@@ -838,11 +841,11 @@ def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
     assert "pool_r=" in text
 
 
-def test_far_pool_short_caps_tp_at_2r_of_the_structural_stop():
-    """ETH/SOL shape: tiny structural R, pool many R away, flow already clear.
+def test_far_pool_short_targets_the_pool_and_clears_wick_room():
+    """ETH/SOL shape: no wick past the fill, pool many R away, flow already clear.
 
-    The stop is the buffer past the fill, not the old 0.15% floor. The
-    pool past 2R sets TP at 2R of that stop and the idea arms.
+    The few-tick buffer is inside wick room, so the stop clears the room.
+    The pool is the target. It is not pulled back to 2R, and the idea arms.
     """
     now = _now()
     entry = 3000.0
@@ -892,15 +895,16 @@ def test_far_pool_short_caps_tp_at_2r_of_the_structural_stop():
     assert intent is not None
     assert intent.side == "short"
     assert intent.limit_px == pytest.approx(entry)
-    # 2 bps of 3000 is 0.6 and beats 3 ticks. The 0.15% floor is 4.5.
-    assert intent.stop == pytest.approx(entry + 0.6)
-    assert intent.stop != pytest.approx(entry + entry * 0.0015)
+    # No high past the fill. Room is 4.5; the pad is 2 bps (0.6).
+    assert intent.stop == pytest.approx(3005.1)
+    assert intent.stop != pytest.approx(entry + 0.6)
     dist = intent.stop - intent.limit_px
-    assert dist == pytest.approx(0.6)
-    assert (entry - pool) / dist == pytest.approx(17.8 / 0.6)
-    assert intent.take_profit == pytest.approx(entry - 2.0 * dist)
-    assert intent.take_profit < intent.limit_px
-    assert intent.limit_px - intent.take_profit <= 2.0 * dist + 1e-9
+    assert dist == pytest.approx(5.1)
+    assert intent.take_profit == pytest.approx(pool)
+    assert intent.pool_px == pytest.approx(pool)
+    assert intent.take_profit != pytest.approx(entry - 2.0 * 0.6)
+    sized, _dollar = size_from_stop(5000.0, intent.limit_px, intent.stop, risk_pct=0.02)
+    assert intent.size == pytest.approx(sized)
 
 
 def test_tp_r_uses_the_widened_stop_not_a_tight_placeholder():
@@ -953,31 +957,18 @@ def test_tp_r_uses_the_widened_stop_not_a_tight_placeholder():
     assert intent.stop == pytest.approx(wick + 0.6)
     dist = intent.stop - intent.limit_px
     assert dist == pytest.approx(10.6)
-    # Pool is inside 2R of this stop and beyond the 1.5R ask, so TP stays
-    # at 1.5R of the wide stop. A 0.6 placeholder would have parked it
-    # 1.2 under the fill.
-    assert intent.take_profit == pytest.approx(entry - 1.5 * dist)
+    # The local high is the stop. The pool is the target, not 1.5R of
+    # that stop and not 2R of a 0.6 placeholder.
+    assert intent.take_profit == pytest.approx(pool)
     assert intent.take_profit != pytest.approx(entry - 1.2)
-    assert intent.take_profit > pool
+    assert intent.take_profit != pytest.approx(entry - 1.5 * dist)
 
 
-def test_quote_past_2r_is_pulled_back_to_the_band():
-    """A target returned at the far pool is clamped to 2R and still valid."""
-
-    def at_pool(side, entry, stop, pool_price, tp_r=1.5):
-        del side, entry, stop, tp_r
-        return pool_price
-
-    # arm_take_profit calls take_profit in this module.
-    import hl_bot.strategy.model_b.risk as risk
-
-    original = risk.take_profit
-    risk.take_profit = at_pool
-    try:
-        tp = arm_take_profit("short", 3000.0, 3000.6, 2982.2, tp_r=1.5)
-    finally:
-        risk.take_profit = original
-    assert tp == pytest.approx(3000.0 - 1.2)
+def test_liquidity_tp_is_kept_past_2r():
+    """A pool many R away is the target. It is not pulled back to 2R."""
+    tp = arm_take_profit("short", 3000.0, 3000.6, 2982.2, tp_r=1.5)
+    assert tp == pytest.approx(2982.2)
+    assert tp != pytest.approx(3000.0 - 1.2)
     assert tp_is_valid("short", 3000.0, tp)
 
 
@@ -1072,8 +1063,8 @@ def test_swing_closer_than_3_ticks_is_ignored():
         {"t": t0 + 360, "o": 110, "h": 114, "l": 109, "c": 112, "v": 1},
     ]
     # Last trade 104 is 2 ticks from the recent swing (102) and 4 from 100.
-    # Tick 1 makes a 3-tick structural stop wider than 1.5% of price. That
-    # used to fail closed. It now arms, and size is 2% of spot USDC / 3.
+    # No low past the fill. Tick 1 puts the 3-tick buffer inside the
+    # 10-tick wick room, so the stop clears that room (99 − 13 = 86).
     decision = _decide(_long_prints(now), bars, [Pool("PDH", 130, False)], tick=1.0)
     assert decision.swing == pytest.approx(100)
     assert decision.armed is True
@@ -1081,8 +1072,9 @@ def test_swing_closer_than_3_ticks_is_ignored():
     intent = decision.intent
     assert intent is not None
     assert intent.limit_px == pytest.approx(99)
-    assert intent.stop == pytest.approx(96)
-    assert intent.size == pytest.approx(33.333333)  # 5000 * 2% / 3
+    assert intent.stop == pytest.approx(86)
+    assert intent.stop != pytest.approx(96)
+    assert intent.size == pytest.approx(7.692307)  # 5000 * 2% / 13
     assert decision.size_adjust == SIZE_ADJUST_WIDE_STOP
 
     # Exactly 3 ticks is kept.
@@ -1149,9 +1141,9 @@ def test_short_mirror_arms_and_caps_context():
     assert intent.limit_px == pytest.approx(101)
     # Last-bar high 102.2 is the liquidity. Stop clears it by the buffer.
     assert intent.stop == pytest.approx(102.23)
-    # PDL 80 is past 2R of that stop. Target is 2R, not the pool.
-    assert intent.take_profit == pytest.approx(101 - 2.0 * (102.23 - 101))
-    assert intent.take_profit >= 80
+    # PDL 80 is the next liquidity, past 2R of the wick stop.
+    assert intent.take_profit == pytest.approx(80)
+    assert intent.pool_px == pytest.approx(80)
     assert intent.tif == "Alo"
 
 
@@ -1173,22 +1165,25 @@ def test_alo_anchor_never_crosses():
     assert alo_limit("short", 101, None, 96, 1) is None
 
 
-def test_tp_capped_by_pool_and_r_band():
-    # Pool past 2R: target is the band max, not the default 1.5R.
-    assert take_profit("long", 99, 98, 130, tp_r=1.5) == pytest.approx(101.0)
-    # 2.5R clamps to the same 2R cap.
-    assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(101.0)
-    # 2R would print through the pool → cap at the pool, even inside 1R.
+def test_tp_is_the_liquidity_level_and_r_is_only_the_fallback():
+    # A pool past 2R is the target. Raising the requested R does not move it.
+    assert take_profit("long", 99, 98, 130, tp_r=1.5) == pytest.approx(130)
+    assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(130)
+    # A pool inside 1R is still the target.
     assert take_profit("long", 99, 98, 100.2, tp_r=2.0) == pytest.approx(100.2)
-    # Requested 4R clamps to 2R. A pool inside that 2R still wins.
     assert take_profit("long", 100, 90, 115, tp_r=4) == pytest.approx(115)
-    assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(120)
+    assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(140)
     # No pool: sub-1R request is lifted to 1R. It is not forced to 2R.
     assert take_profit("long", 100, 90, None, tp_r=0.2) == pytest.approx(110)
     assert take_profit("long", 100, 90, None, tp_r=1.5) == pytest.approx(115)
-    # Short mirror: a pool past 2R is the band max (closer than the pool).
-    assert take_profit("short", 101, 102, 80, tp_r=1.5) == pytest.approx(99.0)
+    # Short mirror: a far pool is the pool. A close pool is the pool.
+    assert take_profit("short", 101, 102, 80, tp_r=1.5) == pytest.approx(80)
     assert take_profit("short", 101, 102, 100.2, tp_r=1.5) == pytest.approx(100.2)
+    # Nearest level wins. A far pool does not outrank a closer swing.
+    assert next_liquidity("long", 100.0, 0.01, [130.0, 110.0]) == pytest.approx(110)
+    assert next_liquidity("short", 85658.0, 1.0, [85500.0, 85640.0]) == pytest.approx(85640)
+    # One tick off the fill is noise.
+    assert next_liquidity("long", 100.0, 0.01, [100.01, 110.0]) == pytest.approx(110)
 
 
 def test_size_uses_risk_per_trade_and_rejects_40x():
@@ -1276,11 +1271,14 @@ def test_lit_short_stop_is_not_the_alo_tick():
     assert collides_with_fill(limit, naive, tick)
     assert collides_with_fill(limit, limit, tick)
     assert stop_clears_fees(limit, limit + tick, tick=tick) is False
-    # Buffer past the sweep. Inside the old floor, and not the fill tick.
+    # No high past the fill. The few-tick buffer is inside wick room.
     tight = place_stop("short", sweep, limit, tick)
-    assert tight == pytest.approx(3.9055)
+    assert tight == pytest.approx(3.9114)
+    assert tight != pytest.approx(3.9055)
     assert tight != pytest.approx(limit)
     assert not collides_with_fill(limit, tight, tick)
+    # A fill-only recompute must not invent that room.
+    assert place_stop("short", sweep, limit, tick, clear_wick_room=False) == pytest.approx(3.9055)
     # A local high beyond that floor. Stop clears the high, not the fill tick.
     stop = place_stop("short", sweep, limit, tick, local_extreme=3.92)
     assert stop == pytest.approx(3.9208)
@@ -1317,29 +1315,39 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     """Oct 5 ~21:46 ET ETH long: Alo/sweep 2705.8, swing 2706.9.
 
     2701.7 is the 0.15% floor (41 ticks). Price later traded ~2702.7, a hunt
-    into that floor, so the stop is not parked there. With no wick past the
-    sweep the arm uses the structural buffer and sizes from that distance.
-    A 1m low under the floor puts the stop beyond that low. A wick that
-    pushes the stop past 1.5% of price still arms, at a smaller size.
+    into that floor. A real wick inside the room still owns the stop and is
+    not lifted onto 2701.7. With no wick past the sweep the few-tick buffer
+    is inside that room, so the stop clears the room (near 2701.2), past
+    the old floor snap, and is not parked on it. A 1m low under the floor
+    puts the stop beyond that low. A wick past 1.5% of price still arms,
+    at a smaller size.
     """
     tick = 0.1
     entry = 2705.8
     floor_px = entry - floor_distance(entry, tick)
     assert math.floor(floor_px / tick + 1e-9) * tick == pytest.approx(2701.7)
-    # Sweep on the Alo, swing above the fill, no deeper wick. Buffer, not 2701.7.
+    # Sweep on the Alo, swing above the fill, no deeper wick. Clear the room.
     tight = place_stop("long", entry, entry, tick, swing=2706.9)
-    assert tight == pytest.approx(2705.2)
+    assert tight == pytest.approx(2701.2)
+    assert tight != pytest.approx(2705.2)
     assert tight != pytest.approx(2701.7)
+    assert tight < 2701.7
     assert tight < entry
     # A shallow wick still above the floor must not be lifted onto 2701.7.
     shallow = place_stop("long", entry, entry, tick, swing=2706.9, local_extreme=2704.0)
     assert shallow == pytest.approx(2703.4)
     assert shallow < 2704.0
     assert shallow != pytest.approx(2701.7)
-    # 0.5×ATR that does not clear the floor is still the structural stop.
+    # 0.5×ATR inside the room is still wick room. The stop clears the room.
     small_atr = place_stop("long", entry, entry, tick, atr=4.0)
-    assert small_atr == pytest.approx(2703.8)
-    assert small_atr != pytest.approx(2701.7)
+    assert small_atr == pytest.approx(2701.2)
+    assert small_atr != pytest.approx(2703.8)
+    # A low outside the room is the opposing print. One inside it is not.
+    past_low = place_stop("long", entry, entry, tick, further=[2690.0])
+    assert past_low == pytest.approx(2689.4)
+    assert past_low < 2690.0
+    inside = place_stop("long", entry, entry, tick, further=[2704.0])
+    assert inside == pytest.approx(2701.2)
     # 0.5×ATR = 6 clears the 4.06 floor. Stop is the sweep minus that buffer.
     atr_stop = place_stop("long", entry, entry, tick, swing=2706.9, atr=12.0)
     assert atr_stop == pytest.approx(2699.8)
@@ -1388,12 +1396,16 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     tight_intent = tight_arm.intent
     assert tight_intent is not None
     assert tight_intent.limit_px == pytest.approx(entry)
-    assert tight_intent.stop == pytest.approx(2705.2)
-    assert tight_intent.stop != pytest.approx(2701.7)
-    # 0.6 of price is inside 0.1%, so the 20× notional cap trims the 2% size.
-    assert tight_intent.size == pytest.approx(59.132235)
-    # PDH 2800 is past 2R of the 0.6 structural stop. Target is 2R.
-    assert tight_intent.take_profit == pytest.approx(entry + 2.0 * (entry - tight_intent.stop))
+    assert tight_intent.stop == pytest.approx(2701.2)
+    assert tight_intent.stop != pytest.approx(2705.2)
+    assert tight_intent.stop < 2701.7
+    sized_tight, _dollar = size_from_stop(
+        8000.0, tight_intent.limit_px, tight_intent.stop, risk_pct=0.02
+    )
+    assert tight_intent.size == pytest.approx(sized_tight)
+    assert tight_intent.size == pytest.approx(34.782608)
+    # PDH 2800 is the next liquidity, past 2R of this stop.
+    assert tight_intent.take_profit == pytest.approx(2800.0)
 
     wick_bars = _eth_bars(now, wick=2698.0, swing=2706.9)
     armed = _decide(
@@ -1411,7 +1423,7 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     assert intent.limit_px == pytest.approx(entry)
     assert intent.stop == pytest.approx(2697.4)
     assert intent.stop < 2701.7
-    assert intent.take_profit == pytest.approx(entry + 2.0 * (entry - intent.stop))
+    assert intent.take_profit == pytest.approx(2800.0)
     assert intent.size == pytest.approx(19.047619)
     assert armed.size_adjust is None
     sized, _dollar = size_from_stop(8000.0, intent.limit_px, intent.stop, risk_pct=0.02)
@@ -1436,9 +1448,7 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     assert wide_intent.stop == pytest.approx(2659.4)
     assert wide_intent.size == pytest.approx(3.448275)
     assert wide_intent.size < intent.size
-    assert wide_intent.take_profit == pytest.approx(entry + 2.0 * (entry - wide_intent.stop))
-    # 2R of the wide distance, still not through the pool.
-    assert wide_intent.take_profit <= 2800.0
+    assert wide_intent.take_profit == pytest.approx(2800.0)
 
 
 def _btc_1026_prints(now: float, *, sweep_px: float = 86054.0) -> list[TradePrint]:
@@ -1519,9 +1529,9 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
     assert dist < floor_distance(entry, tick)
     assert intent.size == pytest.approx(math.floor((equity * 0.02) / dist * 1_000_000) / 1_000_000)
     assert intent.size == pytest.approx(2.0)
-    # Pool is past 2R. Target is 2R of this structural distance.
-    assert intent.take_profit == pytest.approx(entry + 2.0 * dist)
-    assert intent.take_profit <= 90000.0
+    # PDH 90000 is the next liquidity, past 2R of this wick.
+    assert intent.take_profit == pytest.approx(90000.0)
+    assert intent.pool_px == pytest.approx(90000.0)
     sized, dollar = size_from_stop(equity, intent.limit_px, intent.stop, risk_pct=0.02)
     assert intent.size == pytest.approx(sized)
     assert dollar == pytest.approx(200.0)
@@ -1546,9 +1556,234 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
     assert (entry - wide_intent.stop) / entry > 0.015
     assert wide_intent.size < intent.size
     assert wide_intent.size == pytest.approx(0.145772)
-    assert wide_intent.take_profit == pytest.approx(entry + 2.0 * (entry - wide_intent.stop))
+    assert wide_intent.take_profit == pytest.approx(90000.0)
     # Not pulled up to the 1.5% level to fit the old cap.
     assert wide_intent.stop < entry * (1.0 - 0.015)
+
+
+def test_btc_short_stops_past_opposing_liquidity_and_targets_the_pool():
+    """Oct 6 BTC short: Alo 85658, 18-point buffer stop, TP capped at 85622.
+
+    An older high at 85820 is outside wick room and outside the last three
+    bars. The stop clears that high. PDL 85500 is the target, not 2R of
+    the old 18-point stop. Size is 2% of spot USDC over the new distance.
+    """
+    now = _now()
+    entry = 85658.0
+    tick = 1.0
+    last = 85620.0
+    t0 = now - 500
+    bars = [
+        {"t": t0, "o": 85700, "h": 85700, "l": 85680, "c": 85690, "v": 1},
+        {"t": t0 + 60, "o": 85690, "h": 85820, "l": 85660, "c": 85700, "v": 1},
+        {"t": t0 + 120, "o": 85700, "h": 85700, "l": 85640, "c": 85680, "v": 1},
+        {"t": t0 + 180, "o": 85680, "h": 85610, "l": 85620, "c": 85630, "v": 1},
+        {"t": t0 + 240, "o": 85630, "h": 85630, "l": 85600, "c": 85610, "v": 1},
+        {"t": t0 + 300, "o": 85610, "h": 85600, "l": 85580, "c": 85590, "v": 1},
+    ]
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, last, 0.5, "sell")
+    add(-40, entry, 7.5, "buy")
+    add(-38, entry, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, last, 1.0, "sell")
+    add(-10, last, 0.5, "sell")
+    add(-1, last, 0.5, "sell")
+
+    equity = 5000.0
+    decision = _decide(
+        prints,
+        bars,
+        [Pool("PDL", 85500.0, taken=False)],
+        coin="BTC",
+        bid=last - 1.0,
+        ask=last + 1.0,
+        tick=tick,
+        equity=equity,
+    )
+    assert decision.armed is True
+    assert decision.fail_reason is None
+    assert decision.bias == "short"
+    intent = decision.intent
+    assert intent is not None
+    assert intent.limit_px == pytest.approx(entry)
+    assert intent.stop == pytest.approx(85838)
+    assert intent.stop > 85820
+    assert intent.stop != pytest.approx(85676)
+    assert intent.take_profit == pytest.approx(85500)
+    assert intent.take_profit != pytest.approx(85622)
+    assert intent.pool_px == pytest.approx(85500)
+    dist = intent.stop - intent.limit_px
+    assert intent.size == pytest.approx(
+        math.floor((equity * 0.02) / dist * 1_000_000) / 1_000_000
+    )
+    assert intent.size == pytest.approx(0.555555)
+    sized, dollar = size_from_stop(equity, intent.limit_px, intent.stop, risk_pct=0.02)
+    assert intent.size == pytest.approx(sized)
+    assert dollar == pytest.approx(100.0)
+
+
+def test_drip_keeps_liquidity_tp_instead_of_writing_2r_back():
+    """A 2R price on the order must not replace the pool, on the open or a drip.
+
+    Live did this: the pool was 85500, the stored target was 2R at 85622,
+    and every partial fill cancelled the pool trigger and put 85622 back.
+    """
+    entry = 85658.0
+    two_r = 85622.0
+    pool = 85500.0
+    stop = 85838.0
+    assert locked_take_profit("short", entry, two_r, pool, stop) == pytest.approx(pool)
+    assert locked_take_profit("short", entry, two_r, pool, stop) != pytest.approx(two_r)
+
+    now = _now()
+    book = ThesisBook()
+    intent = AloIntent(
+        coin="BTC",
+        side="short",
+        limit_px=entry,
+        size=1.0,
+        stop=stop,
+        take_profit=two_r,
+        swing_id="BTC:high:1",
+        sweep_px=entry,
+        tick=1.0,
+        pool_px=pool,
+        tp_r=1.5,
+    )
+    book.post(intent, now, oid=7)
+    opened = book.apply_user_fill(
+        coin="BTC", oid=7, price=entry, ts=now + 1, crossed=False, size=0.2
+    )
+    assert opened is not None
+    assert opened.take_profit == pytest.approx(pool)
+    assert opened.stop == pytest.approx(stop)
+    again = book.apply_user_fill(
+        coin="BTC", oid=7, price=entry, ts=now + 2, crossed=False, size=0.3
+    )
+    assert again is opened
+    assert again.just_opened is False
+    assert again.take_profit == pytest.approx(pool)
+    assert again.take_profit != pytest.approx(two_r)
+    assert again.size == pytest.approx(0.5)
+    assert book.position("BTC").take_profit == pytest.approx(pool)
+
+
+def test_drip_bracket_keeps_pool_and_an_amend_error_does_not_stop_the_hunt(tmp_path):
+    """Two partials both place the pool. A TP amend error does not end the loop."""
+    now = _now()
+    entry = 85658.0
+    last = 85620.0
+    t0 = now - 500
+    bars = [
+        {"t": t0, "o": 85700, "h": 85700, "l": 85680, "c": 85690, "v": 1},
+        {"t": t0 + 60, "o": 85690, "h": 85820, "l": 85660, "c": 85700, "v": 1},
+        {"t": t0 + 120, "o": 85700, "h": 85700, "l": 85640, "c": 85680, "v": 1},
+        {"t": t0 + 180, "o": 85680, "h": 85610, "l": 85620, "c": 85630, "v": 1},
+        {"t": t0 + 240, "o": 85630, "h": 85630, "l": 85600, "c": 85610, "v": 1},
+        {"t": t0 + 300, "o": 85610, "h": 85600, "l": 85580, "c": 85590, "v": 1},
+    ]
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, last, 0.5, "sell")
+    add(-40, entry, 7.5, "buy")
+    add(-38, entry, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, last, 1.0, "sell")
+    add(-10, last, 0.5, "sell")
+    add(-1, last, 0.5, "sell")
+
+    info = InfoClient()
+    info.inject_bars(bars, coin="BTC")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(prints, bbo={"BTC": (last - 1.0, last + 1.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.tps = []
+            self.stops = []
+            self._oid = 400
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 11}}]}}}
+
+        def cancel_order(self, coin, oid):
+            return None
+
+        def set_stop_loss(self, coin, is_buy, size, trigger_px):
+            self._oid += 1
+            self.stops.append(trigger_px)
+            return {"response": {"data": {"statuses": [{"resting": {"oid": self._oid}}]}}}
+
+        def set_take_profit(self, coin, is_buy, size, trigger_px):
+            self.tps.append(trigger_px)
+            if len(self.tps) > 1:
+                raise RuntimeError("tp amend failed")
+            self._oid += 1
+            return {"response": {"data": {"statuses": [{"resting": {"oid": self._oid}}]}}}
+
+        def market_close(self, *args, **kwargs):
+            raise AssertionError("market close")
+
+    fake = FakeLive()
+    sleeps = {"n": 0}
+
+    def sleep_fn(_sec):
+        sleeps["n"] += 1
+        if sleeps["n"] == 1:
+            feed._fills.append(UserFill("BTC", 11, entry, 0.1, now + 1, False))
+        elif sleeps["n"] == 2:
+            feed._fills.append(UserFill("BTC", 11, entry, 0.1, now + 2, False))
+
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            trading_mode="live",
+            i_understand_live_trading=True,
+            private_key="0x" + "22" * 32,
+            network="testnet",
+            journal_path=str(tmp_path / "drip-tp.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=3,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDL", 85500.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["halted"] is False
+    assert summary["arms"] == 1
+    assert summary["opens"] == 1
+    assert fake.tps == [pytest.approx(85500.0), pytest.approx(85500.0)]
+    assert 85622.0 not in fake.tps
+    rows = TradeJournal(tmp_path / "drip-tp.jsonl").read_all()
+    opened = [r for r in rows if r["event"] == "open"]
+    assert opened and opened[0]["tp"] == pytest.approx(85500.0)
 
 
 def test_stop_equal_to_entry_fails_closed(monkeypatch):
@@ -2383,7 +2618,7 @@ def _two_coin_hunt(
 
 
 def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path, caplog):
-    """Tight stops use the whole balance, so ETH still cancels the farther BTC Alo."""
+    """Room-cleared stops still use more than half the balance, so ETH cancels BTC."""
     with caplog.at_level(logging.INFO):
         summary, rows = _two_coin_hunt(
             tmp_path, btc_last=120.0, eth_last=103.0, iterations=2, tight_stop=True
@@ -2542,7 +2777,10 @@ def test_btc_reserve_holds_a_full_size_alt_and_allows_a_small_one(tmp_path, capl
     held = [r for r in rows if r.get("fail_reason") == "BTC_MARGIN_RESERVE"]
     assert len(held) == 1
     assert held[0]["coin"] == "ETH"
-    assert held[0]["margin_need"] > held[0]["reserve"]
+    # The ticket still spends the 60% reserve: free margin after it would
+    # sit under that reserve, so the 40% slice rejects it.
+    assert held[0]["capacity"] - held[0]["margin_need"] < held[0]["reserve"]
+    assert held[0]["margin_need"] > non_btc_margin_cap(held[0]["capacity"])
     assert any(r.get("action") == "btc_reserve_engage" for r in rows)
     assert any(r.get("action") == "btc_reserve_hold" for r in rows)
     assert any("reserve engage" in rec.message for rec in caplog.records)

@@ -1,11 +1,14 @@
 """Model B risk. Fixed policy — not the scalp 0.5% / VWAP stop.
 
-- The stop is placed past the liquidity being swept, then the order is
-  sized. Anchor is the further of the sweep wick, the swing, and the
-  local 1-minute extreme. Buffer is ``max(3 ticks, 2 bps, 0.5×ATR14)``.
-- That structural stop is the stop. A distance inside the old 0.15% /
-  10-tick / fee floor is not parked on the floor and is not scrapped.
-  A deeper wick is kept: nothing pulls the stop back inside it.
+- The stop is placed past opposing liquidity, then the order is sized.
+  A real wick, swing, or local extreme more than one tick past the fill
+  owns the stop. Buffer past that print is ``max(3 ticks, 2 bps,
+  0.5×ATR14)``. A print inside the old 0.15% room is kept; it is not
+  lifted onto that floor.
+- When nothing sits more than one tick past the fill, the 3-tick / 2 bp
+  buffer is still inside wick room. The stop then clears the next
+  opposing print outside that room, or the room itself plus the same
+  3-tick / 2 bp pad. It is not left a few ticks off the fill.
 - A distance past 1.5% of price is still armed. Size shrinks with the
   distance (``size_adjust=wide_stop`` on the journal). The stop is not
   tightened back into the wick to make 1.5%.
@@ -16,10 +19,11 @@
   stop == fill, or a one-tick collision (LIT). A size that rounds to
   zero is the same fail-closed.
 - 20× only. 40× is rejected.
-- TP1 defaults to 1.5R, clamped to [1.0, 2.0], then capped at the pool.
-  A pool farther than 2R sets the target at 2R off the structural stop.
-  That does not reject the trade. The pool cap may pull TP inside 1R.
-  It may not push TP through the pool.
+- TP is the next liquidity in the trade direction (confirmed swing or
+  untaken pool). That price is the target inside 1R and past 2R. The
+  1.5R default, clamped to [1, 2], is only the fallback when no such
+  level exists. A far pool does not cancel the arm and is not pulled
+  back to 2R.
 - Heal keeps the wider stop. A tighter proposal does not overwrite it.
 - Soft-prop off. Strategy kill off. Flow is not an exit. No market fallback.
 """
@@ -27,6 +31,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 # Locked Model B fraction. Sizing reads the caller's risk_pct (from
 # RISK_PER_TRADE). This constant is the value that setting must be.
@@ -183,6 +188,79 @@ def _snap_away(side: str, price: float, tick: float) -> float:
     return math.ceil(price / tick - 1e-9) * tick
 
 
+def _beyond_tick(price: float, entry: float, tick: float, *, above: bool) -> bool:
+    """True when ``price`` is more than one tick past ``entry``."""
+    gap = float(tick) * (1.0 + 1e-9)
+    if above:
+        return float(price) > float(entry) + gap
+    return float(price) < float(entry) - gap
+
+
+def extension_pad(entry: float, tick: float) -> float:
+    """Pad past the next opposing print. ATR is not added a second time."""
+    if entry <= 0 or tick <= 0:
+        return 0.0
+    return max(STOP_BUFFER_TICKS * tick, abs(entry) * STOP_BUFFER_BPS / 10_000.0)
+
+
+def next_opposing_level(
+    side: str,
+    entry: float,
+    room: float,
+    further: Sequence[float] | None,
+) -> float | None:
+    """Nearest stop-side print strictly outside ``room``.
+
+    Long: the highest low still below ``entry - room``. Short: the lowest
+    high still above ``entry + room``. Prints inside the room are skipped
+    so a shallow wick is not treated as the level that clears it.
+    """
+    if not further or entry <= 0 or side not in ("long", "short"):
+        return None
+    best: float | None = None
+    for raw in further:
+        px = _level(raw)
+        if px is None:
+            continue
+        if side == "long":
+            if float(entry) - px <= float(room) + 1e-9:
+                continue
+            if best is None or px > best:
+                best = px
+        else:
+            if px - float(entry) <= float(room) + 1e-9:
+                continue
+            if best is None or px < best:
+                best = px
+    return best
+
+
+def next_liquidity(
+    side: str,
+    entry: float,
+    tick: float,
+    levels: Sequence[float] | None,
+) -> float | None:
+    """Nearest supportive level more than one tick past the entry.
+
+    Long wants the lowest level still above the fill. Short wants the
+    highest level still below it. The caller passes confirmed swings in
+    the trade direction and untaken pools on that side. A bar wick is
+    not a target.
+    """
+    if side not in ("long", "short") or tick <= 0 or entry <= 0 or not levels:
+        return None
+    above = side == "long"
+    best: float | None = None
+    for raw in levels:
+        px = _level(raw)
+        if px is None or not _beyond_tick(px, entry, tick, above=above):
+            continue
+        if best is None or (px < best if above else px > best):
+            best = px
+    return best
+
+
 def collides_with_fill(entry: float, stop: float, tick: float) -> bool:
     """True when the stop is the fill, or only one tick off it.
 
@@ -221,22 +299,29 @@ def place_stop(
     swing: float | None = None,
     local_extreme: float | None = None,
     atr: float | None = None,
+    further: Sequence[float] | None = None,
+    clear_wick_room: bool = True,
 ) -> float | None:
-    """Stop past sweep liquidity, or ``None`` when the geometry is impossible.
+    """Stop past opposing liquidity, or ``None`` when the geometry is impossible.
 
-    The anchor is the further of the sweep wick, the swing, and the local
-    extreme. The buffer is added beyond that anchor and snapped away from
-    the entry. That price is the stop:
+    A wick, swing, or local extreme more than one tick past the fill owns
+    the stop. The buffer is added beyond that print and snapped away from
+    the entry, even when the print is still inside the old 0.15% room
+    (ETH 2704 stays near 2703.4; it is not lifted to 2701.7). A deeper
+    wick is never pulled back toward price. Past 1.5% of ``entry`` the
+    same price is kept and size shrinks.
 
-    - Inside the old 0.15% floor, it is still used. It is not lifted onto
-      the floor (ETH 2705.8 must not rest at 2701.7) and it is not rejected.
-    - Past 1.5% of ``entry``, it is still used. Size shrinks. It is not
-      tightened into the wick.
-    - A deeper wick is never pulled back toward price.
+    When the anchor is the fill itself, a 3-tick / 2 bp buffer is still
+    inside that room. ``clear_wick_room`` then places the stop past the
+    nearest ``further`` print that already sits outside the room, or past
+    the room by the 3-tick / 2 bp pad when no such print exists. A
+    0.5×ATR buffer that already clears the room is kept. Fill-time
+    recomputes pass ``clear_wick_room=False`` so they cannot drag a
+    real-wick stop out to the room edge.
 
     ``None`` is only impossible geometry: the stop is not strictly past
     the fill, it sits on the fill, or it is only one tick away. ``tp_r``
-    does not reject the stop. TP is applied later from the distance.
+    does not reject the stop.
     """
     del tp_r
     if side not in ("long", "short") or tick <= 0 or extreme <= 0 or entry <= 0:
@@ -245,17 +330,38 @@ def place_stop(
     buffer = stop_buffer(entry, tick, atr)
     if buffer <= 0:
         return None
-    if side == "long":
-        structural = anchor - buffer
-        stop = _snap_away(side, structural, tick)
-        if stop <= 0:
+
+    def _finish(raw: float) -> float | None:
+        stop = _snap_away(side, raw, tick)
+        if side == "long" and stop <= 0:
             return None
+        if not stop_is_valid(side, entry, stop) or collides_with_fill(entry, stop, tick):
+            return None
+        return stop
+
+    above = side == "short"
+    real = _beyond_tick(anchor, entry, tick, above=above)
+    if side == "long":
+        buffered = _finish(anchor - buffer)
     else:
-        structural = anchor + buffer
-        stop = _snap_away(side, structural, tick)
-    if not stop_is_valid(side, entry, stop) or collides_with_fill(entry, stop, tick):
-        return None
-    return stop
+        buffered = _finish(anchor + buffer)
+    # A real print owns the stop. A fill-only recompute must not invent
+    # room it was not given a wick for.
+    if real or not clear_wick_room:
+        return buffered
+    room = floor_distance(entry, tick)
+    if buffered is not None and abs(float(entry) - buffered) + 1e-12 >= room:
+        return buffered
+    pad = extension_pad(entry, tick)
+    if pad <= 0:
+        return buffered
+    level = next_opposing_level(side, entry, room, further)
+    if level is not None:
+        raw = (level - pad) if side == "long" else (level + pad)
+    else:
+        raw = (float(entry) - (room + pad)) if side == "long" else (float(entry) + (room + pad))
+    extended = _finish(raw)
+    return extended if extended is not None else buffered
 
 
 def widen_stop_for_fill(
@@ -268,14 +374,15 @@ def widen_stop_for_fill(
 ) -> float:
     """Keep the planned stop unless a structural recompute is wider.
 
-    A fill-only recompute has no wick. It must not replace the arm stop
-    with a tighter buffer, and a one-tick collision is never substituted.
-    Distance inside the old floor or past 1.5% does not drop the arm stop.
+    A fill-only recompute has no wick and does not clear wick room, so it
+    cannot replace a real-wick stop with the room edge. A one-tick
+    collision is never substituted. Distance inside the old floor or past
+    1.5% does not drop the arm stop.
     """
     del limit, tp_r
     if tick <= 0 or fill <= 0:
         return stop
-    pushed = place_stop(side, fill, fill, tick)
+    pushed = place_stop(side, fill, fill, tick, clear_wick_room=False)
     if pushed is None:
         return stop
     if side == "long":
@@ -412,33 +519,25 @@ def take_profit(
     pool_price: float | None,
     tp_r: float = DEFAULT_TP_R,
 ) -> float:
-    """TP off ``abs(entry - stop)``, then capped at the pool.
+    """Liquidity in the trade direction, else ``tp_r`` off the stop.
 
-    ``stop`` is the structural stop (the same price the size uses). A
-    pool farther than 2R sets the target at the band max (2R). It does
-    not stretch the target out to the pool and it does not reject the
-    trade. A closer pool still wins, even when that leaves less than 1R.
-    With no pool on the trade's side the target stays at ``tp_r``
-    (clamped to 1–2, default 1.5).
+    ``pool_price`` is the next supportive level (nearest confirmed swing
+    or untaken pool). On the correct side of the entry it is the target,
+    including inside 1R and past 2R. It is not pulled back to 2R. With
+    no level on the trade's side the target is ``tp_r`` off
+    ``abs(entry - stop)``, clamped to 1–2 (default 1.5).
     """
+    if pool_price is not None and float(pool_price) > 0:
+        px = float(pool_price)
+        if side == "long" and px > float(entry):
+            return px
+        if side == "short" and px < float(entry):
+            return px
     r = clamp_tp_r(tp_r)
     dist = abs(float(entry) - float(stop))
-    band = TP_R_MAX
     if side == "long":
-        raw = float(entry) + r * dist
-        cap = float(entry) + band * dist
-        if pool_price is not None and float(pool_price) > float(entry):
-            if float(pool_price) + 1e-12 >= cap:
-                return cap
-            return min(raw, float(pool_price))
-        return raw
-    raw = float(entry) - r * dist
-    cap = float(entry) - band * dist
-    if pool_price is not None and float(pool_price) < float(entry):
-        if float(pool_price) - 1e-12 <= cap:
-            return cap
-        return max(raw, float(pool_price))
-    return raw
+        return float(entry) + r * dist
+    return float(entry) - r * dist
 
 
 def arm_take_profit(
@@ -448,27 +547,58 @@ def arm_take_profit(
     pool_price: float | None,
     tp_r: float = DEFAULT_TP_R,
 ) -> float | None:
-    """Target for an arm, or ``None`` when nothing sits strictly beyond the entry.
+    """Target for an arm, or ``None`` when it is not strictly beyond the entry.
 
-    The distance is the structural stop. A quote past 2R, or a quote that
-    is not strictly beyond the entry, is replaced with the 2R price when
-    that distance is positive. Zero distance cannot be repaired.
+    A liquidity price is kept even past 2R. With no liquidity the fallback
+    is ``tp_r`` (clamped 1–2) of the structural stop. Zero stop distance
+    cannot build that fallback.
     """
     dist = abs(float(entry) - float(stop))
     if dist <= 0 or float(entry) <= 0 or side not in ("long", "short"):
         return None
     tp = take_profit(side, entry, stop, pool_price, tp_r)
-    if side == "long":
-        cap = float(entry) + TP_R_MAX * dist
-        if (not tp_is_valid(side, entry, tp)) or tp > cap + 1e-9:
-            tp = cap
-    else:
-        cap = float(entry) - TP_R_MAX * dist
-        if (not tp_is_valid(side, entry, tp)) or tp < cap - 1e-9:
-            tp = cap
     if not tp_is_valid(side, entry, tp):
         return None
     return tp
+
+
+def _valid_target(side: str, entry: float, price: float | None) -> float | None:
+    if price is None:
+        return None
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px > 0 and tp_is_valid(side, float(entry), px):
+        return px
+    return None
+
+
+def locked_take_profit(
+    side: str,
+    entry: float,
+    armed_tp: float,
+    pool_px: float | None,
+    stop: float,
+    tp_r: float = DEFAULT_TP_R,
+) -> float:
+    """Liquidity target for a fill. A 2R cap does not replace it.
+
+    ``pool_px`` is the level chosen at the arm. When it sits strictly
+    beyond the fill it is the target, including past 2R, even if
+    ``armed_tp`` was a closer 2R price. With no level, the fallback is
+    ``tp_r`` of ``stop``.
+    """
+    pool = _valid_target(side, entry, pool_px)
+    if pool is not None:
+        return pool
+    fallback = arm_take_profit(side, entry, stop, None, tp_r)
+    if fallback is not None:
+        return fallback
+    armed = _valid_target(side, entry, armed_tp)
+    if armed is not None:
+        return armed
+    return float(armed_tp)
 
 
 def tp_fail_detail(

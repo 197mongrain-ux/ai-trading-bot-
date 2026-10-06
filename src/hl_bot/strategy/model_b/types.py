@@ -44,7 +44,8 @@ class Bias:
 
     ``pool`` is the nearest untaken pool when the side is long or short.
     ``pool_above`` / ``pool_below`` are the nearest untaken pools on each
-    side and cap that side's TP, including when ``side`` is ``NONE``.
+    side and are that side's liquidity target, including when ``side``
+    is ``NONE``.
     """
 
     side: str  # long | short | NONE
@@ -71,7 +72,8 @@ class AloIntent:
     work_sec: float = 0.0
     sweep_px: float | None = None
     tick: float = 0.0
-    # Untaken pool on this side. Caps TP again if the stop is widened on fill.
+    # Liquidity target on this side (nearest swing or untaken pool).
+    # Reused if the stop is widened on fill. Not a 2R cap.
     pool_px: float | None = None
     tp_r: float = 1.5
 

@@ -94,6 +94,26 @@ def swing_id(coin: str, swing: Swing) -> str:
     return f"{coin.upper()}:{swing.kind}:{swing.price:.8f}:{int(swing.ts)}"
 
 
+def closed_prices(
+    bars: list[dict],
+    *,
+    field: str,
+    now: float,
+) -> list[float]:
+    """Positive ``field`` prices of every closed bar, oldest first.
+
+    ``field`` is ``h`` or ``l``. The forming minute is left out. The stop
+    uses the whole list so an older high is visible when the last three
+    bars never traded through the fill.
+    """
+    prices: list[float] = []
+    for _ts, bar in _closed_bars(bars, now):
+        px = float(bar.get(field) or 0)
+        if px > 0:
+            prices.append(px)
+    return prices
+
+
 def local_bar_extreme(
     bars: list[dict],
     *,

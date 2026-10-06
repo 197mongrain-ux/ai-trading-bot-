@@ -13,6 +13,9 @@ close major, 60% of free-margin capacity stays available for BTC.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
+This process owns the stop and the TP after the fill. A drip resizes
+those brackets and does not move a liquidity target back to 2R. An
+amend that fails is logged; the hunt keeps running.
 """
 
 from __future__ import annotations
@@ -329,10 +332,19 @@ def run_model_b(
                             applied.remainder_size,
                         )
                     if live is not None:
-                        if applied.just_opened:
-                            _place_brackets(live, applied)
-                        else:
-                            _resize_brackets(live, applied)
+                        # Brackets stay in this process. An amend that fails
+                        # is logged. It does not end the hunt.
+                        try:
+                            if applied.just_opened:
+                                _place_brackets(live, applied)
+                            else:
+                                _resize_brackets(live, applied)
+                        except Exception:
+                            logger.exception(
+                                "LIVE brackets failed for %s tp=%s; hunt continues",
+                                applied.coin,
+                                applied.take_profit,
+                            )
                 elif isinstance(applied, CloseEvent):
                     equity += applied.pnl
                     risk.record_trade_close(applied.pnl)
@@ -906,36 +918,69 @@ def _default_tick(coin: str, last: float | None) -> float:
 
 
 def _place_brackets(live, pos) -> None:
-    is_close_buy = pos.side == "short"
+    """Place reduce-only stop and TP at the position's prices.
+
+    The trigger is the liquidity target already stored on the position.
+    This does not recompute 2R. A failure is logged and does not raise.
+    """
     try:
-        resp = live.set_stop_loss(
-            pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.stop
+        is_close_buy = pos.side == "short"
+        logger.info(
+            "MODEL_B BRACKET %s stop=%s tp=%s size=%s",
+            pos.coin,
+            pos.stop,
+            pos.take_profit,
+            pos.size,
         )
-        pos.stop_oid = _extract_oid(resp)
-    except Exception:
-        logger.exception("LIVE stop failed for %s", pos.coin)
-    if hasattr(live, "set_take_profit"):
         try:
-            resp = live.set_take_profit(
-                pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.take_profit
+            resp = live.set_stop_loss(
+                pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.stop
             )
-            pos.tp_oid = _extract_oid(resp)
+            pos.stop_oid = _extract_oid(resp)
         except Exception:
-            logger.exception("LIVE tp failed for %s", pos.coin)
+            logger.exception("LIVE stop failed for %s", pos.coin)
+        if hasattr(live, "set_take_profit"):
+            try:
+                resp = live.set_take_profit(
+                    pos.coin,
+                    is_buy=is_close_buy,
+                    size=pos.size,
+                    trigger_px=pos.take_profit,
+                )
+                pos.tp_oid = _extract_oid(resp)
+            except Exception:
+                logger.exception("LIVE tp failed for %s", pos.coin)
+    except Exception:
+        logger.exception(
+            "LIVE brackets failed for %s tp=%s; hunt continues",
+            getattr(pos, "coin", "?"),
+            getattr(pos, "take_profit", None),
+        )
 
 
 def _resize_brackets(live, pos) -> None:
     """Cancel the previous reduce-only triggers and place them at the new size.
 
-    The resting entry Alo is not one of these oids, so a drip does not cancel it.
+    The trigger prices stay. Only the size changes. The resting entry Alo
+    is not one of these oids, so a drip does not cancel it. A failure is
+    logged and does not raise.
     """
-    for oid in (pos.stop_oid, pos.tp_oid):
-        if oid is None:
-            continue
-        try:
-            live.cancel_order(pos.coin, oid)
-        except Exception:
-            logger.exception("LIVE bracket resize cancel failed for %s oid=%s", pos.coin, oid)
-    pos.stop_oid = None
-    pos.tp_oid = None
-    _place_brackets(live, pos)
+    try:
+        for oid in (pos.stop_oid, pos.tp_oid):
+            if oid is None:
+                continue
+            try:
+                live.cancel_order(pos.coin, oid)
+            except Exception:
+                logger.exception(
+                    "LIVE bracket resize cancel failed for %s oid=%s", pos.coin, oid
+                )
+        pos.stop_oid = None
+        pos.tp_oid = None
+        _place_brackets(live, pos)
+    except Exception:
+        logger.exception(
+            "LIVE bracket resize failed for %s tp=%s; hunt continues",
+            getattr(pos, "coin", "?"),
+            getattr(pos, "take_profit", None),
+        )
