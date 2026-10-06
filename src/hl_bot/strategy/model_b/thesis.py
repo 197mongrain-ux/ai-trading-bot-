@@ -71,6 +71,13 @@ class OpenPosition:
     take_profit: float
     swing_id: str
     opened_at: float
+    stop_oid: object | None = None
+    tp_oid: object | None = None
+    # Set on each maker fill so the loop can resize brackets and log the remainder.
+    remainder_kept: bool = False
+    remainder_size: float = 0.0
+    fill_added: float = 0.0
+    just_opened: bool = False
 
 
 @dataclass
@@ -83,6 +90,8 @@ class CloseEvent:
     pnl: float
     reason: str
     swing_id: str
+    # Resting Alo detached because the position itself closed.
+    remainder: WorkingOrder | None = None
 
 
 @dataclass
@@ -96,6 +105,8 @@ class ThesisBook:
     def __init__(self, work_sec: float = WORK_SEC):
         self.work_sec = float(work_sec)
         self._coins: dict[str, _CoinState] = {}
+        # Working orders cleared by flatten that had no position to hang on.
+        self.flatten_cancels: list[WorkingOrder] = []
 
     def _state(self, coin: str) -> _CoinState:
         coin = coin.upper()
@@ -155,8 +166,10 @@ class ThesisBook:
         cancelled: list[WorkingOrder] = []
         for st in self._coins.values():
             order = st.working
-            if order is None or st.position is not None:
+            if order is None:
                 continue
+            # A partial fill may already have a position. The timer still
+            # drops only the resting remainder; the position stays.
             if float(now) + 1e-9 >= order.posted_at + self.work_sec:
                 st.consumed.add(order.swing_id)
                 st.working = None
@@ -173,8 +186,10 @@ class ThesisBook:
         consumed either way once cancelled.
         """
         st = self._coins.get(coin.upper())
-        if st is None or st.working is None or st.position is not None:
+        if st is None or st.working is None:
             return []
+        # A partial fill keeps the position. Stale still cancels the
+        # unfilled remainder and does not flatten the filled size.
         order = st.working
         if order.sweep_px is None:
             return []
@@ -192,7 +207,12 @@ class ThesisBook:
         return None if st is None else st.working
 
     def resting_orders(self) -> list[WorkingOrder]:
-        """Unfilled Alos. A coin that already has a position is left out."""
+        """Fully unfilled Alos. A coin with any fill is left out.
+
+        The remainder after a drip stays working until the thesis is stale,
+        but it is not offered to a closer coin. Cancelling it would wipe
+        the brackets on the open size.
+        """
         resting: list[WorkingOrder] = []
         for st in self._coins.values():
             if st.working is None or st.position is not None:
@@ -227,35 +247,57 @@ class ThesisBook:
         size: float | None = None,
     ) -> OpenPosition:
         st = self._state(order.coin)
-        # A partial or margin-trimmed fill brackets the filled size, not the
-        # size that was requested before the exchange cut it.
-        fill_size = order.size
-        if size is not None and float(size) > 0:
-            fill_size = float(size)
-        stop = widen_stop_for_fill(
-            order.side, price, order.stop, order.limit_px, order.tick, tp_r=order.tp_r
-        )
-        if not stop_is_valid(order.side, price, stop) or not stop_clears_fees(
-            price, stop, tick=order.tick, tp_r=order.tp_r
-        ):
-            pushed = place_stop(order.side, price, price, order.tick, tp_r=order.tp_r)
-            if pushed is not None:
-                stop = pushed
-        tp = take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
-        if not tp_is_valid(order.side, price, tp):
-            tp = order.take_profit
-        pos = OpenPosition(
-            coin=order.coin,
-            side=order.side,
-            size=fill_size,
-            entry=price,
-            stop=stop,
-            take_profit=tp,
-            swing_id=order.swing_id,
-            opened_at=ts,
-        )
-        st.position = pos
-        st.working = None
+        # Each user fill ``sz`` is that drip, not the cumulative position.
+        # A missing size is a full fill (paper prints). A drip smaller than
+        # the resting size keeps the maker working. Nothing here cancels it.
+        if size is None or float(size) <= 0:
+            added = float(order.size)
+        else:
+            added = min(float(size), float(order.size))
+        dust = max(1e-12, abs(order.size) * 1e-8)
+        remainder_kept = added < float(order.size) - dust
+        if remainder_kept:
+            order.size = float(order.size) - added
+            remainder = float(order.size)
+        else:
+            added = float(order.size) if added <= 0 else added
+            remainder = 0.0
+            st.working = None
+            order.size = 0.0
+        just_opened = st.position is None
+        if just_opened:
+            stop = widen_stop_for_fill(
+                order.side, price, order.stop, order.limit_px, order.tick, tp_r=order.tp_r
+            )
+            if not stop_is_valid(order.side, price, stop) or not stop_clears_fees(
+                price, stop, tick=order.tick, tp_r=order.tp_r
+            ):
+                pushed = place_stop(order.side, price, price, order.tick, tp_r=order.tp_r)
+                if pushed is not None:
+                    stop = pushed
+            tp = take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
+            if not tp_is_valid(order.side, price, tp):
+                tp = order.take_profit
+            pos = OpenPosition(
+                coin=order.coin,
+                side=order.side,
+                size=added,
+                entry=price,
+                stop=stop,
+                take_profit=tp,
+                swing_id=order.swing_id,
+                opened_at=ts,
+            )
+            st.position = pos
+        else:
+            pos = st.position
+            assert pos is not None
+            pos.entry = (pos.entry * pos.size + price * added) / (pos.size + added)
+            pos.size = pos.size + added
+        pos.remainder_kept = remainder_kept
+        pos.remainder_size = remainder
+        pos.fill_added = added
+        pos.just_opened = just_opened
         return pos
 
     def try_fill_from_prints(self, prints: list[TradePrint]) -> OpenPosition | None:
@@ -303,10 +345,12 @@ class ThesisBook:
     ) -> OpenPosition | CloseEvent | None:
         """Live fills.
 
-        ``crossed is False`` is a maker Alo fill and opens the position.
-        ``crossed is True`` while a position is open is the resting stop/TP
-        bracket firing — it closes, it does not add. A taker fill with no
-        position is ignored (no market entry). Unknown ``crossed`` is ignored.
+        ``crossed is False`` is a maker Alo fill. The first drip opens the
+        position at that size and leaves any unfilled remainder working.
+        Later drips on the same order grow the position. ``crossed is True``
+        while a position is open is the resting stop/TP bracket firing — it
+        closes, it does not add. A taker fill with no position is ignored
+        (no market entry). Unknown ``crossed`` is ignored.
         """
         st = self._coins.get(coin.upper())
         if crossed is True:
@@ -351,6 +395,8 @@ class ThesisBook:
             pnl = (exit_px - pos.entry) * pos.size
         else:
             pnl = (pos.entry - exit_px) * pos.size
+        remainder = st.working
+        st.working = None
         event = CloseEvent(
             coin=pos.coin,
             side=pos.side,
@@ -360,6 +406,7 @@ class ThesisBook:
             pnl=pnl,
             reason=reason,
             swing_id=pos.swing_id,
+            remainder=remainder,
         )
         st.consumed.add(pos.swing_id)
         st.position = None
@@ -377,11 +424,15 @@ class ThesisBook:
         """Emergency flatten (operator kill switch). Not a flow exit."""
         prices = price_for or {}
         events: list[CloseEvent] = []
+        self.flatten_cancels = []
         for coin, st in list(self._coins.items()):
-            if st.working is not None:
-                st.consumed.add(st.working.swing_id)
+            working = st.working
+            if working is not None:
+                st.consumed.add(working.swing_id)
                 st.working = None
             if st.position is None:
+                if working is not None:
+                    self.flatten_cancels.append(working)
                 continue
             px = prices.get(coin, st.position.entry)
             pos = st.position
@@ -399,6 +450,7 @@ class ThesisBook:
                     pnl=pnl,
                     reason="kill_switch",
                     swing_id=pos.swing_id,
+                    remainder=working,
                 )
             )
             st.consumed.add(pos.swing_id)

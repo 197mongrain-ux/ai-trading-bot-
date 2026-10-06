@@ -186,6 +186,49 @@ def run_model_b(
             break
 
         now = float(clock())
+
+        def _cancel_working(order, reason: str, **extra) -> None:
+            summary["cancels"] += 1
+            kept = book.position(order.coin) is not None
+            is_remainder = kept or bool(extra.get("remainder"))
+            payload = dict(extra)
+            if is_remainder:
+                payload["remainder"] = "cancelled"
+                payload["position_kept"] = kept
+            journal.log(
+                "model_b_cancel",
+                coin=order.coin,
+                swing_id=order.swing_id,
+                limit_px=order.limit_px,
+                size=order.size,
+                reason=reason,
+                entry_mode="model_b",
+                **payload,
+            )
+            if is_remainder:
+                tail = "position kept" if kept else "position closed"
+                logger.info(
+                    "MODEL_B PARTIAL %s remainder cancelled reason=%s size=%s — %s",
+                    order.coin,
+                    reason,
+                    order.size,
+                    tail,
+                )
+            else:
+                logger.info(
+                    "MODEL_B CANCEL %s swing=%s px=%s reason=%s winner=%s — thesis done",
+                    order.coin,
+                    order.swing_id,
+                    order.limit_px,
+                    reason,
+                    extra.get("winner"),
+                )
+            if live is not None and order.oid is not None:
+                try:
+                    live.cancel_order(order.coin, order.oid)
+                except Exception:
+                    logger.exception("LIVE cancel failed for %s", order.coin)
+
         ks = killswitch_active(settings)
         flatten, reason = risk.should_flatten(
             equity, kill_file_active=ks, env_kill=settings.kill_switch
@@ -202,40 +245,20 @@ def run_model_b(
                     entry_mode="model_b",
                 )
                 summary["closes"] += 1
+                if event.remainder is not None:
+                    _cancel_working(event.remainder, reason or event.reason, remainder=True)
                 if live is not None:
                     try:
                         live.market_close(event.coin, size=event.size)
                     except Exception:
                         logger.exception("LIVE flatten failed for %s", event.coin)
+            for order in book.flatten_cancels:
+                _cancel_working(order, reason or "kill_switch")
+            book.flatten_cancels = []
             summary["halted"] = True
             if risk.killed:
                 logger.error("Kill switch / drawdown — exiting Model B loop")
                 break
-
-        def _cancel_working(order, reason: str, **extra) -> None:
-            summary["cancels"] += 1
-            journal.log(
-                "model_b_cancel",
-                coin=order.coin,
-                swing_id=order.swing_id,
-                limit_px=order.limit_px,
-                reason=reason,
-                entry_mode="model_b",
-                **extra,
-            )
-            logger.info(
-                "MODEL_B CANCEL %s swing=%s px=%s reason=%s winner=%s — thesis done",
-                order.coin,
-                order.swing_id,
-                order.limit_px,
-                reason,
-                extra.get("winner"),
-            )
-            if live is not None and order.oid is not None:
-                try:
-                    live.cancel_order(order.coin, order.oid)
-                except Exception:
-                    logger.exception("LIVE cancel failed for %s", order.coin)
 
         for order in book.expire(now):
             _cancel_working(order, "unfilled_timeout")
@@ -251,20 +274,42 @@ def run_model_b(
                     size=fill.size,
                 )
                 if isinstance(applied, OpenPosition):
-                    summary["opens"] += 1
-                    journal.log(
-                        "open",
-                        symbol=applied.coin,
-                        side=applied.side,
-                        size=applied.size,
-                        price=applied.entry,
-                        stop=applied.stop,
-                        tp=applied.take_profit,
-                        entry_mode="model_b",
-                        reason="alo_fill",
-                    )
+                    if applied.just_opened:
+                        summary["opens"] += 1
+                        journal.log(
+                            "open",
+                            symbol=applied.coin,
+                            side=applied.side,
+                            size=applied.size,
+                            price=applied.entry,
+                            stop=applied.stop,
+                            tp=applied.take_profit,
+                            entry_mode="model_b",
+                            reason="alo_fill",
+                        )
+                    if applied.remainder_kept:
+                        journal.log(
+                            "model_b_partial",
+                            symbol=applied.coin,
+                            side=applied.side,
+                            size=applied.size,
+                            added=applied.fill_added,
+                            remainder_size=applied.remainder_size,
+                            remainder="kept",
+                            entry_mode="model_b",
+                        )
+                        logger.info(
+                            "MODEL_B PARTIAL %s added=%s position=%s remainder=%s kept",
+                            applied.coin,
+                            applied.fill_added,
+                            applied.size,
+                            applied.remainder_size,
+                        )
                     if live is not None:
-                        _place_brackets(live, applied)
+                        if applied.just_opened:
+                            _place_brackets(live, applied)
+                        else:
+                            _resize_brackets(live, applied)
                 elif isinstance(applied, CloseEvent):
                     equity += applied.pnl
                     risk.record_trade_close(applied.pnl)
@@ -279,6 +324,10 @@ def run_model_b(
                         reason=applied.reason,
                         entry_mode="model_b",
                     )
+                    if applied.remainder is not None:
+                        _cancel_working(
+                            applied.remainder, applied.reason, remainder=True
+                        )
 
         active = session_coins(now)
         if allow is not None:
@@ -362,6 +411,8 @@ def run_model_b(
                         closed.exit,
                         closed.pnl,
                     )
+                    if closed.remainder is not None and live is not None:
+                        _cancel_working(closed.remainder, closed.reason, remainder=True)
 
             if book.working(coin) is not None or book.position(coin) is not None:
                 continue
@@ -561,13 +612,34 @@ def _default_tick(coin: str, last: float | None) -> float:
 def _place_brackets(live, pos) -> None:
     is_close_buy = pos.side == "short"
     try:
-        live.set_stop_loss(pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.stop)
+        resp = live.set_stop_loss(
+            pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.stop
+        )
+        pos.stop_oid = _extract_oid(resp)
     except Exception:
         logger.exception("LIVE stop failed for %s", pos.coin)
     if hasattr(live, "set_take_profit"):
         try:
-            live.set_take_profit(
+            resp = live.set_take_profit(
                 pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=pos.take_profit
             )
+            pos.tp_oid = _extract_oid(resp)
         except Exception:
             logger.exception("LIVE tp failed for %s", pos.coin)
+
+
+def _resize_brackets(live, pos) -> None:
+    """Cancel the previous reduce-only triggers and place them at the new size.
+
+    The resting entry Alo is not one of these oids, so a drip does not cancel it.
+    """
+    for oid in (pos.stop_oid, pos.tp_oid):
+        if oid is None:
+            continue
+        try:
+            live.cancel_order(pos.coin, oid)
+        except Exception:
+            logger.exception("LIVE bracket resize cancel failed for %s oid=%s", pos.coin, oid)
+    pos.stop_oid = None
+    pos.tp_oid = None
+    _place_brackets(live, pos)

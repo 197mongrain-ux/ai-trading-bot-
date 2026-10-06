@@ -787,6 +787,11 @@ def test_brackets_use_filled_size_when_margin_trimmed():
     assert opened.size < requested
     assert opened.stop == pytest.approx(stop)
     assert stop_clears_fees(opened.entry, opened.stop, tick=0.1)
+    assert opened.remainder_kept is True
+    resting = book.working("ETH")
+    assert resting is not None
+    assert resting.size == pytest.approx(requested - filled)
+    assert resting.oid == 4
 
 
 def test_no_second_alo_no_average_down_no_market_and_stop_consumes_thesis():
@@ -1619,3 +1624,159 @@ def test_release_for_closer_refuses_an_open_position():
     assert book.release_for_closer("BTC") is None
     assert book.position("BTC") is pos
     assert book.working("BTC") is not None
+
+
+def test_partial_drip_keeps_remainder_until_thesis_stale():
+    """BTC 0.0885 drip-filled 0.00036 must not drop the rest of the maker.
+
+    Brackets follow the filled size. A later drip grows that size. The
+    remainder stays working until a print through the sweep, and a closer
+    coin cannot cancel it once any fill exists.
+    """
+    now = _now()
+    book = ThesisBook()
+    order_size = 0.0885
+    intent = AloIntent(
+        coin="BTC",
+        side="long",
+        limit_px=85876.0,
+        size=order_size,
+        stop=85000.0,
+        take_profit=87000.0,
+        swing_id="BTC:low:1",
+        sweep_px=85876.0,
+        tick=1.0,
+        tp_r=2.5,
+    )
+    book.post(intent, now, oid=42)
+    first = book.apply_user_fill(
+        coin="BTC", oid=42, price=85876.0, ts=now + 1, crossed=False, size=0.00036
+    )
+    assert first is not None
+    assert first.just_opened is True
+    assert first.remainder_kept is True
+    assert first.size == pytest.approx(0.00036)
+    assert first.remainder_size == pytest.approx(order_size - 0.00036)
+    resting = book.working("BTC")
+    assert resting is not None and resting.oid == 42
+    assert resting.size == pytest.approx(order_size - 0.00036)
+    assert book.position("BTC") is first
+
+    second = book.apply_user_fill(
+        coin="BTC", oid=42, price=85876.0, ts=now + 2, crossed=False, size=0.001
+    )
+    assert second is first
+    assert second.just_opened is False
+    assert second.size == pytest.approx(0.00136)
+    assert second.remainder_kept is True
+    assert book.working("BTC") is not None
+    assert book.working("BTC").size == pytest.approx(order_size - 0.00136)
+    with pytest.raises(ValueError, match="AVERAGE_DOWN"):
+        book.post(replace(intent, swing_id="other"), now + 3)
+    assert book.release_for_closer("BTC") is None
+    assert book.working("BTC") is not None
+
+    through = TradePrint(
+        ts=now + 4, coin="BTC", price=85870.0, size=1, side="buy", seq=1
+    )
+    cancelled = book.cancel_if_stale("BTC", [through])
+    assert len(cancelled) == 1
+    assert cancelled[0].oid == 42
+    assert cancelled[0].size == pytest.approx(order_size - 0.00136)
+    assert book.working("BTC") is None
+    assert book.position("BTC") is not None
+    assert book.position("BTC").size == pytest.approx(0.00136)
+
+
+def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+    sleeps = {"n": 0}
+    before_stale: dict = {}
+
+    class FakeLive:
+        def __init__(self):
+            self.cancels = []
+            self.stops = []
+            self.closes = []
+            self._oid = 300
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 11}}]}}}
+
+        def cancel_order(self, coin, oid):
+            self.cancels.append((coin, oid))
+
+        def set_stop_loss(self, coin, is_buy, size, trigger_px):
+            self._oid += 1
+            self.stops.append(size)
+            return {"response": {"data": {"statuses": [{"resting": {"oid": self._oid}}]}}}
+
+        def set_take_profit(self, coin, is_buy, size, trigger_px):
+            self._oid += 1
+            return {"response": {"data": {"statuses": [{"resting": {"oid": self._oid}}]}}}
+
+        def market_close(self, *args, **kwargs):
+            self.closes.append(args)
+
+    fake = FakeLive()
+
+    def sleep_fn(_sec):
+        sleeps["n"] += 1
+        if sleeps["n"] == 1:
+            feed._fills.append(UserFill("BTC", 11, 99.0, 0.00036, now + 1, False))
+        elif sleeps["n"] == 2:
+            before_stale["cancels"] = list(fake.cancels)
+            before_stale["stops"] = list(fake.stops)
+            feed._fills.append(UserFill("BTC", 11, 99.0, 0.001, now + 2, False))
+            feed._prints.append(
+                TradePrint(ts=now + 3, coin="BTC", price=90.0, size=1, side="buy", seq=900)
+            )
+
+    summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            trading_mode="live",
+            i_understand_live_trading=True,
+            private_key="0x" + "11" * 32,
+            network="testnet",
+            journal_path=str(tmp_path / "partial.jsonl"),
+            loop_interval_sec=0,
+        ),
+        max_iterations=3,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 1.0,
+    )
+    assert summary["opens"] == 1
+    assert summary["closes"] == 0
+    assert summary["arms"] == 1
+    assert fake.closes == []
+    # First drip places a bracket and does not cancel the Alo.
+    assert before_stale["stops"] == [pytest.approx(0.00036)]
+    assert all(oid != 11 for _coin, oid in before_stale["cancels"])
+    # Second drip resizes the bracket. Thesis-stale then cancels the Alo only.
+    assert fake.stops[-1] == pytest.approx(0.00136)
+    assert ("BTC", 11) in fake.cancels
+    rows = TradeJournal(tmp_path / "partial.jsonl").read_all()
+    kept = [r for r in rows if r.get("event") == "model_b_partial" and r.get("remainder") == "kept"]
+    assert len(kept) == 2
+    assert kept[0]["remainder_size"] == pytest.approx(100 - 0.00036)
+    cancelled = [
+        r for r in rows
+        if r.get("event") == "model_b_cancel" and r.get("reason") == "thesis_stale"
+    ]
+    assert len(cancelled) == 1
+    assert cancelled[0]["remainder"] == "cancelled"
+    assert cancelled[0]["position_kept"] is True
+    assert cancelled[0].get("size") == pytest.approx(100 - 0.00136)
