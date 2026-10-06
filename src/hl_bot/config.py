@@ -128,12 +128,11 @@ class Settings:
     model_b_min_prints: int = 30
     # 0 = rest the maker Alo until the thesis is stale. No default 20s cancel.
     model_b_alo_timeout_sec: float = 0.0
-    # USDC notional. Coin-size band is this divided by the mid. 0 uses the
-    # coin-size fallback below.
+    # USDC notional. Coin size is max(this / mid, the coin floor below).
+    # 0 drops this term.
     model_b_delta_flat_usdc: float = DELTA_FLAT_USDC
-    # Coin size (buy sz − sell sz) used only when the USDC notional is 0,
-    # or there is no price. 0 with the USDC notional also 0 is the strict
-    # sign check.
+    # Coin-size floor (buy sz − sell sz). The larger of this and the USDC
+    # term is the band. 0 drops this term. Both at 0 is the strict sign check.
     model_b_delta_flat_eps: float = DELTA_FLAT_EPS
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62

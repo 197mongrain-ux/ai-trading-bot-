@@ -12,7 +12,8 @@ USDC over that distance. ``size_adjust=wide_stop`` is journaled when the
 distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
 side, stop == fill, one-tick collision). Window and last-15s delta may
 sit inside a flat band; a clearly adverse delta still fails. The band is
-``DELTA_FLAT_USDC`` (default $100) divided by the mid. TP1 is ~1.5R
+the larger of ``DELTA_FLAT_USDC`` / mid (default $100) and
+``DELTA_FLAT_EPS`` (default 0.05 coins). TP1 is ~1.5R
 (clamped to 1–2) and never beyond the untaken pool on that side. A
 ``BAD_TP`` fail logs the R distance and the pool R-multiple; it does not
 change that band. A session volume profile
@@ -53,7 +54,7 @@ from hl_bot.strategy.model_b.tape import (
     NO_SIDE,
     THIN_TAPE,
     analyze_tape,
-    flat_eps_coins,
+    flat_eps_parts,
     missing_side,
     window_prints,
 )
@@ -120,9 +121,9 @@ class ModelBEngine:
         self.min_prints = int(min_prints)
         # 0 rests the maker until the thesis is stale. No default 20s cancel.
         self.alo_timeout_sec = float(alo_timeout_sec)
-        # Coin-size fallback. Used when delta_flat_usdc is 0, or no price.
+        # Coin-size floor. The band is max(usdc / price, this).
         self.delta_flat_eps = float(delta_flat_eps)
-        # USDC notional. Divided by the mid to get the coin-size band.
+        # USDC notional. Divided by the mid, then compared with the coin floor.
         self.delta_flat_usdc = float(delta_flat_usdc)
 
     def evaluate(
@@ -178,6 +179,8 @@ class ModelBEngine:
             size_adjust: str | None = None,
             delta_flat: str | None = None,
             delta_flat_eps: float | None = None,
+            delta_flat_usdc_eps: float | None = None,
+            delta_flat_coin_eps: float | None = None,
             delta_flat_px: float | None = None,
             r_distance: float | None = None,
             pool_distance: float | None = None,
@@ -228,6 +231,8 @@ class ModelBEngine:
                 size_adjust=size_adjust,
                 delta_flat=delta_flat,
                 delta_flat_eps=delta_flat_eps,
+                delta_flat_usdc_eps=delta_flat_usdc_eps,
+                delta_flat_coin_eps=delta_flat_coin_eps,
                 delta_flat_px=delta_flat_px,
                 r_distance=r_distance,
                 pool_distance=pool_distance,
@@ -250,8 +255,15 @@ class ModelBEngine:
                 best_ask,
                 last_px if last_px and last_px > 0 else (mark if mark and mark > 0 else None),
             )
-            eps_coin = flat_eps_coins(self.delta_flat_usdc, ref_px, self.delta_flat_eps)
-            scale = dict(delta_flat_eps=eps_coin, delta_flat_px=ref_px)
+            eps_coin, usdc_eps, coin_eps = flat_eps_parts(
+                self.delta_flat_usdc, ref_px, self.delta_flat_eps
+            )
+            scale = dict(
+                delta_flat_eps=eps_coin,
+                delta_flat_usdc_eps=usdc_eps,
+                delta_flat_coin_eps=coin_eps,
+                delta_flat_px=ref_px,
+            )
             if swing is None:
                 return _done(NO_SWING, pool_label=label, **scale)
             vp_ctx["swing_ts"] = swing.ts

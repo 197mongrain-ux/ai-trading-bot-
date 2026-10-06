@@ -12,9 +12,11 @@ size from reclaim→now ≥ 1.3; 90s delta and last-15s delta at or above
 below ``+eps``).
 
 Delta is coin size: sum of buy print sizes minus sum of sell print sizes.
-It is not dollars and not a ratio. The flat band is a USDC notional
-(``DELTA_FLAT_USDC`` / mid) so SOL and BTC share the same dollar tolerance.
-``DELTA_FLAT_EPS`` is the coin-size fallback when that notional is 0.
+It is not dollars and not a ratio. The flat band is the larger of a USDC
+notional (``DELTA_FLAT_USDC`` / mid) and a coin-size floor
+(``DELTA_FLAT_EPS``). $100 is the wider term on SOL. 0.05 coins is the
+wider term on BTC. Either value at 0 drops that term. Both at 0 restore
+the strict sign check.
 """
 
 from __future__ import annotations
@@ -42,12 +44,14 @@ LAST_SEC = 15.0
 ABSORB_MIN = 1.3
 SWEEP_TICKS = 1.0
 # Notional flat band. Divided by the coin's mid (else last) to get coin
-# size. 0.05 coins was ~$6 on SOL and ~$4k on BTC. $100 is the same
-# tolerance on both: about 0.67 SOL and about 0.0012 BTC at those prices.
-# 0 turns the notional off and the coin-size fallback below is used.
+# size, then the larger of that and ``DELTA_FLAT_EPS`` is the band.
+# $100 is about 0.67 SOL at $150, and about 0.0012 BTC at $86k. On BTC
+# the 0.05-coin floor is wider (~$4.3k), so that floor is what is used.
+# 0 drops this term. The coin floor below is still applied.
 DELTA_FLAT_USDC = 100.0
-# Coin-size fallback (buy sz − sell sz) when ``DELTA_FLAT_USDC`` is 0,
-# or when there is no price to convert with. 0 is the strict sign check.
+# Coin-size floor (buy sz − sell sz). The band is
+# max(DELTA_FLAT_USDC / mid, this). This is the whole band when the
+# USDC term is 0 or there is no price. 0 drops this term.
 DELTA_FLAT_EPS = 0.05
 # Dust inside this was already treated as zero before the flat band.
 _DELTA_STRICT_EPS = 1e-9
@@ -131,21 +135,32 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return None
 
 
+def flat_eps_parts(
+    usdc: float,
+    price: float | None,
+    coin_eps: float = DELTA_FLAT_EPS,
+) -> tuple[float, float, float]:
+    """``(chosen, usdc_eps, coin_eps)`` in coin size.
+
+    ``chosen = max(usdc / price, coin_eps)`` when ``usdc > 0`` and the
+    price is positive. Otherwise the USDC term is 0 and ``chosen`` is
+    the coin floor. ``0`` is the strict sign check.
+    """
+    coin = float(coin_eps) if float(coin_eps) > 0 else 0.0
+    usdc_coins = 0.0
+    if float(usdc) > 0 and price is not None and float(price) > 0:
+        usdc_coins = float(usdc) / float(price)
+    return max(usdc_coins, coin), usdc_coins, coin
+
+
 def flat_eps_coins(
     usdc: float,
     price: float | None,
     coin_eps: float = DELTA_FLAT_EPS,
 ) -> float:
-    """Coin-size flat band for one check.
-
-    ``usdc > 0`` and a positive price: ``usdc / price``. Otherwise the
-    coin-size fallback. ``0`` is the strict sign check.
-    """
-    if float(usdc) > 0 and price is not None and float(price) > 0:
-        return float(usdc) / float(price)
-    if float(coin_eps) <= 0:
-        return 0.0
-    return float(coin_eps)
+    """Coin-size flat band: the larger of the USDC term and the coin floor."""
+    chosen, _usdc_eps, _coin_eps = flat_eps_parts(usdc, price, coin_eps)
+    return chosen
 
 
 def _delta_aligned(side: str, value: float, eps: float = DELTA_FLAT_EPS) -> bool:

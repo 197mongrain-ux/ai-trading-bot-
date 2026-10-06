@@ -478,23 +478,25 @@ def test_each_tape_fail_reason():
 
 
 def test_flat_delta_band_passes_and_adverse_still_fails():
-    """$100 of coin imbalance is flat. A larger notional still fails.
+    """The band is the larger of $100 / mid and 0.05 coins.
 
-    Delta is buy size minus sell size. The band is USDC / mid. 0.05 coins
-    stays the fallback when the USDC notional is 0. eps=0 is the strict check.
+    Delta is buy size minus sell size. On SOL the $100 term wins. On BTC
+    the 0.05-coin floor wins. Either term at 0 drops that term. Both at 0
+    is the strict sign check.
     """
     assert DELTA_FLAT_USDC == pytest.approx(100)
     assert DELTA_FLAT_EPS == pytest.approx(0.05)
     assert flat_eps_coins(100, 150) == pytest.approx(100 / 150)
-    assert flat_eps_coins(100, 86000) == pytest.approx(100 / 86000)
+    assert flat_eps_coins(100, 86000) == pytest.approx(0.05)
     assert flat_eps_coins(100, 150) > 0.05
-    assert flat_eps_coins(100, 86000) < 0.05
+    assert flat_eps_coins(100, 86000, 0) == pytest.approx(100 / 86000)
     sol_eps = flat_eps_coins(100, 150)
     btc_eps = flat_eps_coins(100, 86000)
     assert _delta_aligned("short", 0.19, sol_eps)
     assert not _delta_aligned("short", 1.1, sol_eps)
-    assert not _delta_aligned("long", -0.05, btc_eps)
-    assert _delta_aligned("long", -0.0005, btc_eps)
+    assert _delta_aligned("long", -0.05, btc_eps)
+    assert not _delta_aligned("long", -0.06, btc_eps)
+    assert _delta_aligned("short", 0.006, btc_eps)
     assert flat_eps_coins(0, 150, 0.05) == pytest.approx(0.05)
     assert flat_eps_coins(0, 150, 0) == 0
     assert _delta_aligned("long", -0.05, DELTA_FLAT_EPS)
@@ -532,6 +534,8 @@ def test_flat_delta_band_passes_and_adverse_still_fails():
     assert small.delta_flat == "window"
     assert small.window_delta == pytest.approx(-0.06)
     assert small.delta_flat_eps == pytest.approx(100 / 104)
+    assert small.delta_flat_usdc_eps == pytest.approx(100 / 104)
+    assert small.delta_flat_coin_eps == pytest.approx(0.05)
     assert small.delta_flat_px == pytest.approx(104)
 
     # −1.20 coins at that mid is about $125, still DELTA.
@@ -614,6 +618,105 @@ def test_flat_delta_band_passes_and_adverse_still_fails():
     assert short_strict.fail_reason == "DELTA"
 
 
+def test_btc_flat_band_keeps_the_coin_floor():
+    """$100 / mid is ~0.0012 BTC. The 0.05-coin floor is the band there.
+
+    A short with dW +0.006 and last-15s +0.0018 failed when the band was
+    only the USDC term. It passes again. A print past 0.05 coins still
+    fails. Setting the coin floor to 0 restores the tight USDC band.
+    """
+    shift = 85900.0
+    now = _now()
+    mid = 85996.0
+
+    def btc_short(extra: list[TradePrint]) -> list[TradePrint]:
+        prints = []
+        for print_ in _short_prints(now):
+            prints.append(
+                TradePrint(
+                    ts=print_.ts,
+                    coin=print_.coin,
+                    price=print_.price + shift,
+                    size=print_.size,
+                    side=print_.side,
+                    seq=print_.seq,
+                )
+            )
+        prints.extend(extra)
+        return prints
+
+    bars = []
+    for bar in _short_bars(now):
+        row = dict(bar)
+        for key in ("o", "h", "l", "c"):
+            row[key] = bar[key] + shift
+        bars.append(row)
+
+    # Base window is −4 and last-15s is −1. These two buys land on the
+    # observed wrong-way tape: dW +0.006, last 15s +0.0018.
+    saved = _decide(
+        btc_short(
+            [
+                TradePrint(ts=now - 20, coin="BTC", price=mid, size=3.0042, side="buy", seq=1000),
+                TradePrint(ts=now - 5, coin="BTC", price=mid, size=1.0018, side="buy", seq=1001),
+            ]
+        ),
+        bars,
+        [Pool("PDL", 80000.0, False)],
+        bid=85995.0,
+        ask=85997.0,
+        tick=1.0,
+        equity=10_000.0,
+    )
+    assert saved.armed is True
+    assert saved.intent is not None and saved.intent.side == "short"
+    assert saved.window_delta == pytest.approx(0.006)
+    assert saved.last_15s_delta == pytest.approx(0.0018)
+    assert saved.delta_flat == "both"
+    assert saved.delta_flat_px == pytest.approx(mid)
+    assert saved.delta_flat_usdc_eps == pytest.approx(100 / mid)
+    assert saved.delta_flat_coin_eps == pytest.approx(0.05)
+    assert saved.delta_flat_eps == pytest.approx(0.05)
+    assert saved.delta_flat_eps == pytest.approx(
+        max(saved.delta_flat_usdc_eps, saved.delta_flat_coin_eps)
+    )
+
+    past_coin = _decide(
+        btc_short(
+            [TradePrint(ts=now - 20, coin="BTC", price=mid, size=4.06, side="buy", seq=1000)]
+        ),
+        bars,
+        [Pool("PDL", 80000.0, False)],
+        bid=85995.0,
+        ask=85997.0,
+        tick=1.0,
+        equity=10_000.0,
+    )
+    assert past_coin.armed is False
+    assert past_coin.fail_reason == "DELTA"
+    assert past_coin.window_delta == pytest.approx(0.06)
+    assert past_coin.delta_flat_eps == pytest.approx(0.05)
+
+    usdc_only = _decide(
+        btc_short(
+            [
+                TradePrint(ts=now - 20, coin="BTC", price=mid, size=3.0042, side="buy", seq=1000),
+                TradePrint(ts=now - 5, coin="BTC", price=mid, size=1.0018, side="buy", seq=1001),
+            ]
+        ),
+        bars,
+        [Pool("PDL", 80000.0, False)],
+        bid=85995.0,
+        ask=85997.0,
+        tick=1.0,
+        equity=10_000.0,
+        engine=ModelBEngine(delta_flat_usdc=100, delta_flat_eps=0.0),
+    )
+    assert usdc_only.armed is False
+    assert usdc_only.fail_reason == "DELTA"
+    assert usdc_only.delta_flat_eps == pytest.approx(100 / mid)
+
+
 def test_flat_delta_save_is_logged(tmp_path, caplog):
     now = _now()
     prints = _long_prints(now, extra=[(-20.0, 104.0, 4.04, "sell")])
@@ -642,6 +745,9 @@ def test_flat_delta_save_is_logged(tmp_path, caplog):
     assert any(
         "MODEL_B DELTA_FLAT" in record.message
         and "saved=window" in record.message
+        and "chosen=" in record.message
+        and f"usdc_eps={100 / 104}" in record.message
+        and "coin_eps=0.05" in record.message
         and "usdc=100.0" in record.message
         and "px=104.0" in record.message
         for record in caplog.records
@@ -650,6 +756,8 @@ def test_flat_delta_save_is_logged(tmp_path, caplog):
     assert arm["delta_flat"] == "window"
     assert arm["window_delta"] == pytest.approx(-0.04)
     assert arm["delta_flat_eps"] == pytest.approx(100 / 104)
+    assert arm["delta_flat_usdc_eps"] == pytest.approx(100 / 104)
+    assert arm["delta_flat_coin_eps"] == pytest.approx(0.05)
     assert arm["delta_flat_px"] == pytest.approx(104)
 
 

@@ -115,8 +115,11 @@ class Decision:
     # passed a print the strict sign check would have failed. Null when
     # the delta was already non-adverse, and on every fail.
     delta_flat: str | None = None
-    # Coin size actually compared, and the price used to scale the USDC band.
+    # Coin size actually compared (the larger of the two terms below),
+    # each term, and the price used to scale the USDC band.
     delta_flat_eps: float | None = None
+    delta_flat_usdc_eps: float | None = None
+    delta_flat_coin_eps: float | None = None
     delta_flat_px: float | None = None
     # BAD_TP log only. Null on an arm and on every other fail.
     r_distance: float | None = None
@@ -160,6 +163,8 @@ class Decision:
             "size_adjust": self.size_adjust,
             "delta_flat": self.delta_flat,
             "delta_flat_eps": _num(self.delta_flat_eps),
+            "delta_flat_usdc_eps": _num(self.delta_flat_usdc_eps),
+            "delta_flat_coin_eps": _num(self.delta_flat_coin_eps),
             "delta_flat_px": _num(self.delta_flat_px),
             "r_distance": _num(self.r_distance),
             "pool_distance": _num(self.pool_distance),

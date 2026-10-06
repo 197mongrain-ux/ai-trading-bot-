@@ -486,12 +486,14 @@ def run_model_b(
 
             if decision.delta_flat:
                 logger.info(
-                    "MODEL_B DELTA_FLAT %s saved=%s dW=%s d15=%s eps=%s usdc=%s px=%s",
+                    "MODEL_B DELTA_FLAT %s saved=%s dW=%s d15=%s chosen=%s usdc_eps=%s coin_eps=%s usdc=%s px=%s",
                     decision.coin,
                     decision.delta_flat,
                     decision.window_delta,
                     decision.last_15s_delta,
                     decision.delta_flat_eps,
+                    decision.delta_flat_usdc_eps,
+                    decision.delta_flat_coin_eps,
                     engine.delta_flat_usdc,
                     decision.delta_flat_px,
                 )
