@@ -7,8 +7,12 @@ Fail reasons, first match wins:
 
 Long, all true: a print at least 1 tick through the swing low; the last
 trade back above that low; absorb = sell size from sweep→reclaim / buy
-size from reclaim→now ≥ 1.5; 90s delta not negative; last 15s delta not
-negative. Short is the mirror (buy/sell swapped, deltas not positive).
+size from reclaim→now ≥ 1.5; 90s delta and last-15s delta at or above
+``-DELTA_FLAT_EPS``. Short is the mirror (buy/sell swapped, deltas at or
+below ``+DELTA_FLAT_EPS``).
+
+Delta is coin size: sum of buy print sizes minus sum of sell print sizes.
+It is not dollars and not a ratio. The flat band is absolute coin size.
 """
 
 from __future__ import annotations
@@ -32,6 +36,14 @@ MIN_PRINTS_FLOOR = 3
 LAST_SEC = 15.0
 ABSORB_MIN = 1.5
 SWEEP_TICKS = 1.0
+# Flat band in coin size (buy sz − sell sz), the same units as logged dW.
+# 2026-10-06 testnet majors that already passed sweep+reclaim+absorb were
+# vetoed at about −0.00 to −0.05. 0.05 coins lets that band through.
+# A short with dW +0.19 is still adverse and fails. 0 restores the strict
+# sign check (pass long only when dW >= 0, short only when dW <= 0).
+DELTA_FLAT_EPS = 0.05
+# Dust inside this was already treated as zero before the flat band.
+_DELTA_STRICT_EPS = 1e-9
 
 NO_SIDE = "NO_SIDE"
 THIN_TAPE = "THIN_TAPE"
@@ -68,6 +80,9 @@ class TapeMetrics:
     last_15s_delta: float | None
     sweep_price: float | None
     fail_reason: str | None
+    # ``window``, ``last_15s``, or ``both`` when the flat band passed a
+    # delta the strict sign check would have failed. Null otherwise.
+    delta_flat: str | None = None
 
 
 def window_prints(
@@ -109,11 +124,52 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return None
 
 
-def _delta_aligned(side: str, value: float) -> bool:
-    """Long: not negative. Short: not positive. Zero passes both."""
+def _delta_aligned(side: str, value: float, eps: float = DELTA_FLAT_EPS) -> bool:
+    """Long passes at or above ``-eps``. Short passes at or below ``+eps``.
+
+    ``eps`` is coin size. ``eps <= 0`` is the old strict sign check:
+    long passes when the value is at least ``-1e-9``, short when it is
+    at most ``+1e-9``.
+    """
+    if eps <= 0:
+        if side == "long":
+            return value >= -_DELTA_STRICT_EPS
+        return value <= _DELTA_STRICT_EPS
+    band = float(eps)
     if side == "long":
-        return value >= -1e-9
-    return value <= 1e-9
+        return value >= -band - 1e-12
+    return value <= band + 1e-12
+
+
+def _strict_delta_aligned(side: str, value: float) -> bool:
+    """The pre-band sign check. Used only to tag a flat-band save."""
+    return _delta_aligned(side, value, 0.0)
+
+
+def delta_flat_tag(
+    side: str,
+    window_delta: float,
+    last_15s_delta: float,
+    eps: float,
+) -> str | None:
+    """Which leg the flat band saved, or ``None`` when both were already strict.
+
+    Returned only when the tape is otherwise passing. A leg that is still
+    outside the band is a real ``DELTA`` / ``LAST_15s`` fail and is not tagged.
+    """
+    saved_window = _delta_aligned(side, window_delta, eps) and not _strict_delta_aligned(
+        side, window_delta
+    )
+    saved_last = _delta_aligned(side, last_15s_delta, eps) and not _strict_delta_aligned(
+        side, last_15s_delta
+    )
+    if saved_window and saved_last:
+        return "both"
+    if saved_window:
+        return "window"
+    if saved_last:
+        return "last_15s"
+    return None
 
 
 def analyze_tape(
@@ -123,6 +179,7 @@ def analyze_tape(
     swing: float,
     tick: float,
     now: float,
+    delta_flat_eps: float = DELTA_FLAT_EPS,
 ) -> TapeMetrics:
     """Score the tape. Caller has already rejected ``NO_SIDE`` and ``THIN_TAPE``."""
     window_delta = signed_delta(prints)
@@ -172,8 +229,15 @@ def analyze_tape(
         return TapeMetrics(absorb, window_delta, last_15, sweep_price, NO_RECLAIM)
     if absorb is None or not (absorb >= ABSORB_MIN - 1e-12):
         return TapeMetrics(absorb, window_delta, last_15, sweep_price, ABSORB)
-    if not _delta_aligned(side, window_delta):
+    if not _delta_aligned(side, window_delta, delta_flat_eps):
         return TapeMetrics(absorb, window_delta, last_15, sweep_price, DELTA)
-    if not _delta_aligned(side, last_15):
+    if not _delta_aligned(side, last_15, delta_flat_eps):
         return TapeMetrics(absorb, window_delta, last_15, sweep_price, LAST_15S)
-    return TapeMetrics(absorb, window_delta, last_15, sweep_price, None)
+    return TapeMetrics(
+        absorb,
+        window_delta,
+        last_15,
+        sweep_price,
+        None,
+        delta_flat_tag(side, window_delta, last_15, delta_flat_eps),
+    )

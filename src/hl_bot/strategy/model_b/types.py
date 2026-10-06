@@ -111,6 +111,10 @@ class Decision:
     # Size was reduced (risk / distance) instead of scrapping the idea.
     # Null on a normal arm and on every fail. Not a gate.
     size_adjust: str | None = None
+    # ``window``, ``last_15s``, or ``both`` when the flat delta band
+    # passed a print the strict sign check would have failed. Null when
+    # the delta was already non-adverse, and on every fail.
+    delta_flat: str | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -146,4 +150,5 @@ class Decision:
             "vp_tag": self.vp_tag,
             "catalyst_flag": bool(self.catalyst_flag),
             "size_adjust": self.size_adjust,
+            "delta_flat": self.delta_flat,
         }

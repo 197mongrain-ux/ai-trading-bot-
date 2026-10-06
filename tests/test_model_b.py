@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -64,10 +65,12 @@ from hl_bot.strategy.model_b.risk import (
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
 from hl_bot.strategy.model_b.swings import atr14, local_bar_extreme
 from hl_bot.strategy.model_b.tape import (
+    DELTA_FLAT_EPS,
     MAINNET_BTC_PRINTS_PER_MIN,
     MIN_PRINTS,
     MIN_PRINTS_FLOOR,
     TESTNET_BTC_PRINTS_PER_MIN,
+    _delta_aligned,
     density_min_prints,
     window_prints,
 )
@@ -341,6 +344,7 @@ def test_long_reclaim_absorb_and_deltas_arm():
     assert decision.absorb == pytest.approx(15 / 9)
     assert decision.window_delta is not None and decision.window_delta > 0
     assert decision.last_15s_delta is not None and decision.last_15s_delta >= 0
+    assert decision.delta_flat is None
     assert decision.volume_tag == "VOL_OK"
     assert decision.score == log_only_score(32)
     assert decision.score < 7
@@ -447,6 +451,142 @@ def test_each_tape_fail_reason():
     assert last15.fail_reason == "LAST_15s"
     assert last15.window_delta is not None and last15.window_delta > 0
     assert last15.last_15s_delta is not None and last15.last_15s_delta < 0
+
+
+def test_flat_delta_band_passes_and_adverse_still_fails():
+    """Near-zero coin-size delta passes. A clearly adverse print still fails.
+
+    Delta is buy size minus sell size. The 2026-10-06 flat majors sat around
+    −0.05 coins. A short at +0.19 stays DELTA. eps=0 is the old sign check.
+    """
+    assert DELTA_FLAT_EPS == pytest.approx(0.05)
+    assert _delta_aligned("long", -0.05, DELTA_FLAT_EPS)
+    assert not _delta_aligned("long", -0.06, DELTA_FLAT_EPS)
+    assert _delta_aligned("short", 0.05, DELTA_FLAT_EPS)
+    assert not _delta_aligned("short", 0.19, DELTA_FLAT_EPS)
+    assert _delta_aligned("long", -1e-9, 0.0)
+    assert not _delta_aligned("long", -0.01, 0.0)
+    assert _delta_aligned("short", 1e-9, 0.0)
+    assert not _delta_aligned("short", 0.01, 0.0)
+
+    # Base window delta is +4. A 4.04 sell outside the last 15s leaves dW −0.04.
+    flat = _pass_case(extra=[(-20.0, 104.0, 4.04, "sell")])
+    assert flat.armed is True
+    assert flat.fail_reason is None
+    assert flat.window_delta == pytest.approx(-0.04)
+    assert flat.last_15s_delta == pytest.approx(1.0)
+    assert flat.delta_flat == "window"
+    assert flat.to_log()["delta_flat"] == "window"
+    assert flat.absorb == pytest.approx(15 / 9)
+
+    last = _pass_case(extra=[(-5.0, 104.0, 1.04, "sell")])
+    assert last.armed is True
+    assert last.delta_flat == "last_15s"
+    assert last.window_delta == pytest.approx(2.96)
+    assert last.last_15s_delta == pytest.approx(-0.04)
+
+    both = _pass_case(
+        extra=[(-20.0, 104.0, 3.0, "sell"), (-5.0, 104.0, 1.04, "sell")]
+    )
+    assert both.armed is True
+    assert both.delta_flat == "both"
+    assert both.window_delta == pytest.approx(-0.04)
+    assert both.last_15s_delta == pytest.approx(-0.04)
+
+    outside = _pass_case(extra=[(-20.0, 104.0, 4.06, "sell")])
+    assert outside.armed is False
+    assert outside.fail_reason == "DELTA"
+    assert outside.delta_flat is None
+    assert outside.window_delta == pytest.approx(-0.06)
+
+    assert _pass_case(sweep_sz=100.0).fail_reason == "DELTA"
+
+    strict = _pass_case(
+        extra=[(-20.0, 104.0, 4.04, "sell")],
+        engine=ModelBEngine(delta_flat_eps=0.0),
+    )
+    assert strict.armed is False
+    assert strict.fail_reason == "DELTA"
+    assert strict.delta_flat is None
+
+    now = _now()
+    short_flat_prints = _short_prints(now)
+    short_flat_prints.append(
+        TradePrint(ts=now - 20, coin="BTC", price=96.0, size=4.04, side="buy", seq=1000)
+    )
+    short_flat = _decide(short_flat_prints, _short_bars(now), [], bid=95.0, ask=96.5)
+    assert short_flat.armed is True
+    assert short_flat.intent is not None and short_flat.intent.side == "short"
+    assert short_flat.window_delta == pytest.approx(0.04)
+    assert short_flat.delta_flat == "window"
+
+    short_last = _short_prints(now)
+    short_last.append(
+        TradePrint(ts=now - 5, coin="BTC", price=96.0, size=1.04, side="buy", seq=1000)
+    )
+    short_last_decision = _decide(short_last, _short_bars(now), [], bid=95.0, ask=96.5)
+    assert short_last_decision.armed is True
+    assert short_last_decision.delta_flat == "last_15s"
+    assert short_last_decision.last_15s_delta == pytest.approx(0.04)
+
+    short_adverse = _short_prints(now)
+    short_adverse.append(
+        TradePrint(ts=now - 20, coin="BTC", price=96.0, size=4.19, side="buy", seq=1000)
+    )
+    blocked = _decide(short_adverse, _short_bars(now), [], bid=95.0, ask=96.5)
+    assert blocked.armed is False
+    assert blocked.fail_reason == "DELTA"
+    assert blocked.window_delta == pytest.approx(0.19)
+    assert blocked.delta_flat is None
+
+    short_strict_prints = _short_prints(now)
+    short_strict_prints.append(
+        TradePrint(ts=now - 20, coin="BTC", price=96.0, size=4.04, side="buy", seq=1000)
+    )
+    short_strict = _decide(
+        short_strict_prints,
+        _short_bars(now),
+        [],
+        bid=95.0,
+        ask=96.5,
+        engine=ModelBEngine(delta_flat_eps=0.0),
+    )
+    assert short_strict.armed is False
+    assert short_strict.fail_reason == "DELTA"
+
+
+def test_flat_delta_save_is_logged(tmp_path, caplog):
+    now = _now()
+    prints = _long_prints(now, extra=[(-20.0, 104.0, 4.04, "sell")])
+    journal = tmp_path / "flat.jsonl"
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=1,
+            info=info,
+            feed=MemoryFeed(prints, bbo={"BTC": (103.0, 105.0)}),
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC",),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 1
+    assert any(
+        "MODEL_B DELTA_FLAT" in record.message and "saved=window" in record.message
+        for record in caplog.records
+    )
+    arm = next(row for row in TradeJournal(journal).read_all() if row["event"] == "model_b_arm")
+    assert arm["delta_flat"] == "window"
+    assert arm["window_delta"] == pytest.approx(-0.04)
 
 
 def test_score_does_not_arm_or_block_and_volume_is_not_a_veto():
@@ -1407,6 +1547,13 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.leverage == 20
     assert settings.model_b_min_prints == density_min_prints() == 3
     assert settings.model_b_alo_timeout_sec == 0
+    assert settings.model_b_delta_flat_eps == pytest.approx(0.05)
+    monkeypatch.setenv("MODEL_B_DELTA_FLAT_EPS", "0")
+    assert load_settings().model_b_delta_flat_eps == pytest.approx(0.0)
+    monkeypatch.setenv("MODEL_B_DELTA_FLAT_EPS", "-0.01")
+    with pytest.raises(ValueError, match="MODEL_B_DELTA_FLAT_EPS"):
+        load_settings()
+    monkeypatch.delenv("MODEL_B_DELTA_FLAT_EPS")
     monkeypatch.setenv("MODEL_B_ALO_TIMEOUT_SEC", "15")
     assert load_settings().model_b_alo_timeout_sec == pytest.approx(15)
     monkeypatch.delenv("MODEL_B_ALO_TIMEOUT_SEC")

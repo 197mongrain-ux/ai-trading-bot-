@@ -129,6 +129,7 @@ def run_model_b(
         risk_pct=settings.risk_per_trade,
         min_prints=settings.model_b_min_prints,
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
+        delta_flat_eps=settings.model_b_delta_flat_eps,
     )
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
@@ -156,6 +157,7 @@ def run_model_b(
         tp_r=settings.model_b_tp_r,
         min_prints=settings.model_b_min_prints,
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
+        delta_flat_eps=settings.model_b_delta_flat_eps,
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -473,6 +475,16 @@ def run_model_b(
                 logger.info("%s", format_model_b_fail(decision))
                 continue
 
+            if decision.delta_flat:
+                logger.info(
+                    "MODEL_B DELTA_FLAT %s saved=%s dW=%s d15=%s eps=%s",
+                    decision.coin,
+                    decision.delta_flat,
+                    decision.window_delta,
+                    decision.last_15s_delta,
+                    engine.delta_flat_eps,
+                )
+
             intent = decision.intent
             # One unfilled Alo locks the margin. A second coin places only
             # when its limit is strictly closer to the market (bps). The
@@ -569,7 +581,7 @@ def run_model_b(
             logger.info(
                 "MODEL_B ARM %s %s alo=%s stop=%s tp=%s size=%s "
                 "bias=%s pool=%s swing=%s sweep=%s absorb=%s "
-                "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s",
+                "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s delta_flat=%s",
                 intent.coin,
                 intent.side,
                 intent.limit_px,
@@ -587,6 +599,7 @@ def run_model_b(
                 decision.volume_tag,
                 decision.vp_tag,
                 decision.size_adjust or "-",
+                decision.delta_flat or "-",
             )
 
         equity_mark = equity

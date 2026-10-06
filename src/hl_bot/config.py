@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from hl_bot.strategy.filters import parse_trade_hours
-from hl_bot.strategy.model_b.tape import MIN_PRINTS, density_min_prints
+from hl_bot.strategy.model_b.tape import DELTA_FLAT_EPS, MIN_PRINTS, density_min_prints
 
 load_dotenv()
 
@@ -123,6 +123,9 @@ class Settings:
     model_b_min_prints: int = 30
     # 0 = rest the maker Alo until the thesis is stale. No default 20s cancel.
     model_b_alo_timeout_sec: float = 0.0
+    # Coin size (buy sz − sell sz). Flat window / last-15s delta inside this
+    # passes. 0 restores the strict sign check.
+    model_b_delta_flat_eps: float = DELTA_FLAT_EPS
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -236,6 +239,10 @@ class Settings:
         if self.model_b_alo_timeout_sec < 0:
             raise ValueError(
                 f"MODEL_B_ALO_TIMEOUT_SEC={self.model_b_alo_timeout_sec} must be >= 0."
+            )
+        if self.model_b_delta_flat_eps < 0:
+            raise ValueError(
+                f"MODEL_B_DELTA_FLAT_EPS={self.model_b_delta_flat_eps} must be >= 0."
             )
         if self.ote_lookback_bars < 3:
             raise ValueError(
@@ -352,6 +359,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_tp_r=_float("MODEL_B_TP_R", 1.5),
         model_b_min_prints=model_b_min_prints,
         model_b_alo_timeout_sec=_float("MODEL_B_ALO_TIMEOUT_SEC", 0.0),
+        model_b_delta_flat_eps=_float("MODEL_B_DELTA_FLAT_EPS", DELTA_FLAT_EPS),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

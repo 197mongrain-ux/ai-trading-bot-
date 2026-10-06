@@ -10,7 +10,9 @@ balance (not perp account value). The stop is past the sweep liquidity
 and a stop wider than 1.5% of price are both armed; size is 2% of spot
 USDC over that distance. ``size_adjust=wide_stop`` is journaled when the
 distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
-side, stop == fill, one-tick collision). TP1 is ~1.5R (clamped to 1–2)
+side, stop == fill, one-tick collision). Window and last-15s delta may
+sit inside ``DELTA_FLAT_EPS`` coins of flat; a clearly adverse delta
+still fails. TP1 is ~1.5R (clamped to 1–2)
 and never beyond the untaken pool on that side. A session volume profile
 (POC / VAH / VAL / LVN) is written on the decision for the journal.
 Those tags do not arm, block, or move the stop.
@@ -42,6 +44,7 @@ from hl_bot.strategy.model_b.swings import (
     swing_id,
 )
 from hl_bot.strategy.model_b.tape import (
+    DELTA_FLAT_EPS,
     MIN_PRINTS,
     NO_SIDE,
     THIN_TAPE,
@@ -87,6 +90,7 @@ class ModelBEngine:
         risk_pct: float = MODEL_B_RISK_PCT,
         min_prints: int = MIN_PRINTS,
         alo_timeout_sec: float = 0.0,
+        delta_flat_eps: float = DELTA_FLAT_EPS,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -98,6 +102,8 @@ class ModelBEngine:
             raise ValueError("min_prints must be >= 1")
         if float(alo_timeout_sec) < 0:
             raise ValueError("alo_timeout_sec must be >= 0")
+        if float(delta_flat_eps) < 0:
+            raise ValueError("delta_flat_eps must be >= 0")
         self.thesis = thesis or ThesisBook(work_sec=float(alo_timeout_sec))
         self.tp_r = clamp_tp_r(tp_r)
         # From RISK_PER_TRADE. Model B settings validation requires 0.02.
@@ -106,6 +112,8 @@ class ModelBEngine:
         self.min_prints = int(min_prints)
         # 0 rests the maker until the thesis is stale. No default 20s cancel.
         self.alo_timeout_sec = float(alo_timeout_sec)
+        # Coin size. 0 is the strict sign check.
+        self.delta_flat_eps = float(delta_flat_eps)
 
     def evaluate(
         self,
@@ -158,6 +166,7 @@ class ModelBEngine:
             intent: AloIntent | None = None,
             pool_label: str | None = None,
             size_adjust: str | None = None,
+            delta_flat: str | None = None,
         ) -> Decision:
             ctx_side = vp_ctx.get("side")
             log_side = ctx_side if ctx_side in ("long", "short") else (
@@ -201,6 +210,7 @@ class ModelBEngine:
                 vp_tag=tags["vp_tag"],
                 catalyst_flag=tags["catalyst_flag"],
                 size_adjust=size_adjust,
+                delta_flat=delta_flat,
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
@@ -223,6 +233,7 @@ class ModelBEngine:
                 swing=swing.price,
                 tick=tick,
                 now=now,
+                delta_flat_eps=self.delta_flat_eps,
             )
             fields = dict(
                 swing=swing.price,
@@ -311,7 +322,14 @@ class ModelBEngine:
                 pool_px=None if pool is None else pool.price,
                 tp_r=self.tp_r,
             )
-            return _done(None, armed=True, intent=intent, size_adjust=adjust, **fields)
+            return _done(
+                None,
+                armed=True,
+                intent=intent,
+                size_adjust=adjust,
+                delta_flat=metrics.delta_flat,
+                **fields,
+            )
 
         if coin_u not in session_coins(now):
             return _done(OUT_OF_SESSION)
