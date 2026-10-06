@@ -73,7 +73,7 @@ class AloIntent:
     tick: float = 0.0
     # Untaken pool on this side. Caps TP again if the stop is widened on fill.
     pool_px: float | None = None
-    tp_r: float = 2.5
+    tp_r: float = 1.5
 
 
 @dataclass

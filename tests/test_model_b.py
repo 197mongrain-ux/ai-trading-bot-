@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import math
+
 import pytest
 
 from hl_bot.config import Settings, load_settings
@@ -48,7 +50,7 @@ from hl_bot.strategy.model_b.risk import (
     STRATEGY_KILL_ENABLED,
     flow_exit_reason,
     heal_stop,
-    ROUND_TRIP_FEE_RATE,
+    floor_distance,
     place_stop,
     size_from_stop,
     soft_prop_allows,
@@ -57,6 +59,7 @@ from hl_bot.strategy.model_b.risk import (
     take_profit,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
+from hl_bot.strategy.model_b.swings import atr14, local_bar_extreme
 from hl_bot.strategy.model_b.tape import (
     MAINNET_BTC_PRINTS_PER_MIN,
     MIN_PRINTS,
@@ -82,12 +85,17 @@ def _now() -> float:
 
 
 def _bars(now: float, low: float = 100.0) -> list[dict]:
+    """Swing low on bar 2. The last bar wicks to 98, past the 0.15% floor.
+
+    That wick is the liquidity the stop has to clear. It is not a fractal
+    (no bar to its right), so the confirmed swing stays at ``low``.
+    """
     t0 = now - 400
     return [
         {"t": t0, "o": 110, "h": 112, "l": 108, "c": 109, "v": 1},
         {"t": t0 + 60, "o": 109, "h": 110, "l": low, "c": 106, "v": 1},
         {"t": t0 + 120, "o": 106, "h": 111, "l": 105, "c": 110, "v": 1},
-        {"t": t0 + 180, "o": 110, "h": 114, "l": 107, "c": 112, "v": 1},
+        {"t": t0 + 180, "o": 110, "h": 114, "l": 98.0, "c": 112, "v": 1},
     ]
 
 
@@ -138,7 +146,7 @@ def _long_prints(
 def _decide(prints, bars, pools, **kw):
     now = kw.pop("now", _now())
     risk_pct = kw.pop("risk_pct", 0.02)
-    tp_r = kw.pop("tp_r", 2.5)
+    tp_r = kw.pop("tp_r", 1.5)
     engine = kw.pop("engine", None) or ModelBEngine(tp_r=tp_r, risk_pct=risk_pct)
     return engine.evaluate(
         kw.pop("coin", "BTC"),
@@ -149,7 +157,7 @@ def _decide(prints, bars, pools, **kw):
         best_bid=kw.pop("bid", 103.0),
         best_ask=kw.pop("ask", 105.0),
         equity=kw.pop("equity", 5000.0),
-        tick=kw.pop("tick", 1.0),
+        tick=kw.pop("tick", 0.01),
         score=kw.pop("score", None),
     )
 
@@ -177,12 +185,28 @@ def _short_prints(now: float) -> list[TradePrint]:
 
 
 def _short_bars(now: float) -> list[dict]:
+    """Swing high on bar 2. The last bar wicks to 102.2, past the 0.15% floor."""
     t0 = now - 400
     return [
         {"t": t0, "o": 90, "h": 90, "l": 80, "c": 88, "v": 1},
         {"t": t0 + 60, "o": 88, "h": 100, "l": 85, "c": 90, "v": 1},
         {"t": t0 + 120, "o": 90, "h": 96, "l": 84, "c": 86, "v": 1},
-        {"t": t0 + 180, "o": 86, "h": 95, "l": 83, "c": 90, "v": 1},
+        {"t": t0 + 180, "o": 86, "h": 102.2, "l": 83, "c": 90, "v": 1},
+    ]
+
+
+def _eth_bars(now: float, *, wick: float, swing: float) -> list[dict]:
+    """ETH-shaped tape. ``swing`` is the fractal low. ``wick`` is the last bar.
+
+    The last bar is not a fractal, so a wick under the swing does not
+    replace the swing the sweep has to trade through.
+    """
+    t0 = now - 400
+    return [
+        {"t": t0, "o": 2720, "h": 2722, "l": 2712, "c": 2714, "v": 1},
+        {"t": t0 + 60, "o": 2714, "h": 2716, "l": swing, "c": 2712, "v": 1},
+        {"t": t0 + 120, "o": 2712, "h": 2718, "l": 2710, "c": 2716, "v": 1},
+        {"t": t0 + 180, "o": 2716, "h": 2719, "l": wick, "c": 2715, "v": 1},
     ]
 
 
@@ -266,7 +290,7 @@ def test_none_bias_allows_both_sides():
     assert bare.armed is True
     assert bare.intent is not None and bare.intent.side == "long"
     assert bare.pool is None
-    assert bare.intent.take_profit == pytest.approx(101.5)
+    assert bare.intent.take_profit == pytest.approx(100.545)
 
     # Exact tie is also NONE, and the long is capped by the pool above.
     tie = _pass_case(pools=[Pool("PDH", 114.0, False), Pool("PDL", 94.0, False)])
@@ -323,10 +347,13 @@ def test_long_reclaim_absorb_and_deltas_arm():
     assert intent.market_fallback is False
     assert intent.leverage == 20
     assert intent.limit_px == pytest.approx(99)
-    assert intent.stop == pytest.approx(98)
-    assert intent.take_profit == pytest.approx(101.5)
+    # Last-bar wick is 98. Stop is that low minus the 3-tick buffer, not
+    # the 0.15% floor (~98.85) and not one point under the sweep.
+    assert intent.stop == pytest.approx(97.97)
+    assert intent.stop < 99 * (1.0 - 0.0015)
+    assert intent.take_profit == pytest.approx(100.545)
     assert intent.take_profit <= 130
-    assert intent.size == pytest.approx(100)  # 5000 * 2% / 1
+    assert intent.size == pytest.approx(97.087378)  # 5000 * 2% / 1.03
 
 
 def test_absorb_boundary():
@@ -476,24 +503,28 @@ def test_swing_closer_than_3_ticks_is_ignored():
         {"t": t0 + 360, "o": 110, "h": 114, "l": 109, "c": 112, "v": 1},
     ]
     # Last trade 104 is 2 ticks from the recent swing (102) and 4 from 100.
-    decision = _decide(_long_prints(now), bars, [Pool("PDH", 130, False)])
+    # Tick 1 is coarser than the 1.5% cap, so the arm fails closed. The
+    # swing itself was still selected.
+    decision = _decide(_long_prints(now), bars, [Pool("PDH", 130, False)], tick=1.0)
     assert decision.swing == pytest.approx(100)
-    assert decision.armed is True
+    assert decision.fail_reason == "BAD_STOP"
 
     # Exactly 3 ticks is kept.
     exact = _decide(
         _long_prints(now, last_price=103.0),
         _bars(now),
         [Pool("PDH", 130, False)],
+        tick=1.0,
     )
     assert exact.swing == pytest.approx(100)
-    assert exact.armed is True
+    assert exact.fail_reason != "NO_SWING"
 
     # Only a 2-tick swing → nothing to arm.
     near = _decide(
         _long_prints(now, last_price=102.0),
         _bars(now),
         [Pool("PDH", 130, False)],
+        tick=1.0,
     )
     assert near.fail_reason == "NO_SWING"
     assert near.armed is False
@@ -506,7 +537,7 @@ def test_short_mirror_arms_and_caps_context():
         {"t": t0, "o": 90, "h": 90, "l": 80, "c": 88, "v": 1},
         {"t": t0 + 60, "o": 88, "h": 100, "l": 85, "c": 90, "v": 1},
         {"t": t0 + 120, "o": 90, "h": 96, "l": 84, "c": 86, "v": 1},
-        {"t": t0 + 180, "o": 86, "h": 95, "l": 83, "c": 90, "v": 1},
+        {"t": t0 + 180, "o": 86, "h": 102.2, "l": 83, "c": 90, "v": 1},
     ]
     prints: list[TradePrint] = []
     seq = 0
@@ -540,8 +571,9 @@ def test_short_mirror_arms_and_caps_context():
     assert intent is not None
     assert intent.side == "short"
     assert intent.limit_px == pytest.approx(101)
-    assert intent.stop == pytest.approx(102)
-    assert intent.take_profit == pytest.approx(98.5)
+    # Last-bar high 102.2 is the liquidity. Stop clears it by the buffer.
+    assert intent.stop == pytest.approx(102.23)
+    assert intent.take_profit == pytest.approx(99.155)
     assert intent.take_profit >= 80
     assert intent.tif == "Alo"
 
@@ -565,18 +597,20 @@ def test_alo_anchor_never_crosses():
 
 
 def test_tp_capped_by_pool_and_r_band():
-    # 2.5R inside the pool.
-    assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(101.5)
-    # 2.5R would print through the pool → cap at the pool, even inside 1R.
-    assert take_profit("long", 99, 98, 100.2, tp_r=2.5) == pytest.approx(100.2)
-    # Requested 4R clamps to 3R, then the pool still wins.
-    assert take_profit("long", 100, 90, 125, tp_r=4) == pytest.approx(125)
-    assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(130)
+    # 1.5R inside the pool.
+    assert take_profit("long", 99, 98, 130, tp_r=1.5) == pytest.approx(100.5)
+    # 2.5R clamps to the 2R cap.
+    assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(101.0)
+    # 2R would print through the pool → cap at the pool, even inside 1R.
+    assert take_profit("long", 99, 98, 100.2, tp_r=2.0) == pytest.approx(100.2)
+    # Requested 4R clamps to 2R. A pool inside that 2R still wins.
+    assert take_profit("long", 100, 90, 115, tp_r=4) == pytest.approx(115)
+    assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(120)
     # Sub-1R request is lifted to 1R before the cap.
     assert take_profit("long", 100, 90, None, tp_r=0.2) == pytest.approx(110)
     # Short mirror: cap is the higher price (closer to entry).
-    assert take_profit("short", 101, 102, 80, tp_r=2.5) == pytest.approx(98.5)
-    assert take_profit("short", 101, 102, 99, tp_r=2.5) == pytest.approx(99)
+    assert take_profit("short", 101, 102, 80, tp_r=1.5) == pytest.approx(99.5)
+    assert take_profit("short", 101, 102, 100.2, tp_r=1.5) == pytest.approx(100.2)
 
 
 def test_size_uses_risk_per_trade_and_rejects_40x():
@@ -594,10 +628,10 @@ def test_size_uses_risk_per_trade_and_rejects_40x():
 
     sized = _pass_case(risk_pct=0.02)
     assert sized.intent is not None
-    assert sized.intent.size == pytest.approx(100)
+    assert sized.intent.size == pytest.approx(97.087378)
     other = _pass_case(risk_pct=0.01)
     assert other.intent is not None
-    assert other.intent.size == pytest.approx(50)
+    assert other.intent.size == pytest.approx(48.543689)
 
 
 def test_heal_keeps_wider_stop_and_flow_does_not_exit():
@@ -649,21 +683,21 @@ def test_default_rests_alo_until_sweep_is_stale():
 
 
 def test_lit_short_stop_is_not_the_alo_tick():
-    """One tick past a LIT Alo is fee bleed. The stop has to clear 2.5R fees."""
+    """One tick past a LIT Alo collides with the fill. A floor-only stop is also rejected."""
     tick = 0.0001
     sweep = 3.9046
     limit = alo_limit("short", sweep, sweep, sweep + tick, tick)
     assert limit == pytest.approx(3.9047)
     naive = stop_beyond_extreme("short", sweep, tick)
     assert naive == pytest.approx(limit)
-    # The old 1-tick stop (3.9048, or the Alo tick itself) does not clear fees.
     assert stop_clears_fees(limit, limit + tick, tick=tick) is False
-    stop = place_stop("short", sweep, limit, tick)
-    assert stop is not None
-    assert stop == pytest.approx(3.9057)
-    dist = stop - limit
-    assert dist > tick * 2
-    assert 2.5 * dist >= limit * ROUND_TRIP_FEE_RATE
+    # Sweep ≈ Alo and no wick past the 0.15% floor: do not arm on the cluster.
+    assert place_stop("short", sweep, limit, tick) is None
+    # A local high beyond that floor. Stop clears the high, not the fill tick.
+    stop = place_stop("short", sweep, limit, tick, local_extreme=3.92)
+    assert stop == pytest.approx(3.9208)
+    assert stop - limit > tick * 2
+    assert stop > limit + floor_distance(limit, tick) - tick
 
     now = _now()
     book = ThesisBook()
@@ -673,95 +707,121 @@ def test_lit_short_stop_is_not_the_alo_tick():
         limit_px=limit,
         size=10,
         stop=stop,
-        take_profit=limit - 2.5 * dist,
+        take_profit=take_profit("short", limit, stop, None),
         swing_id="LIT:high:1",
         sweep_px=sweep,
         tick=tick,
-        tp_r=2.5,
+        tp_r=1.5,
     )
     book.post(intent, now)
-    # Fill lands on the old 1-tick level. The open stop stays at real room.
+    # Fill lands on the old 1-tick level. The open stop stays past the high.
     opened = book.apply_user_fill(
         coin="LIT", oid=None, price=naive, ts=now + 1, crossed=False
     )
     assert opened is not None
     assert opened.entry == pytest.approx(naive)
-    assert opened.stop == pytest.approx(3.9057)
+    assert opened.stop == pytest.approx(3.9208)
     assert opened.stop - opened.entry > tick
     assert stop_clears_fees(opened.entry, opened.stop, tick=tick)
 
 
-def test_eth_one_tick_arm_is_widened_past_liquidity():
-    """Live ETH long 14:38 ET: 2701.6 / 2701.5 / 2701.8 was one tick of R.
+def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
+    """Oct 5 ~21:46 ET ETH long: Alo/sweep 2705.8, swing 2706.9, stop 2701.7.
 
-    The stop is the fee room past the further of the sweep and the Alo,
-    not one tick. 2.5R of that distance clears the 6 bp round trip.
+    2701.7 is the 0.15% floor (41 ticks). Price later traded ~2702.7, a hunt
+    into that floor. With no wick past the floor the arm is BAD_STOP. A 1m
+    low under the floor puts the stop beyond that low, and size is 2% of
+    spot USDC over the new distance.
     """
     tick = 0.1
-    entry = 2701.6
-    one_tick = 2701.5
-    assert stop_clears_fees(entry, one_tick, tick=tick) is False
-    # Sweep extreme and Alo on the same tick: room is past that price.
-    stop = place_stop("long", entry, entry, tick)
-    assert stop == pytest.approx(2700.9)
+    entry = 2705.8
+    floor_px = entry - floor_distance(entry, tick)
+    assert math.floor(floor_px / tick + 1e-9) * tick == pytest.approx(2701.7)
+    # The live stop. Sweep on the Alo, swing above the fill, no deeper wick.
+    assert place_stop("long", entry, entry, tick, swing=2706.9) is None
+    # A shallow wick still above the floor must not be lifted onto 2701.7.
+    assert place_stop("long", entry, entry, tick, swing=2706.9, local_extreme=2704.0) is None
+    # 0.5×ATR that does not clear the floor is the same hunt stop.
+    assert place_stop("long", entry, entry, tick, atr=4.0) is None
+    # 0.5×ATR = 6 clears the 4.06 floor. Stop is the sweep minus that buffer.
+    atr_stop = place_stop("long", entry, entry, tick, swing=2706.9, atr=12.0)
+    assert atr_stop == pytest.approx(2699.8)
+    assert atr_stop < 2701.7
+    # Wick at 2698 is under the floor. Stop stays beyond the wick; the floor
+    # must not pull it back up to 2701.7.
+    stop = place_stop("long", entry, entry, tick, swing=2706.9, local_extreme=2698.0)
+    assert stop == pytest.approx(2697.4)
+    assert stop < 2698.0
+    assert stop < 2701.7
     dist = entry - stop
-    assert dist == pytest.approx(0.7)
-    assert 2.5 * dist >= entry * ROUND_TRIP_FEE_RATE
-    tp = take_profit("long", entry, stop, None, tp_r=2.5)
-    assert tp == pytest.approx(2703.35)
-    assert tp != pytest.approx(2701.8)
-    # Sweep a tick under the Alo: the anchor is the further (lower) price.
-    past_sweep = place_stop("long", 2701.5, entry, tick)
-    assert past_sweep == pytest.approx(2700.8)
-    assert entry - past_sweep > dist
+    assert dist / entry < 0.015
+    size, dollar = size_from_stop(8000.0, entry, stop, risk_pct=0.02)
+    assert dollar == pytest.approx(160.0)
+    assert size == pytest.approx(19.047619)
+    assert size == pytest.approx(math.floor((8000.0 * 0.02) / dist * 1_000_000) / 1_000_000)
+    # Required room past a much deeper low exceeds 1.5%. Fail closed.
+    assert place_stop("long", entry, entry, tick, local_extreme=2660.0) is None
 
     now = _now()
-    t0 = now - 400
-    bars = [
-        {"t": t0, "o": 2710, "h": 2712, "l": 2708, "c": 2709, "v": 1},
-        {"t": t0 + 60, "o": 2709, "h": 2710, "l": 2702.0, "c": 2706, "v": 1},
-        {"t": t0 + 120, "o": 2706, "h": 2711, "l": 2705, "c": 2710, "v": 1},
-        {"t": t0 + 180, "o": 2710, "h": 2714, "l": 2707, "c": 2712, "v": 1},
-    ]
-    prints = _long_prints(now, sweep_px=2701.6, last_price=2704.0, final_price=2704.0)
-    # Prefix prints in the helper sit at 104. On an ETH swing those would
-    # be the sweep extreme, so rewrite them onto the reclaim price.
-    prints = [
-        replace(p, price=2704.0) if p.price == 104.0 else p
-        for p in prints
-    ]
-    decision = _decide(
+    prints = _long_prints(now, sweep_px=entry, last_price=2709.0, final_price=2709.0)
+    prints = [replace(p, price=2709.0) if p.price == 104.0 else p for p in prints]
+    floor_bars = _eth_bars(now, wick=2708.0, swing=2706.9)
+    refused = _decide(
         prints,
-        bars,
+        floor_bars,
         [Pool("PDH", 2800.0, False)],
-        bid=2703.9,
-        ask=2704.1,
+        bid=2708.9,
+        ask=2709.1,
         tick=tick,
         equity=8000.0,
     )
-    assert decision.armed is True
-    assert decision.fail_reason is None
-    intent = decision.intent
+    assert refused.armed is False
+    assert refused.fail_reason == "BAD_STOP"
+    assert refused.sweep_price == pytest.approx(entry)
+    assert local_bar_extreme(floor_bars, side="long", now=now) == pytest.approx(2706.9)
+
+    wick_bars = _eth_bars(now, wick=2698.0, swing=2706.9)
+    armed = _decide(
+        prints,
+        wick_bars,
+        [Pool("PDH", 2800.0, False)],
+        bid=2708.9,
+        ask=2709.1,
+        tick=tick,
+        equity=8000.0,
+    )
+    assert armed.armed is True
+    intent = armed.intent
     assert intent is not None
-    assert intent.limit_px == pytest.approx(2701.6)
-    assert intent.stop == pytest.approx(2700.9)
-    assert intent.take_profit == pytest.approx(2703.35)
-    assert intent.take_profit <= 2800
-    assert stop_clears_fees(intent.limit_px, intent.stop, tick=tick)
-    # 2% of 8000 over a 0.7 stop wants ~77x notional. The 20x cap trims it.
-    untrimmed = (8000.0 * 0.02) / 0.7
-    assert intent.size < untrimmed
-    assert intent.size * intent.limit_px <= 8000.0 * 20 + 1e-6
+    assert intent.limit_px == pytest.approx(entry)
+    assert intent.stop == pytest.approx(2697.4)
+    assert intent.stop < 2701.7
+    assert intent.take_profit == pytest.approx(2718.4)
+    assert intent.size == pytest.approx(19.047619)
     sized, _dollar = size_from_stop(8000.0, intent.limit_px, intent.stop, risk_pct=0.02)
     assert intent.size == pytest.approx(sized)
 
+    wide_bars = _eth_bars(now, wick=2660.0, swing=2706.9)
+    capped = _decide(
+        prints,
+        wide_bars,
+        [Pool("PDH", 2800.0, False)],
+        bid=2708.9,
+        ask=2709.1,
+        tick=tick,
+        equity=8000.0,
+    )
+    assert capped.armed is False
+    assert capped.fail_reason == "BAD_STOP"
+
 
 def test_brackets_use_filled_size_when_margin_trimmed():
-    """The exchange can fill less than the margin-capped order. Bracket that fill."""
+    """A partial fill brackets the filled size. The remainder stays working."""
     now = _now()
     entry = 2701.6
-    stop = place_stop("long", entry, entry, 0.1)
+    stop = place_stop("long", entry, entry, 0.1, local_extreme=2694.0)
     assert stop is not None
+    assert stop < entry * (1.0 - 0.0015)
     requested, _dollar = size_from_stop(8000.0, entry, stop, risk_pct=0.02)
     assert requested * entry <= 8000.0 * 20 + 1e-6
     book = ThesisBook()
@@ -775,7 +835,7 @@ def test_brackets_use_filled_size_when_margin_trimmed():
         swing_id="ETH:low:1",
         sweep_px=entry,
         tick=0.1,
-        tp_r=2.5,
+        tp_r=1.5,
     )
     book.post(intent, now, oid=4)
     filled = requested / 4
@@ -1094,6 +1154,18 @@ def test_candle_snapshot_caches_and_backs_off_on_429(monkeypatch):
     assert len(calls) == after_reset + 1
 
 
+def test_atr14_is_absent_until_fourteen_ranges_exist():
+    now = _now()
+    assert atr14(_bars(now), now=now) is None
+    t0 = now - 20 * 60
+    bars = [
+        {"t": t0 + i * 60, "o": 100, "h": 101, "l": 99, "c": 100, "v": 1}
+        for i in range(16)
+    ]
+    assert atr14(bars, now=now) == pytest.approx(2.0)
+    assert local_bar_extreme(_bars(now), side="long", now=now) == pytest.approx(98.0)
+
+
 def test_pools_from_bars_mark_taken_levels():
     now = _now()
     today = datetime.fromtimestamp(now, tz=NY).date()
@@ -1121,14 +1193,14 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     monkeypatch.setenv("RISK_PER_TRADE", "0.02")
     monkeypatch.setenv("ENTRY_MODE", "model_b")
     monkeypatch.setenv("LEVERAGE", "20")
-    monkeypatch.setenv("MODEL_B_TP_R", "2.5")
+    monkeypatch.setenv("MODEL_B_TP_R", "1.5")
     settings = load_settings()
     assert settings.entry_mode == "model_b"
     assert settings.trading_mode == "live"
     assert settings.network == "testnet"
     assert settings.is_live
     assert settings.risk_per_trade == pytest.approx(0.02)
-    assert settings.model_b_tp_r == pytest.approx(2.5)
+    assert settings.model_b_tp_r == pytest.approx(1.5)
     assert settings.leverage == 20
     assert settings.model_b_min_prints == density_min_prints() == 3
     assert settings.model_b_alo_timeout_sec == 0
@@ -1145,6 +1217,8 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
         Settings(entry_mode="model_b", leverage=10, risk_per_trade=0.02).validate()
     with pytest.raises(ValueError, match="RISK_PER_TRADE"):
         Settings(entry_mode="model_b", risk_per_trade=0.005).validate()
+    with pytest.raises(ValueError, match="MODEL_B_TP_R"):
+        Settings(entry_mode="model_b", risk_per_trade=0.02, model_b_tp_r=2.5).validate()
     # Breakout/OTE mode keeps the scalp risk band.
     Settings(entry_mode="both", leverage=20).validate()
     with pytest.raises(ValueError, match="RISK_PER_TRADE"):
@@ -1210,7 +1284,7 @@ def test_paper_loop_rests_alo_until_sweep_prints_through(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda coin, now_, bars_, last: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["arms"] == 1
     assert summary["cancels"] == 1
@@ -1288,7 +1362,7 @@ def test_live_path_places_alo_not_market(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["mode"] == "LIVE"
     assert summary["arms"] == 1
@@ -1351,11 +1425,11 @@ def test_live_size_is_two_percent_of_spot_usdc_not_starting_equity(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["arms"] == 1
-    # 2% of spot 2500 / $1 stop = 50. 2% of STARTING_EQUITY 9000 would be 180.
-    assert fake.alos == [pytest.approx(50.0)]
+    # 2% of spot 2500 / 1.03 stop. 2% of STARTING_EQUITY 9000 would be ~174.
+    assert fake.alos == [pytest.approx(48.543689)]
 
 
 def test_live_without_spot_usdc_does_not_arm(tmp_path):
@@ -1395,7 +1469,7 @@ def test_live_without_spot_usdc_does_not_arm(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["arms"] == 0
     assert fake.alos == []
@@ -1450,13 +1524,13 @@ def test_live_brackets_use_filled_alo_size(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["arms"] == 1
     assert summary["opens"] == 1
     assert fake.stops and fake.stops[0][0] == pytest.approx(40.0)
     assert fake.tps and fake.tps[0][0] == pytest.approx(40.0)
-    assert fake.stops[0][1] == pytest.approx(98.0)
+    assert fake.stops[0][1] == pytest.approx(97.97)
     rows = TradeJournal(tmp_path / "fill.jsonl").read_all()
     opened = [r for r in rows if r["event"] == "open"]
     assert opened and opened[0]["size"] == pytest.approx(40.0)
@@ -1513,7 +1587,7 @@ def _two_coin_hunt(tmp_path, *, btc_last: float, eth_last: float, iterations: in
         connect_feed=False,
         coins=("BTC", "ETH"),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     return summary, TradeJournal(journal).read_all()
 
@@ -1587,7 +1661,7 @@ def test_filled_position_is_not_cancelled_for_a_closer_ticker(tmp_path):
         connect_feed=False,
         coins=("BTC", "ETH"),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["cancels"] == 0
     assert summary["opens"] == 1
@@ -1756,7 +1830,7 @@ def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
         connect_feed=False,
         coins=("BTC",),
         pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
-        tick_for=lambda coin: 1.0,
+        tick_for=lambda coin: 0.01,
     )
     assert summary["opens"] == 1
     assert summary["closes"] == 0
@@ -1771,7 +1845,7 @@ def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
     rows = TradeJournal(tmp_path / "partial.jsonl").read_all()
     kept = [r for r in rows if r.get("event") == "model_b_partial" and r.get("remainder") == "kept"]
     assert len(kept) == 2
-    assert kept[0]["remainder_size"] == pytest.approx(100 - 0.00036)
+    assert kept[0]["remainder_size"] == pytest.approx(97.087378 - 0.00036)
     cancelled = [
         r for r in rows
         if r.get("event") == "model_b_cancel" and r.get("reason") == "thesis_stale"
@@ -1779,4 +1853,4 @@ def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
     assert len(cancelled) == 1
     assert cancelled[0]["remainder"] == "cancelled"
     assert cancelled[0]["position_kept"] is True
-    assert cancelled[0].get("size") == pytest.approx(100 - 0.00136)
+    assert cancelled[0].get("size") == pytest.approx(97.087378 - 0.00136)

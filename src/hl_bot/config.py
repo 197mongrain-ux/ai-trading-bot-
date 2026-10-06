@@ -116,8 +116,8 @@ class Settings:
     # model_b is a separate hunt (sweep/reclaim Alo). It does not wrap
     # breakout/OTE and it does not use the score as a gate.
     entry_mode: str = "both"
-    # Model B TP1 multiple before the pool cap. Default 2.5, must stay in [1, 3].
-    model_b_tp_r: float = 2.5
+    # Model B TP1 multiple before the pool cap. Default 1.5, must stay in [1, 2].
+    model_b_tp_r: float = 1.5
     # 90s print floor. Mainnet stays 30. Testnet auto-scales by tape density
     # unless MODEL_B_MIN_PRINTS is set. See tape.density_min_prints.
     model_b_min_prints: int = 30
@@ -225,9 +225,9 @@ class Settings:
             raise ValueError(
                 f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both|model_b."
             )
-        if not (1.0 <= self.model_b_tp_r <= 3.0):
+        if not (1.0 <= self.model_b_tp_r <= 2.0):
             raise ValueError(
-                f"MODEL_B_TP_R={self.model_b_tp_r} must be in [1, 3]."
+                f"MODEL_B_TP_R={self.model_b_tp_r} must be in [1, 2]."
             )
         if self.model_b_min_prints < 1:
             raise ValueError(
@@ -349,7 +349,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
         entry_mode=entry_mode,
-        model_b_tp_r=_float("MODEL_B_TP_R", 2.5),
+        model_b_tp_r=_float("MODEL_B_TP_R", 1.5),
         model_b_min_prints=model_b_min_prints,
         model_b_alo_timeout_sec=_float("MODEL_B_ALO_TIMEOUT_SEC", 0.0),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),

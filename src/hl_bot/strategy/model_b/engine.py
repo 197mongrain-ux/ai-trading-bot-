@@ -5,10 +5,10 @@ and the full tape (sweep, reclaim, absorb, window delta, last 15s) all
 pass, and the coin has no live thesis on that swing. Directional bias
 drops the other side. Bias NONE allows both. The order is a post-only Alo
 anchored at the sweep, sized from RISK_PER_TRADE of the spot USDC
-balance (not perp account value) to a stop past the further of the sweep
-extreme and the Alo. That distance is wide enough that 2.5R clears a
-maker+taker round trip — a one-tick stop fails closed. TP1 is ~2.5R
-(clamped to 1–3) and never beyond the untaken pool on that side.
+balance (not perp account value). The stop is past the sweep liquidity
+(wick, swing, local 1m extreme, plus buffer). A stop that would only
+exist because of the 0.15% floor fails closed. TP1 is ~1.5R (clamped
+to 1–2) and never beyond the untaken pool on that side.
 """
 
 from __future__ import annotations
@@ -16,8 +16,10 @@ from __future__ import annotations
 from hl_bot.strategy.model_b.alo import alo_limit
 from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
 from hl_bot.strategy.model_b.risk import (
+    DEFAULT_TP_R,
     MODEL_B_RISK_PCT,
     assert_policy,
+    clamp_tp_r,
     size_from_stop,
     place_stop,
     stop_clears_fees,
@@ -25,7 +27,13 @@ from hl_bot.strategy.model_b.risk import (
     tp_is_valid,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
-from hl_bot.strategy.model_b.swings import confirmed_swings, select_swing, swing_id
+from hl_bot.strategy.model_b.swings import (
+    atr14,
+    confirmed_swings,
+    local_bar_extreme,
+    select_swing,
+    swing_id,
+)
 from hl_bot.strategy.model_b.tape import (
     MIN_PRINTS,
     NO_SIDE,
@@ -66,7 +74,7 @@ class ModelBEngine:
     def __init__(
         self,
         thesis: ThesisBook | None = None,
-        tp_r: float = 2.5,
+        tp_r: float = DEFAULT_TP_R,
         risk_pct: float = MODEL_B_RISK_PCT,
         min_prints: int = MIN_PRINTS,
         alo_timeout_sec: float = 0.0,
@@ -79,7 +87,7 @@ class ModelBEngine:
         if float(alo_timeout_sec) < 0:
             raise ValueError("alo_timeout_sec must be >= 0")
         self.thesis = thesis or ThesisBook(work_sec=float(alo_timeout_sec))
-        self.tp_r = float(tp_r)
+        self.tp_r = clamp_tp_r(tp_r)
         # From RISK_PER_TRADE. Model B settings validation requires 0.02.
         self.risk_pct = float(risk_pct)
         # Mainnet default is 30. Testnet settings pass the density-scaled floor.
@@ -198,7 +206,16 @@ class ModelBEngine:
             if limit is None:
                 return _done(NO_ALO, **fields)
 
-            stop = place_stop(side, metrics.sweep_price, limit, tick, tp_r=self.tp_r)
+            stop = place_stop(
+                side,
+                metrics.sweep_price,
+                limit,
+                tick,
+                tp_r=self.tp_r,
+                swing=swing.price,
+                local_extreme=local_bar_extreme(bars, side=side, now=now),
+                atr=atr14(bars, now=now),
+            )
             if stop is None or not stop_clears_fees(limit, stop, tick=tick, tp_r=self.tp_r):
                 return _done(BAD_STOP, **fields)
 

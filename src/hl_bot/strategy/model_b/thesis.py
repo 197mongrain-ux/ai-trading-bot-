@@ -58,7 +58,7 @@ class WorkingOrder:
     sweep_px: float | None = None
     tick: float = 1.0
     pool_px: float | None = None
-    tp_r: float = 2.5
+    tp_r: float = 1.5
 
 
 @dataclass

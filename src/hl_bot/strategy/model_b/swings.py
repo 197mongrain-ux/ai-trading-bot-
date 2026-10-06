@@ -22,13 +22,8 @@ def bar_open_sec(t: float) -> float:
     return t
 
 
-def confirmed_swings(
-    bars: list[dict],
-    *,
-    kind: str,
-    now: float,
-) -> list[Swing]:
-    """Return confirmed fractals, oldest first. ``kind`` is ``low`` or ``high``."""
+def _closed_bars(bars: list[dict], now: float) -> list[tuple[float, dict]]:
+    """Closed 1m bars, oldest first. The forming minute is left out."""
     closed: list[tuple[float, dict]] = []
     for bar in bars:
         if "t" not in bar:
@@ -37,6 +32,17 @@ def confirmed_swings(
         if open_sec + 60.0 <= float(now) + 1e-9:
             closed.append((open_sec, bar))
     closed.sort(key=lambda item: item[0])
+    return closed
+
+
+def confirmed_swings(
+    bars: list[dict],
+    *,
+    kind: str,
+    now: float,
+) -> list[Swing]:
+    """Return confirmed fractals, oldest first. ``kind`` is ``low`` or ``high``."""
+    closed = _closed_bars(bars, now)
 
     found: list[Swing] = []
     for i in range(1, len(closed) - 1):
@@ -86,3 +92,55 @@ def select_swing(
 
 def swing_id(coin: str, swing: Swing) -> str:
     return f"{coin.upper()}:{swing.kind}:{swing.price:.8f}:{int(swing.ts)}"
+
+
+def local_bar_extreme(
+    bars: list[dict],
+    *,
+    side: str,
+    now: float,
+    n: int = 3,
+) -> float | None:
+    """Lowest low (long) or highest high (short) of the last ``n`` closed bars.
+
+    This is the local liquidity pocket next to the sweep. A wick here that
+    runs past the sweep print is the level the stop has to clear. ``None``
+    when no closed bar has a positive price.
+    """
+    closed = _closed_bars(bars, now)
+    if not closed or n < 1:
+        return None
+    recent = [bar for _ts, bar in closed[-n:]]
+    if side == "long":
+        lows = [float(bar.get("l") or 0) for bar in recent]
+        lows = [px for px in lows if px > 0]
+        return min(lows) if lows else None
+    if side == "short":
+        highs = [float(bar.get("h") or 0) for bar in recent]
+        highs = [px for px in highs if px > 0]
+        return max(highs) if highs else None
+    return None
+
+
+def atr14(bars: list[dict], now: float) -> float | None:
+    """Mean of the last 14 true ranges, or ``None`` without 15 closed bars.
+
+    Short test tapes (four bars) must not invent a huge ATR and blow the
+    1.5% stop cap. Live candles have the history.
+    """
+    closed = _closed_bars(bars, now)
+    if len(closed) < 15:
+        return None
+    window = [bar for _ts, bar in closed[-15:]]
+    ranges: list[float] = []
+    for i in range(1, len(window)):
+        cur = window[i]
+        prev_close = float(window[i - 1].get("c") or 0)
+        high = float(cur.get("h") or 0)
+        low = float(cur.get("l") or 0)
+        if high <= 0 or low <= 0 or high < low:
+            return None
+        ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if len(ranges) < 14:
+        return None
+    return sum(ranges) / float(len(ranges))
