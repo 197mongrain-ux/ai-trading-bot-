@@ -13,10 +13,12 @@ distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
 side, stop == fill, one-tick collision). Window and last-15s delta may
 sit inside a flat band; a clearly adverse delta still fails. The band is
 the larger of ``DELTA_FLAT_USDC`` / mid (default $100) and
-``DELTA_FLAT_EPS`` (default 0.05 coins). TP1 is ~1.5R
-(clamped to 1–2) and never beyond the untaken pool on that side. A
-``BAD_TP`` fail logs the R distance and the pool R-multiple; it does not
-change that band. A session volume profile
+``DELTA_FLAT_EPS`` (default 0.05 coins). TP1 is 1.5R when the pool
+is inside the 1–2 band, and 2R when the pool is farther than that.
+The distance is the structural stop ``place_stop`` just returned, the
+same one the size uses. A pool past 2R does not fail the idea. ``BAD_TP``
+is only a target that is not strictly beyond the entry, and that fail
+logs the R distance and the pool R-multiple. A session volume profile
 (POC / VAH / VAL / LVN) is written on the decision for the journal.
 Those tags do not arm, block, or move the stop.
 """
@@ -28,6 +30,7 @@ from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
 from hl_bot.strategy.model_b.risk import (
     DEFAULT_TP_R,
     MODEL_B_RISK_PCT,
+    arm_take_profit,
     assert_policy,
     clamp_tp_r,
     collides_with_fill,
@@ -35,9 +38,7 @@ from hl_bot.strategy.model_b.risk import (
     size_adjust_tag,
     size_from_stop,
     stop_is_valid,
-    take_profit,
     tp_fail_detail,
-    tp_is_valid,
 )
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
 from hl_bot.strategy.model_b.swings import (
@@ -337,20 +338,23 @@ class ModelBEngine:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
 
-            tp = take_profit(
+            # Same structural stop size_from_stop just used. A pool past
+            # 2R is capped at 2R of this distance and still arms.
+            pool_px = None if pool is None else pool.price
+            tp = arm_take_profit(
                 side,
                 limit,
                 stop,
-                None if pool is None else pool.price,
+                pool_px,
                 tp_r=self.tp_r,
             )
-            if not tp_is_valid(side, limit, tp):
+            if tp is None:
                 detail = tp_fail_detail(
                     side,
                     limit,
                     stop,
-                    None if pool is None else pool.price,
-                    tp,
+                    pool_px,
+                    limit,
                 )
                 return _done(
                     BAD_TP,

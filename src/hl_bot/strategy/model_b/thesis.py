@@ -12,12 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from hl_bot.strategy.model_b.risk import (
+    arm_take_profit,
     collides_with_fill,
     heal_stop,
     place_stop,
     stop_is_valid,
-    take_profit,
-    tp_is_valid,
     widen_stop_for_fill,
 )
 from hl_bot.strategy.model_b.types import AloIntent, TradePrint
@@ -296,8 +295,8 @@ class ThesisBook:
                     and not collides_with_fill(price, pushed, order.tick)
                 ):
                     stop = pushed
-            tp = take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
-            if not tp_is_valid(order.side, price, tp):
+            tp = arm_take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
+            if tp is None:
                 tp = order.take_profit
             pos = OpenPosition(
                 coin=order.coin,

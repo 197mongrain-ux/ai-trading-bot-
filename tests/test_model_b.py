@@ -56,6 +56,7 @@ from hl_bot.strategy.model_b.risk import (
     SIZE_ADJUST_WIDE_STOP,
     SOFT_PROP_ENABLED,
     STRATEGY_KILL_ENABLED,
+    arm_take_profit,
     collides_with_fill,
     flow_exit_reason,
     heal_stop,
@@ -385,7 +386,8 @@ def test_long_reclaim_absorb_and_deltas_arm():
     # the 0.15% floor (~98.85) and not one point under the sweep.
     assert intent.stop == pytest.approx(97.97)
     assert intent.stop < 99 * (1.0 - 0.0015)
-    assert intent.take_profit == pytest.approx(100.545)
+    # Pool 130 is past 2R of the structural stop. Target is the band max.
+    assert intent.take_profit == pytest.approx(99 + 2.0 * (99 - 97.97))
     assert intent.take_profit <= 130
     assert intent.size == pytest.approx(97.087378)  # 5000 * 2% / 1.03
     # Inside 1.5% of entry. Not the wide-stop reduction.
@@ -771,16 +773,21 @@ def test_flat_delta_save_is_logged(tmp_path, caplog):
 
 
 def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
-    """A pool inside 1R is still a valid TP. BAD_TP only logs the geometry."""
+    """A pool inside 1R is still a valid TP. A far pool is not a fail."""
     close = tp_fail_detail("long", 100.0, 99.0, 100.4, 100.0)
     assert close["why"] == "pool_too_close"
     assert close["r_distance"] == pytest.approx(1.0)
     assert close["pool_distance"] == pytest.approx(0.4)
     assert close["pool_r"] == pytest.approx(0.4)
 
+    # The pool is 3R away, but the rejected target never left the entry.
+    # That is not an over-2R scrap.
     far = tp_fail_detail("long", 100.0, 99.0, 103.0, 100.0)
-    assert far["why"] == "over_2r"
+    assert far["why"] == "under_1r"
     assert far["pool_r"] == pytest.approx(3.0)
+    past_band = tp_fail_detail("long", 100.0, 99.0, 110.0, 104.0)
+    assert past_band["why"] == "over_2r"
+    assert past_band["pool_r"] == pytest.approx(10.0)
 
     under = tp_fail_detail("long", 100.0, 99.0, None, 100.0)
     assert under["why"] == "under_1r"
@@ -793,21 +800,27 @@ def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
     assert short["why"] == "pool_too_close"
     assert short["pool_distance"] == pytest.approx(0.4)
 
-    # Pool cap inside 1R stays a legal TP. The band is unchanged.
+    # Pool cap inside 1R stays a legal TP.
     capped = take_profit("long", 99.0, 97.97, 99.4, tp_r=1.5)
     assert capped == pytest.approx(99.4)
     assert tp_is_valid("long", 99.0, capped)
+    assert arm_take_profit("long", 99.0, 97.97, 99.4, tp_r=1.5) == pytest.approx(99.4)
+
+    # Zero stop distance cannot be placed beyond the entry.
+    assert arm_take_profit("long", 100.0, 100.0, 130.0) is None
+    assert tp_is_valid("long", 100.0, 100.0) is False
+    assert tp_is_valid("short", 100.0, 101.0) is False
 
     armed = _pass_case()
     assert armed.armed is True
     assert armed.bad_tp_why is None
     assert armed.intent is not None and armed.intent.take_profit > armed.intent.limit_px
 
-    def on_entry(side, entry, stop, pool_price, tp_r=1.5):
-        del side, stop, pool_price, tp_r
-        return entry
+    def no_target(side, entry, stop, pool_price, tp_r=1.5):
+        del side, entry, stop, pool_price, tp_r
+        return None
 
-    monkeypatch.setattr("hl_bot.strategy.model_b.engine.take_profit", on_entry)
+    monkeypatch.setattr("hl_bot.strategy.model_b.engine.arm_take_profit", no_target)
     failed = _pass_case()
     assert failed.armed is False
     assert failed.intent is None
@@ -815,12 +828,188 @@ def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
     assert failed.r_distance == pytest.approx(1.03)
     assert failed.pool_distance == pytest.approx(31.0)
     assert failed.pool_r == pytest.approx(31.0 / 1.03)
-    assert failed.bad_tp_why == "over_2r"
-    assert failed.to_log()["bad_tp_why"] == "over_2r"
+    # The pool is far. The rejected target is the entry, so the label is
+    # not over_2r.
+    assert failed.bad_tp_why == "under_1r"
+    assert failed.to_log()["bad_tp_why"] == "under_1r"
     text = format_model_b_fail(failed)
     assert "reason=BAD_TP" in text
-    assert "why=over_2r" in text
+    assert "why=under_1r" in text
     assert "pool_r=" in text
+
+
+def test_far_pool_short_caps_tp_at_2r_of_the_structural_stop():
+    """ETH/SOL shape: tiny structural R, pool many R away, flow already clear.
+
+    The stop is the buffer past the fill, not the old 0.15% floor. The
+    pool past 2R sets TP at 2R of that stop and the idea arms.
+    """
+    now = _now()
+    entry = 3000.0
+    tick = 0.01
+    pool = entry - 17.8
+    last = 2986.0
+    swing = 2990.0
+    t0 = now - 400
+    bars = [
+        {"t": t0, "o": 2970, "h": 2980, "l": 2960, "c": 2975, "v": 1},
+        {"t": t0 + 60, "o": 2975, "h": swing, "l": 2970, "c": 2982, "v": 1},
+        {"t": t0 + 120, "o": 2982, "h": 2985, "l": 2974, "c": 2980, "v": 1},
+        {"t": t0 + 180, "o": 2980, "h": 2988, "l": 2976, "c": 2984, "v": 1},
+    ]
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="ETH", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, last, 0.5, "sell")
+    add(-40, entry, 7.5, "buy")
+    add(-38, entry, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, last, 1.0, "sell")
+    add(-10, last, 0.5, "sell")
+    add(-1, last, 0.5, "sell")
+
+    decision = _decide(
+        prints,
+        bars,
+        [Pool("PDL", pool, taken=False)],
+        coin="ETH",
+        bid=last - 1.0,
+        ask=last + 0.5,
+        tick=tick,
+    )
+    assert decision.armed is True
+    assert decision.fail_reason is None
+    assert decision.bad_tp_why is None
+    intent = decision.intent
+    assert intent is not None
+    assert intent.side == "short"
+    assert intent.limit_px == pytest.approx(entry)
+    # 2 bps of 3000 is 0.6 and beats 3 ticks. The 0.15% floor is 4.5.
+    assert intent.stop == pytest.approx(entry + 0.6)
+    assert intent.stop != pytest.approx(entry + entry * 0.0015)
+    dist = intent.stop - intent.limit_px
+    assert dist == pytest.approx(0.6)
+    assert (entry - pool) / dist == pytest.approx(17.8 / 0.6)
+    assert intent.take_profit == pytest.approx(entry - 2.0 * dist)
+    assert intent.take_profit < intent.limit_px
+    assert intent.limit_px - intent.take_profit <= 2.0 * dist + 1e-9
+
+
+def test_tp_r_uses_the_widened_stop_not_a_tight_placeholder():
+    """A local high past the fill is the R. A 2 bps placeholder is not."""
+    now = _now()
+    entry = 3000.0
+    tick = 0.01
+    pool = entry - 17.8
+    last = 2986.0
+    swing = 2990.0
+    wick = 3010.0
+    t0 = now - 400
+    bars = [
+        {"t": t0, "o": 2970, "h": 2980, "l": 2960, "c": 2975, "v": 1},
+        {"t": t0 + 60, "o": 2975, "h": swing, "l": 2970, "c": 2982, "v": 1},
+        {"t": t0 + 120, "o": 2982, "h": 2985, "l": 2974, "c": 2980, "v": 1},
+        {"t": t0 + 180, "o": 2980, "h": wick, "l": 2976, "c": 2984, "v": 1},
+    ]
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="ETH", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, last, 0.5, "sell")
+    add(-40, entry, 7.5, "buy")
+    add(-38, entry, 7.5, "buy")
+    for i in range(8):
+        add(-30 + i * 0.2, last, 1.0, "sell")
+    add(-10, last, 0.5, "sell")
+    add(-1, last, 0.5, "sell")
+
+    decision = _decide(
+        prints,
+        bars,
+        [Pool("PDL", pool, taken=False)],
+        coin="ETH",
+        bid=last - 1.0,
+        ask=last + 0.5,
+        tick=tick,
+    )
+    assert decision.armed is True
+    intent = decision.intent
+    assert intent is not None
+    assert intent.stop == pytest.approx(wick + 0.6)
+    dist = intent.stop - intent.limit_px
+    assert dist == pytest.approx(10.6)
+    # Pool is inside 2R of this stop and beyond the 1.5R ask, so TP stays
+    # at 1.5R of the wide stop. A 0.6 placeholder would have parked it
+    # 1.2 under the fill.
+    assert intent.take_profit == pytest.approx(entry - 1.5 * dist)
+    assert intent.take_profit != pytest.approx(entry - 1.2)
+    assert intent.take_profit > pool
+
+
+def test_quote_past_2r_is_pulled_back_to_the_band():
+    """A target returned at the far pool is clamped to 2R and still valid."""
+
+    def at_pool(side, entry, stop, pool_price, tp_r=1.5):
+        del side, entry, stop, tp_r
+        return pool_price
+
+    # arm_take_profit calls take_profit in this module.
+    import hl_bot.strategy.model_b.risk as risk
+
+    original = risk.take_profit
+    risk.take_profit = at_pool
+    try:
+        tp = arm_take_profit("short", 3000.0, 3000.6, 2982.2, tp_r=1.5)
+    finally:
+        risk.take_profit = original
+    assert tp == pytest.approx(3000.0 - 1.2)
+    assert tp_is_valid("short", 3000.0, tp)
+
+
+def test_infinite_absorb_journals_null_and_still_passes():
+    """No reclaim-side size is an infinite ratio. The gate stays. The log does not."""
+    assert math.inf >= ABSORB_MIN
+    now = _now()
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset, price, size, side):
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(26):
+        add(-55 + i * 0.2, 104.0, 0.5, "buy")
+    add(-40, 99.0, 0.4, "sell")
+    add(-38, 99.0, 0.4, "sell")
+    # Price is back above the swing, but these are sells, so buy size
+    # after the reclaim is zero.
+    add(-10, 104.0, 0.2, "sell")
+    add(-1, 104.0, 0.2, "sell")
+
+    decision = _decide(prints, _bars(now), [Pool("PDH", 130.0, False)], now=now)
+    assert decision.absorb == math.inf
+    assert decision.fail_reason is None
+    assert decision.armed is True
+    assert decision.to_log()["absorb"] is None
+    assert 1e6 not in decision.to_log().values()
 
 
 def test_score_does_not_arm_or_block_and_volume_is_not_a_veto():
@@ -960,7 +1149,8 @@ def test_short_mirror_arms_and_caps_context():
     assert intent.limit_px == pytest.approx(101)
     # Last-bar high 102.2 is the liquidity. Stop clears it by the buffer.
     assert intent.stop == pytest.approx(102.23)
-    assert intent.take_profit == pytest.approx(99.155)
+    # PDL 80 is past 2R of that stop. Target is 2R, not the pool.
+    assert intent.take_profit == pytest.approx(101 - 2.0 * (102.23 - 101))
     assert intent.take_profit >= 80
     assert intent.tif == "Alo"
 
@@ -984,19 +1174,20 @@ def test_alo_anchor_never_crosses():
 
 
 def test_tp_capped_by_pool_and_r_band():
-    # 1.5R inside the pool.
-    assert take_profit("long", 99, 98, 130, tp_r=1.5) == pytest.approx(100.5)
-    # 2.5R clamps to the 2R cap.
+    # Pool past 2R: target is the band max, not the default 1.5R.
+    assert take_profit("long", 99, 98, 130, tp_r=1.5) == pytest.approx(101.0)
+    # 2.5R clamps to the same 2R cap.
     assert take_profit("long", 99, 98, 130, tp_r=2.5) == pytest.approx(101.0)
     # 2R would print through the pool → cap at the pool, even inside 1R.
     assert take_profit("long", 99, 98, 100.2, tp_r=2.0) == pytest.approx(100.2)
     # Requested 4R clamps to 2R. A pool inside that 2R still wins.
     assert take_profit("long", 100, 90, 115, tp_r=4) == pytest.approx(115)
     assert take_profit("long", 100, 90, 140, tp_r=4) == pytest.approx(120)
-    # Sub-1R request is lifted to 1R before the cap.
+    # No pool: sub-1R request is lifted to 1R. It is not forced to 2R.
     assert take_profit("long", 100, 90, None, tp_r=0.2) == pytest.approx(110)
-    # Short mirror: cap is the higher price (closer to entry).
-    assert take_profit("short", 101, 102, 80, tp_r=1.5) == pytest.approx(99.5)
+    assert take_profit("long", 100, 90, None, tp_r=1.5) == pytest.approx(115)
+    # Short mirror: a pool past 2R is the band max (closer than the pool).
+    assert take_profit("short", 101, 102, 80, tp_r=1.5) == pytest.approx(99.0)
     assert take_profit("short", 101, 102, 100.2, tp_r=1.5) == pytest.approx(100.2)
 
 
@@ -1201,7 +1392,8 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     assert tight_intent.stop != pytest.approx(2701.7)
     # 0.6 of price is inside 0.1%, so the 20× notional cap trims the 2% size.
     assert tight_intent.size == pytest.approx(59.132235)
-    assert tight_intent.take_profit == pytest.approx(2706.7)
+    # PDH 2800 is past 2R of the 0.6 structural stop. Target is 2R.
+    assert tight_intent.take_profit == pytest.approx(entry + 2.0 * (entry - tight_intent.stop))
 
     wick_bars = _eth_bars(now, wick=2698.0, swing=2706.9)
     armed = _decide(
@@ -1219,7 +1411,7 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     assert intent.limit_px == pytest.approx(entry)
     assert intent.stop == pytest.approx(2697.4)
     assert intent.stop < 2701.7
-    assert intent.take_profit == pytest.approx(2718.4)
+    assert intent.take_profit == pytest.approx(entry + 2.0 * (entry - intent.stop))
     assert intent.size == pytest.approx(19.047619)
     assert armed.size_adjust is None
     sized, _dollar = size_from_stop(8000.0, intent.limit_px, intent.stop, risk_pct=0.02)
@@ -1244,8 +1436,8 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
     assert wide_intent.stop == pytest.approx(2659.4)
     assert wide_intent.size == pytest.approx(3.448275)
     assert wide_intent.size < intent.size
-    assert wide_intent.take_profit == pytest.approx(2775.4)
-    # 1.5R of the wide distance, still inside the 1–2R band and the pool.
+    assert wide_intent.take_profit == pytest.approx(entry + 2.0 * (entry - wide_intent.stop))
+    # 2R of the wide distance, still not through the pool.
     assert wide_intent.take_profit <= 2800.0
 
 
@@ -1327,8 +1519,8 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
     assert dist < floor_distance(entry, tick)
     assert intent.size == pytest.approx(math.floor((equity * 0.02) / dist * 1_000_000) / 1_000_000)
     assert intent.size == pytest.approx(2.0)
-    # 1.5R, inside the pool, brackets sized to the Alo.
-    assert intent.take_profit == pytest.approx(entry + 1.5 * dist)
+    # Pool is past 2R. Target is 2R of this structural distance.
+    assert intent.take_profit == pytest.approx(entry + 2.0 * dist)
     assert intent.take_profit <= 90000.0
     sized, dollar = size_from_stop(equity, intent.limit_px, intent.stop, risk_pct=0.02)
     assert intent.size == pytest.approx(sized)
@@ -1354,7 +1546,7 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
     assert (entry - wide_intent.stop) / entry > 0.015
     assert wide_intent.size < intent.size
     assert wide_intent.size == pytest.approx(0.145772)
-    assert wide_intent.take_profit == pytest.approx(entry + 1.5 * (entry - wide_intent.stop))
+    assert wide_intent.take_profit == pytest.approx(entry + 2.0 * (entry - wide_intent.stop))
     # Not pulled up to the 1.5% level to fit the old cap.
     assert wide_intent.stop < entry * (1.0 - 0.015)
 

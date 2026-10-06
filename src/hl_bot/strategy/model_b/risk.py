@@ -16,8 +16,10 @@
   stop == fill, or a one-tick collision (LIT). A size that rounds to
   zero is the same fail-closed.
 - 20× only. 40× is rejected.
-- TP1 defaults to 1.5R, clamped to [1.0, 2.0] before the pool cap.
-  The pool cap may pull TP inside 1R. It may not push TP through the pool.
+- TP1 defaults to 1.5R, clamped to [1.0, 2.0], then capped at the pool.
+  A pool farther than 2R sets the target at 2R off the structural stop.
+  That does not reject the trade. The pool cap may pull TP inside 1R.
+  It may not push TP through the pool.
 - Heal keeps the wider stop. A tighter proposal does not overwrite it.
 - Soft-prop off. Strategy kill off. Flow is not an exit. No market fallback.
 """
@@ -410,22 +412,63 @@ def take_profit(
     pool_price: float | None,
     tp_r: float = DEFAULT_TP_R,
 ) -> float:
-    """TP at ``tp_r`` (clamped to 1–2, default 1.5), then capped at the pool.
+    """TP off ``abs(entry - stop)``, then capped at the pool.
 
-    The pool cap wins even when that leaves less than 1R. TP is never
-    placed beyond the untaken pool.
+    ``stop`` is the structural stop (the same price the size uses). A
+    pool farther than 2R sets the target at the band max (2R). It does
+    not stretch the target out to the pool and it does not reject the
+    trade. A closer pool still wins, even when that leaves less than 1R.
+    With no pool on the trade's side the target stays at ``tp_r``
+    (clamped to 1–2, default 1.5).
     """
     r = clamp_tp_r(tp_r)
-    dist = abs(entry - stop)
+    dist = abs(float(entry) - float(stop))
+    band = TP_R_MAX
     if side == "long":
-        raw = entry + r * dist
-        if pool_price is not None and pool_price > entry:
-            return min(raw, pool_price)
+        raw = float(entry) + r * dist
+        cap = float(entry) + band * dist
+        if pool_price is not None and float(pool_price) > float(entry):
+            if float(pool_price) + 1e-12 >= cap:
+                return cap
+            return min(raw, float(pool_price))
         return raw
-    raw = entry - r * dist
-    if pool_price is not None and pool_price < entry:
-        return max(raw, pool_price)
+    raw = float(entry) - r * dist
+    cap = float(entry) - band * dist
+    if pool_price is not None and float(pool_price) < float(entry):
+        if float(pool_price) - 1e-12 <= cap:
+            return cap
+        return max(raw, float(pool_price))
     return raw
+
+
+def arm_take_profit(
+    side: str,
+    entry: float,
+    stop: float,
+    pool_price: float | None,
+    tp_r: float = DEFAULT_TP_R,
+) -> float | None:
+    """Target for an arm, or ``None`` when nothing sits strictly beyond the entry.
+
+    The distance is the structural stop. A quote past 2R, or a quote that
+    is not strictly beyond the entry, is replaced with the 2R price when
+    that distance is positive. Zero distance cannot be repaired.
+    """
+    dist = abs(float(entry) - float(stop))
+    if dist <= 0 or float(entry) <= 0 or side not in ("long", "short"):
+        return None
+    tp = take_profit(side, entry, stop, pool_price, tp_r)
+    if side == "long":
+        cap = float(entry) + TP_R_MAX * dist
+        if (not tp_is_valid(side, entry, tp)) or tp > cap + 1e-9:
+            tp = cap
+    else:
+        cap = float(entry) - TP_R_MAX * dist
+        if (not tp_is_valid(side, entry, tp)) or tp < cap - 1e-9:
+            tp = cap
+    if not tp_is_valid(side, entry, tp):
+        return None
+    return tp
 
 
 def tp_fail_detail(
@@ -437,11 +480,13 @@ def tp_fail_detail(
 ) -> dict[str, float | str | None]:
     """Measurements for a ``BAD_TP`` log line. Does not accept or reject.
 
-    ``r_distance`` is the entry→stop distance (1R in price). ``pool_distance``
-    and ``pool_r`` are that same direction: positive when the pool is in
-    front of the entry. ``why`` is ``pool_too_close`` (pool inside 1R),
-    ``over_2r`` (pool or the rejected TP beyond 2R), ``fees`` (1R shorter
-    than the round-trip fee), or ``under_1r``.
+    ``r_distance`` is ``abs(entry - stop)`` for the structural stop the
+    caller sized from. ``pool_distance`` and ``pool_r`` are that same
+    direction: positive when the pool is in front of the entry. ``why``
+    is ``over_2r`` only when the rejected target itself is past 2R,
+    ``pool_too_close`` when the pool is inside 1R, ``fees`` when 1R is
+    shorter than the round-trip fee, or ``under_1r``. A far pool does
+    not label a target that never left the entry as ``over_2r``.
     """
     r_distance = abs(float(entry) - float(stop))
     pool_distance: float | None
@@ -461,12 +506,10 @@ def tp_fail_detail(
     else:
         tp_dist = float(entry) - float(tp)
     tp_r = tp_dist / r_distance if r_distance > 0 else None
-    if pool_r is not None and 0 < pool_r < 1.0 - 1e-12:
+    if tp_r is not None and tp_r > 2.0 + 1e-12:
+        why = "over_2r"
+    elif pool_r is not None and 0 < pool_r < 1.0 - 1e-12:
         why = "pool_too_close"
-    elif pool_r is not None and pool_r > 2.0 + 1e-12:
-        why = "over_2r"
-    elif tp_r is not None and tp_r > 2.0 + 1e-12:
-        why = "over_2r"
     elif (
         r_distance > 0
         and float(entry) > 0

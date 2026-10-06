@@ -131,8 +131,10 @@ class Decision:
         def _num(value: float | None) -> float | None:
             if value is None:
                 return None
+            # Infinite absorb is a zero reclaim-side denominator. Journal
+            # null. Do not write 1e6; that reads as a real ratio.
             if isinstance(value, float) and math.isinf(value):
-                return 1e6 if value > 0 else -1e6
+                return None
             if isinstance(value, float) and math.isnan(value):
                 return None
             return value
