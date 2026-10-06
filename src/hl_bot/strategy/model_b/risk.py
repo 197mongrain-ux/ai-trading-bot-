@@ -287,6 +287,38 @@ def widen_stop_for_fill(
     return pushed
 
 
+def initial_margin(size: float, price: float, leverage: int = LEVERAGE) -> float:
+    """USDC initial margin for one ticket: notional / 20.
+
+    ``price`` is the Alo limit for a resting order and the fill for an
+    open position. This is the same 20× notional ``size_from_stop`` caps.
+    It is not a second balance.
+    """
+    assert_leverage(leverage)
+    if size <= 0 or price <= 0:
+        return 0.0
+    return float(size) * float(price) / float(LEVERAGE)
+
+
+def ticket_fits(
+    equity: float,
+    committed: float,
+    size: float,
+    price: float,
+    leverage: int = LEVERAGE,
+) -> bool:
+    """True when ``equity - committed`` covers this ticket at its full size.
+
+    ``equity`` is the Model B sizing balance (spot USDC, or paper equity).
+    ``size`` is already the 2% ticket. This does not shrink it to fit.
+    """
+    if equity <= 0 or size <= 0 or price <= 0:
+        return False
+    need = initial_margin(size, price, leverage)
+    free = float(equity) - float(committed)
+    return need <= free + 1e-6
+
+
 def size_from_stop(
     spot_usdc: float,
     entry: float,

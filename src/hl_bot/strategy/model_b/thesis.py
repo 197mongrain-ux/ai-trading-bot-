@@ -220,6 +220,21 @@ class ThesisBook:
             resting.append(st.working)
         return resting
 
+    def working_orders(self) -> list[WorkingOrder]:
+        """Every resting Alo, including a remainder beside an open position."""
+        orders: list[WorkingOrder] = []
+        for st in self._coins.values():
+            if st.working is not None:
+                orders.append(st.working)
+        return orders
+
+    def open_positions(self) -> list[OpenPosition]:
+        positions: list[OpenPosition] = []
+        for st in self._coins.values():
+            if st.position is not None:
+                positions.append(st.position)
+        return positions
+
     def release_for_closer(self, coin: str) -> WorkingOrder | None:
         """Cancel one unfilled Alo so a closer coin can use the margin.
 

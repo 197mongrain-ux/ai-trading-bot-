@@ -4,9 +4,11 @@ Selected with ``ENTRY_MODE=model_b``. Breakout / OTE stay on their own
 path. This loop never market-opens. A resting Alo stays until the thesis
 is stale (a print through the sweep extreme that does not fill it).
 ``MODEL_B_ALO_TIMEOUT_SEC=0`` (the default) disables the clock cancel.
-Exits are stop and TP only. One unfilled Alo rests on the account at
-a time. A new coin takes that slot only when its limit is strictly
-closer to the market, in bps, than the order already working.
+Exits are stop and TP only. One thesis per coin. Another coin may rest
+at the same time when the sizing balance still covers that ticket's
+initial margin (notional / 20) at the full 2% size. When it does not,
+a new coin takes the slot only by cancelling an unfilled Alo whose
+limit is strictly closer to the market, in bps.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -27,7 +29,7 @@ from hl_bot.risk.manager import RiskManager
 from hl_bot.strategy.model_b.alo import distance_to_fill_bps, is_closer_to_fill, market_ref
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
-from hl_bot.strategy.model_b.risk import assert_leverage
+from hl_bot.strategy.model_b.risk import assert_leverage, initial_margin, ticket_fits
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
 
@@ -486,74 +488,127 @@ def run_model_b(
                 )
 
             intent = decision.intent
-            # One unfilled Alo locks the margin. A second coin places only
-            # when its limit is strictly closer to the market (bps). The
-            # resting order is cancelled first so the new one is not rejected
-            # for insufficient margin. A filled position is never cancelled.
+            # One thesis per coin is already enforced above. Other coins
+            # may both rest when the sizing balance (spot USDC, or paper
+            # equity) still covers this ticket's initial margin at the
+            # size already chosen — 2% of that full balance, not a cut-down
+            # size. Margin already in use is notional / 20 on resting Alos
+            # and open positions. When the remainder cannot fund this
+            # ticket, fall back to cancelling a strictly farther unfilled
+            # Alo. A filled position is never cancelled.
             resting = [order for order in book.resting_orders() if order.coin != intent.coin]
             if resting:
-                challenger_ref = market_ref(bid, ask, last)
-                challenger_bps = (
-                    distance_to_fill_bps(intent.side, intent.limit_px, challenger_ref)
-                    if challenger_ref is not None
-                    else None
-                )
-                held_by = None
-                held_bps = None
-                if challenger_bps is None:
-                    held_by = resting[0]
-                else:
-                    for order in resting:
-                        held_prints = feed.prints(order.coin)
-                        held_last = held_prints[-1].price if held_prints else None
-                        if bbo_for is not None:
-                            held_bid, held_ask = bbo_for(order.coin)
-                        else:
-                            held_bid, held_ask = feed.bbo(order.coin)
-                        held_ref = market_ref(held_bid, held_ask, held_last)
-                        order_bps = (
-                            distance_to_fill_bps(order.side, order.limit_px, held_ref)
-                            if held_ref is not None
-                            else None
-                        )
-                        if order_bps is None or not is_closer_to_fill(challenger_bps, order_bps):
-                            held_by = order
-                            held_bps = order_bps
-                            break
-                if held_by is not None:
-                    summary["fails"] += 1
-                    journal.log(
-                        "model_b_fail",
-                        entry_mode="model_b",
-                        **{
-                            **decision.to_log(),
-                            "fail_reason": "NOT_CLOSER",
-                            "armed": False,
-                            "held_by": held_by.coin,
-                            "challenger_bps": challenger_bps,
-                            "held_bps": held_bps,
-                        },
-                    )
+                used = _margin_in_use(book)
+                free = float(risk_base) - used
+                need = initial_margin(intent.size, intent.limit_px)
+                held = ",".join(order.coin for order in resting)
+                if ticket_fits(float(risk_base), used, intent.size, intent.limit_px):
                     logger.info(
-                        "MODEL_B FAIL %s reason=NOT_CLOSER held_by=%s "
-                        "challenger_bps=%s held_bps=%s",
+                        "MODEL_B MARGIN %s dual_rest free=%.4f need=%.4f "
+                        "equity=%.4f held=%s",
                         coin,
-                        held_by.coin,
-                        challenger_bps,
-                        held_bps,
+                        free,
+                        need,
+                        float(risk_base),
+                        held,
                     )
-                    continue
-                for order in resting:
-                    released = book.release_for_closer(order.coin)
-                    if released is None:
+                    journal.log(
+                        "model_b_margin",
+                        entry_mode="model_b",
+                        coin=coin,
+                        action="dual_rest",
+                        free_margin=free,
+                        margin_need=need,
+                        equity=float(risk_base),
+                        held_by=held,
+                    )
+                else:
+                    logger.info(
+                        "MODEL_B MARGIN %s insufficient free=%.4f need=%.4f "
+                        "equity=%.4f held=%s",
+                        coin,
+                        free,
+                        need,
+                        float(risk_base),
+                        held,
+                    )
+                    challenger_ref = market_ref(bid, ask, last)
+                    challenger_bps = (
+                        distance_to_fill_bps(intent.side, intent.limit_px, challenger_ref)
+                        if challenger_ref is not None
+                        else None
+                    )
+                    held_by = None
+                    held_bps = None
+                    if challenger_bps is None:
+                        held_by = resting[0]
+                    else:
+                        for order in resting:
+                            held_prints = feed.prints(order.coin)
+                            held_last = held_prints[-1].price if held_prints else None
+                            if bbo_for is not None:
+                                held_bid, held_ask = bbo_for(order.coin)
+                            else:
+                                held_bid, held_ask = feed.bbo(order.coin)
+                            held_ref = market_ref(held_bid, held_ask, held_last)
+                            order_bps = (
+                                distance_to_fill_bps(order.side, order.limit_px, held_ref)
+                                if held_ref is not None
+                                else None
+                            )
+                            if order_bps is None or not is_closer_to_fill(
+                                challenger_bps, order_bps
+                            ):
+                                held_by = order
+                                held_bps = order_bps
+                                break
+                    if held_by is not None:
+                        summary["fails"] += 1
+                        journal.log(
+                            "model_b_fail",
+                            entry_mode="model_b",
+                            **{
+                                **decision.to_log(),
+                                "fail_reason": "NOT_CLOSER",
+                                "armed": False,
+                                "held_by": held_by.coin,
+                                "challenger_bps": challenger_bps,
+                                "held_bps": held_bps,
+                                "free_margin": free,
+                                "margin_need": need,
+                            },
+                        )
+                        logger.info(
+                            "MODEL_B FAIL %s reason=NOT_CLOSER held_by=%s "
+                            "challenger_bps=%s held_bps=%s free=%.4f need=%.4f",
+                            coin,
+                            held_by.coin,
+                            challenger_bps,
+                            held_bps,
+                            free,
+                            need,
+                        )
                         continue
-                    _cancel_working(
-                        released,
-                        "closer_ticker",
-                        winner=intent.coin,
-                        margin_for_better=True,
-                        challenger_bps=challenger_bps,
+                    logger.info(
+                        "MODEL_B MARGIN %s closer_cancel free=%.4f need=%.4f held=%s",
+                        coin,
+                        free,
+                        need,
+                        held,
                     )
+                    for order in resting:
+                        released = book.release_for_closer(order.coin)
+                        if released is None:
+                            continue
+                        _cancel_working(
+                            released,
+                            "closer_ticker",
+                            winner=intent.coin,
+                            margin_for_better=True,
+                            challenger_bps=challenger_bps,
+                            free_margin=free,
+                            margin_need=need,
+                        )
 
             oid = None
             if live is not None:
@@ -610,6 +665,21 @@ def run_model_b(
     summary["equity"] = equity
     summary["iterations"] = iterations
     return summary
+
+
+def _margin_in_use(book: ThesisBook) -> float:
+    """Initial margin already reserved, in the same units as the sizing balance.
+
+    A resting Alo uses its limit. An open position uses its fill. A partial
+    counts both the filled size and the resting remainder. Spot USDC (or
+    paper equity) is not re-read here.
+    """
+    used = 0.0
+    for order in book.working_orders():
+        used += initial_margin(order.size, order.limit_px)
+    for pos in book.open_positions():
+        used += initial_margin(pos.size, pos.entry)
+    return used
 
 
 def _default_tick(coin: str, last: float | None) -> float:

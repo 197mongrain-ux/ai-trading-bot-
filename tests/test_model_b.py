@@ -54,9 +54,11 @@ from hl_bot.strategy.model_b.risk import (
     flow_exit_reason,
     heal_stop,
     floor_distance,
+    initial_margin,
     place_stop,
     size_adjust_tag,
     size_from_stop,
+    ticket_fits,
     soft_prop_allows,
     stop_beyond_extreme,
     stop_clears_fees,
@@ -88,6 +90,17 @@ NY = ZoneInfo("America/New_York")
 
 def _now() -> float:
     return datetime(2026, 10, 5, 10, 0, tzinfo=NY).timestamp()
+
+
+def _tight_bars(now: float, low: float = 100.0) -> list[dict]:
+    """Same swing as ``_bars``, without the wick that widens the stop.
+
+    The anchor stays on the sweep. At tick 0.01 the stop is 3 ticks away,
+    the 20× notional cap binds, and one ticket uses the whole balance.
+    """
+    bars = _bars(now, low=low)
+    bars[-1]["l"] = low
+    return bars
 
 
 def _bars(now: float, low: float = 100.0) -> list[dict]:
@@ -1903,7 +1916,14 @@ def _retag(prints, coin: str):
     return [replace(p, coin=coin) for p in prints]
 
 
-def _two_coin_hunt(tmp_path, *, btc_last: float, eth_last: float, iterations: int = 1):
+def _two_coin_hunt(
+    tmp_path,
+    *,
+    btc_last: float,
+    eth_last: float,
+    iterations: int = 1,
+    tight_stop: bool = False,
+):
     now = _now()
     btc = _long_prints(now, last_price=btc_last, final_price=btc_last, sweep_px=99.0)
     eth = _retag(
@@ -1911,7 +1931,7 @@ def _two_coin_hunt(tmp_path, *, btc_last: float, eth_last: float, iterations: in
         "ETH",
     )
     info = InfoClient()
-    bars = _bars(now)
+    bars = _tight_bars(now) if tight_stop else _bars(now)
     info.inject_bars(bars, coin="BTC")
     info.inject_bars(bars, coin="ETH")
     feed = MemoryFeed(
@@ -1942,9 +1962,12 @@ def _two_coin_hunt(tmp_path, *, btc_last: float, eth_last: float, iterations: in
     return summary, TradeJournal(journal).read_all()
 
 
-def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path):
-    """BTC rests far under the market. ETH's limit is closer, so BTC is cancelled."""
-    summary, rows = _two_coin_hunt(tmp_path, btc_last=120.0, eth_last=103.0, iterations=2)
+def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path, caplog):
+    """Tight stops use the whole balance, so ETH still cancels the farther BTC Alo."""
+    with caplog.at_level(logging.INFO):
+        summary, rows = _two_coin_hunt(
+            tmp_path, btc_last=120.0, eth_last=103.0, iterations=2, tight_stop=True
+        )
     assert summary["arms"] == 2
     assert summary["cancels"] == 1
     cancels = [r for r in rows if r["event"] == "model_b_cancel"]
@@ -1958,17 +1981,71 @@ def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path):
     assert any(r.get("coin") == "BTC" and r.get("fail_reason") == "THESIS_DONE" for r in rows)
     arms = [r for r in rows if r["event"] == "model_b_arm"]
     assert [r["coin"] for r in arms] == ["BTC", "ETH"]
+    assert any("MODEL_B MARGIN" in rec.message and "closer_cancel" in rec.message for rec in caplog.records)
+    assert not any("dual_rest" in rec.message for rec in caplog.records)
 
 
-def test_farther_ticker_does_not_cancel_the_closer_alo(tmp_path):
-    summary, rows = _two_coin_hunt(tmp_path, btc_last=103.0, eth_last=120.0)
+def test_farther_ticker_does_not_cancel_the_closer_alo(tmp_path, caplog):
+    with caplog.at_level(logging.INFO):
+        summary, rows = _two_coin_hunt(
+            tmp_path, btc_last=103.0, eth_last=120.0, tight_stop=True
+        )
     assert summary["arms"] == 1
     assert summary["cancels"] == 0
     fails = [r for r in rows if r.get("fail_reason") == "NOT_CLOSER"]
     assert len(fails) == 1
     assert fails[0]["coin"] == "ETH"
     assert fails[0]["held_by"] == "BTC"
+    assert fails[0]["margin_need"] > fails[0]["free_margin"]
     assert not any(r["event"] == "model_b_cancel" for r in rows)
+    assert any("insufficient" in rec.message for rec in caplog.records)
+    assert not any("dual_rest" in rec.message for rec in caplog.records)
+
+
+def test_free_margin_places_the_farther_alo_without_cancel(tmp_path, caplog):
+    """A wide stop leaves margin. ETH rests beside BTC even though it is farther."""
+    with caplog.at_level(logging.INFO):
+        summary, rows = _two_coin_hunt(tmp_path, btc_last=103.0, eth_last=120.0)
+    assert summary["arms"] == 2
+    assert summary["cancels"] == 0
+    assert not any(r.get("fail_reason") == "NOT_CLOSER" for r in rows)
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["BTC", "ETH"]
+    margin = [r for r in rows if r["event"] == "model_b_margin"]
+    assert len(margin) == 1
+    assert margin[0]["coin"] == "ETH"
+    assert margin[0]["action"] == "dual_rest"
+    assert margin[0]["held_by"] == "BTC"
+    assert margin[0]["free_margin"] >= margin[0]["margin_need"]
+    assert any(
+        "MODEL_B MARGIN" in rec.message and "dual_rest" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_same_coin_stays_blocked_when_margin_is_free(tmp_path):
+    """A second pass does not average down BTC just because ETH was allowed to rest."""
+    summary, rows = _two_coin_hunt(
+        tmp_path, btc_last=103.0, eth_last=120.0, iterations=2
+    )
+    assert summary["arms"] == 2
+    assert summary["cancels"] == 0
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["BTC", "ETH"]
+    assert not any(r.get("fail_reason") in ("SECOND_ALO", "AVERAGE_DOWN") for r in rows)
+
+
+def test_ticket_fits_uses_notional_over_leverage_on_the_sizing_balance():
+    wide = initial_margin(97.087378, 99.0)
+    assert wide == pytest.approx(97.087378 * 99.0 / 20.0)
+    assert ticket_fits(5000.0, 0.0, 97.087378, 99.0)
+    assert ticket_fits(5000.0, wide, 97.087378, 99.0)
+    size, _dollar = size_from_stop(5000.0, 99.0, 98.97, risk_pct=0.02)
+    full = initial_margin(size, 99.0)
+    assert full == pytest.approx(5000.0, abs=1e-3)
+    assert ticket_fits(5000.0, 0.0, size, 99.0)
+    assert ticket_fits(5000.0, full, size, 99.0) is False
 
 
 def test_filled_position_is_not_cancelled_for_a_closer_ticker(tmp_path):
