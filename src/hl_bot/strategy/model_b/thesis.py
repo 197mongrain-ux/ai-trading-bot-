@@ -12,9 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from hl_bot.strategy.model_b.risk import (
+    collides_with_fill,
     heal_stop,
     place_stop,
-    stop_clears_fees,
     stop_is_valid,
     take_profit,
     tp_is_valid,
@@ -269,11 +269,17 @@ class ThesisBook:
             stop = widen_stop_for_fill(
                 order.side, price, order.stop, order.limit_px, order.tick, tp_r=order.tp_r
             )
-            if not stop_is_valid(order.side, price, stop) or not stop_clears_fees(
-                price, stop, tick=order.tick, tp_r=order.tp_r
+            # Keep the arm stop. A fill-only recompute must not pull it back
+            # to the fill. Replace only a stop that is not past the fill.
+            if not stop_is_valid(order.side, price, stop) or collides_with_fill(
+                price, stop, order.tick
             ):
                 pushed = place_stop(order.side, price, price, order.tick, tp_r=order.tp_r)
-                if pushed is not None:
+                if (
+                    pushed is not None
+                    and stop_is_valid(order.side, price, pushed)
+                    and not collides_with_fill(price, pushed, order.tick)
+                ):
                     stop = pushed
             tp = take_profit(order.side, price, stop, order.pool_px, tp_r=order.tp_r)
             if not tp_is_valid(order.side, price, tp):

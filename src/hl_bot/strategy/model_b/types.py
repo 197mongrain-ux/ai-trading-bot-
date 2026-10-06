@@ -107,6 +107,10 @@ class Decision:
     sweep_to_lvn_bps: float | None = None
     vp_tag: str = "none"
     catalyst_flag: bool = False
+    # ``wide_stop`` when the armed stop is wider than 1.5% of entry.
+    # Size was reduced (risk / distance) instead of scrapping the idea.
+    # Null on a normal arm and on every fail. Not a gate.
+    size_adjust: str | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -141,4 +145,5 @@ class Decision:
             "sweep_to_lvn_bps": _num(self.sweep_to_lvn_bps),
             "vp_tag": self.vp_tag,
             "catalyst_flag": bool(self.catalyst_flag),
+            "size_adjust": self.size_adjust,
         }

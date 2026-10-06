@@ -6,11 +6,14 @@ pass, and the coin has no live thesis on that swing. Directional bias
 drops the other side. Bias NONE allows both. The order is a post-only Alo
 anchored at the sweep, sized from RISK_PER_TRADE of the spot USDC
 balance (not perp account value). The stop is past the sweep liquidity
-(wick, swing, local 1m extreme, plus buffer). A stop that would only
-exist because of the 0.15% floor fails closed. TP1 is ~1.5R (clamped
-to 1–2) and never beyond the untaken pool on that side. A session
-volume profile (POC / VAH / VAL / LVN) is written on the decision for
-the journal. Those tags do not arm, block, or move the stop.
+(wick, swing, local 1m extreme, plus buffer). A tight structural stop
+and a stop wider than 1.5% of price are both armed; size is 2% of spot
+USDC over that distance. ``size_adjust=wide_stop`` is journaled when the
+distance is past 1.5%. ``BAD_STOP`` is only impossible geometry (wrong
+side, stop == fill, one-tick collision). TP1 is ~1.5R (clamped to 1–2)
+and never beyond the untaken pool on that side. A session volume profile
+(POC / VAH / VAL / LVN) is written on the decision for the journal.
+Those tags do not arm, block, or move the stop.
 """
 
 from __future__ import annotations
@@ -22,9 +25,11 @@ from hl_bot.strategy.model_b.risk import (
     MODEL_B_RISK_PCT,
     assert_policy,
     clamp_tp_r,
-    size_from_stop,
+    collides_with_fill,
     place_stop,
-    stop_clears_fees,
+    size_adjust_tag,
+    size_from_stop,
+    stop_is_valid,
     take_profit,
     tp_is_valid,
 )
@@ -152,6 +157,7 @@ class ModelBEngine:
             last_15: float | None = None,
             intent: AloIntent | None = None,
             pool_label: str | None = None,
+            size_adjust: str | None = None,
         ) -> Decision:
             ctx_side = vp_ctx.get("side")
             log_side = ctx_side if ctx_side in ("long", "short") else (
@@ -194,6 +200,7 @@ class ModelBEngine:
                 sweep_to_lvn_bps=tags["sweep_to_lvn_bps"],
                 vp_tag=tags["vp_tag"],
                 catalyst_flag=tags["catalyst_flag"],
+                size_adjust=size_adjust,
             )
 
         def attempt(side: str, pool: Pool | None) -> Decision:
@@ -254,7 +261,15 @@ class ModelBEngine:
                 local_extreme=local_bar_extreme(bars, side=side, now=now),
                 atr=atr14(bars, now=now),
             )
-            if stop is None or not stop_clears_fees(limit, stop, tick=tick, tp_r=self.tp_r):
+            # Flow already passed. A structural stop past the wick is armed.
+            # Tight room and a distance past 1.5% change the size. They do
+            # not scrap the thesis. Wrong side, stop == fill, and a one-tick
+            # collision still fail closed.
+            if (
+                stop is None
+                or not stop_is_valid(side, limit, stop)
+                or collides_with_fill(limit, stop, tick)
+            ):
                 return _done(BAD_STOP, **fields)
 
             try:
@@ -267,6 +282,7 @@ class ModelBEngine:
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
+            adjust = size_adjust_tag(limit, stop)
 
             tp = take_profit(
                 side,
@@ -295,7 +311,7 @@ class ModelBEngine:
                 pool_px=None if pool is None else pool.price,
                 tp_r=self.tp_r,
             )
-            return _done(None, armed=True, intent=intent, **fields)
+            return _done(None, armed=True, intent=intent, size_adjust=adjust, **fields)
 
         if coin_u not in session_coins(now):
             return _done(OUT_OF_SESSION)

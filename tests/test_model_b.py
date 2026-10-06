@@ -46,12 +46,15 @@ from hl_bot.strategy.model_b.risk import (
     FLOW_EXIT_ENABLED,
     LEVERAGE,
     RISK_PCT,
+    SIZE_ADJUST_WIDE_STOP,
     SOFT_PROP_ENABLED,
     STRATEGY_KILL_ENABLED,
+    collides_with_fill,
     flow_exit_reason,
     heal_stop,
     floor_distance,
     place_stop,
+    size_adjust_tag,
     size_from_stop,
     soft_prop_allows,
     stop_beyond_extreme,
@@ -354,6 +357,9 @@ def test_long_reclaim_absorb_and_deltas_arm():
     assert intent.take_profit == pytest.approx(100.545)
     assert intent.take_profit <= 130
     assert intent.size == pytest.approx(97.087378)  # 5000 * 2% / 1.03
+    # Inside 1.5% of entry. Not the wide-stop reduction.
+    assert decision.size_adjust is None
+    assert decision.to_log()["size_adjust"] is None
 
 
 def test_absorb_boundary():
@@ -503,11 +509,18 @@ def test_swing_closer_than_3_ticks_is_ignored():
         {"t": t0 + 360, "o": 110, "h": 114, "l": 109, "c": 112, "v": 1},
     ]
     # Last trade 104 is 2 ticks from the recent swing (102) and 4 from 100.
-    # Tick 1 is coarser than the 1.5% cap, so the arm fails closed. The
-    # swing itself was still selected.
+    # Tick 1 makes a 3-tick structural stop wider than 1.5% of price. That
+    # used to fail closed. It now arms, and size is 2% of spot USDC / 3.
     decision = _decide(_long_prints(now), bars, [Pool("PDH", 130, False)], tick=1.0)
     assert decision.swing == pytest.approx(100)
-    assert decision.fail_reason == "BAD_STOP"
+    assert decision.armed is True
+    assert decision.fail_reason is None
+    intent = decision.intent
+    assert intent is not None
+    assert intent.limit_px == pytest.approx(99)
+    assert intent.stop == pytest.approx(96)
+    assert intent.size == pytest.approx(33.333333)  # 5000 * 2% / 3
+    assert decision.size_adjust == SIZE_ADJUST_WIDE_STOP
 
     # Exactly 3 ticks is kept.
     exact = _decide(
@@ -683,16 +696,26 @@ def test_default_rests_alo_until_sweep_is_stale():
 
 
 def test_lit_short_stop_is_not_the_alo_tick():
-    """One tick past a LIT Alo collides with the fill. A floor-only stop is also rejected."""
+    """One tick past a LIT Alo collides with the fill. That stop still fails closed.
+
+    A sweep sitting on the Alo, with no wick past the old 0.15% floor, is
+    sized from the structural buffer. It is not parked on the fill and it
+    is not scrapped.
+    """
     tick = 0.0001
     sweep = 3.9046
     limit = alo_limit("short", sweep, sweep, sweep + tick, tick)
     assert limit == pytest.approx(3.9047)
     naive = stop_beyond_extreme("short", sweep, tick)
     assert naive == pytest.approx(limit)
+    assert collides_with_fill(limit, naive, tick)
+    assert collides_with_fill(limit, limit, tick)
     assert stop_clears_fees(limit, limit + tick, tick=tick) is False
-    # Sweep ≈ Alo and no wick past the 0.15% floor: do not arm on the cluster.
-    assert place_stop("short", sweep, limit, tick) is None
+    # Buffer past the sweep. Inside the old floor, and not the fill tick.
+    tight = place_stop("short", sweep, limit, tick)
+    assert tight == pytest.approx(3.9055)
+    assert tight != pytest.approx(limit)
+    assert not collides_with_fill(limit, tight, tick)
     # A local high beyond that floor. Stop clears the high, not the fill tick.
     stop = place_stop("short", sweep, limit, tick, local_extreme=3.92)
     assert stop == pytest.approx(3.9208)
@@ -725,24 +748,33 @@ def test_lit_short_stop_is_not_the_alo_tick():
     assert stop_clears_fees(opened.entry, opened.stop, tick=tick)
 
 
-def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
-    """Oct 5 ~21:46 ET ETH long: Alo/sweep 2705.8, swing 2706.9, stop 2701.7.
+def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
+    """Oct 5 ~21:46 ET ETH long: Alo/sweep 2705.8, swing 2706.9.
 
     2701.7 is the 0.15% floor (41 ticks). Price later traded ~2702.7, a hunt
-    into that floor. With no wick past the floor the arm is BAD_STOP. A 1m
-    low under the floor puts the stop beyond that low, and size is 2% of
-    spot USDC over the new distance.
+    into that floor, so the stop is not parked there. With no wick past the
+    sweep the arm uses the structural buffer and sizes from that distance.
+    A 1m low under the floor puts the stop beyond that low. A wick that
+    pushes the stop past 1.5% of price still arms, at a smaller size.
     """
     tick = 0.1
     entry = 2705.8
     floor_px = entry - floor_distance(entry, tick)
     assert math.floor(floor_px / tick + 1e-9) * tick == pytest.approx(2701.7)
-    # The live stop. Sweep on the Alo, swing above the fill, no deeper wick.
-    assert place_stop("long", entry, entry, tick, swing=2706.9) is None
+    # Sweep on the Alo, swing above the fill, no deeper wick. Buffer, not 2701.7.
+    tight = place_stop("long", entry, entry, tick, swing=2706.9)
+    assert tight == pytest.approx(2705.2)
+    assert tight != pytest.approx(2701.7)
+    assert tight < entry
     # A shallow wick still above the floor must not be lifted onto 2701.7.
-    assert place_stop("long", entry, entry, tick, swing=2706.9, local_extreme=2704.0) is None
-    # 0.5×ATR that does not clear the floor is the same hunt stop.
-    assert place_stop("long", entry, entry, tick, atr=4.0) is None
+    shallow = place_stop("long", entry, entry, tick, swing=2706.9, local_extreme=2704.0)
+    assert shallow == pytest.approx(2703.4)
+    assert shallow < 2704.0
+    assert shallow != pytest.approx(2701.7)
+    # 0.5×ATR that does not clear the floor is still the structural stop.
+    small_atr = place_stop("long", entry, entry, tick, atr=4.0)
+    assert small_atr == pytest.approx(2703.8)
+    assert small_atr != pytest.approx(2701.7)
     # 0.5×ATR = 6 clears the 4.06 floor. Stop is the sweep minus that buffer.
     atr_stop = place_stop("long", entry, entry, tick, swing=2706.9, atr=12.0)
     assert atr_stop == pytest.approx(2699.8)
@@ -755,18 +787,26 @@ def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
     assert stop < 2701.7
     dist = entry - stop
     assert dist / entry < 0.015
+    assert size_adjust_tag(entry, stop) is None
     size, dollar = size_from_stop(8000.0, entry, stop, risk_pct=0.02)
     assert dollar == pytest.approx(160.0)
     assert size == pytest.approx(19.047619)
     assert size == pytest.approx(math.floor((8000.0 * 0.02) / dist * 1_000_000) / 1_000_000)
-    # Required room past a much deeper low exceeds 1.5%. Fail closed.
-    assert place_stop("long", entry, entry, tick, local_extreme=2660.0) is None
+    # Room past a much deeper low exceeds 1.5%. Keep the wick. Size down.
+    wide = place_stop("long", entry, entry, tick, local_extreme=2660.0)
+    assert wide == pytest.approx(2659.4)
+    assert wide < entry * (1.0 - 0.015)
+    assert size_adjust_tag(entry, wide) == SIZE_ADJUST_WIDE_STOP
+    wide_size, wide_dollar = size_from_stop(8000.0, entry, wide, risk_pct=0.02)
+    assert wide_dollar == pytest.approx(160.0)
+    assert wide_size == pytest.approx(3.448275)
+    assert wide_size < size
 
     now = _now()
     prints = _long_prints(now, sweep_px=entry, last_price=2709.0, final_price=2709.0)
     prints = [replace(p, price=2709.0) if p.price == 104.0 else p for p in prints]
     floor_bars = _eth_bars(now, wick=2708.0, swing=2706.9)
-    refused = _decide(
+    tight_arm = _decide(
         prints,
         floor_bars,
         [Pool("PDH", 2800.0, False)],
@@ -775,10 +815,19 @@ def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
         tick=tick,
         equity=8000.0,
     )
-    assert refused.armed is False
-    assert refused.fail_reason == "BAD_STOP"
-    assert refused.sweep_price == pytest.approx(entry)
+    assert tight_arm.armed is True
+    assert tight_arm.fail_reason is None
+    assert tight_arm.sweep_price == pytest.approx(entry)
+    assert tight_arm.size_adjust is None
     assert local_bar_extreme(floor_bars, side="long", now=now) == pytest.approx(2706.9)
+    tight_intent = tight_arm.intent
+    assert tight_intent is not None
+    assert tight_intent.limit_px == pytest.approx(entry)
+    assert tight_intent.stop == pytest.approx(2705.2)
+    assert tight_intent.stop != pytest.approx(2701.7)
+    # 0.6 of price is inside 0.1%, so the 20× notional cap trims the 2% size.
+    assert tight_intent.size == pytest.approx(59.132235)
+    assert tight_intent.take_profit == pytest.approx(2706.7)
 
     wick_bars = _eth_bars(now, wick=2698.0, swing=2706.9)
     armed = _decide(
@@ -798,6 +847,7 @@ def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
     assert intent.stop < 2701.7
     assert intent.take_profit == pytest.approx(2718.4)
     assert intent.size == pytest.approx(19.047619)
+    assert armed.size_adjust is None
     sized, _dollar = size_from_stop(8000.0, intent.limit_px, intent.stop, risk_pct=0.02)
     assert intent.size == pytest.approx(sized)
 
@@ -811,8 +861,161 @@ def test_eth_floor_only_stop_does_not_arm_and_a_deeper_wick_does():
         tick=tick,
         equity=8000.0,
     )
-    assert capped.armed is False
-    assert capped.fail_reason == "BAD_STOP"
+    assert capped.armed is True
+    assert capped.fail_reason is None
+    assert capped.size_adjust == SIZE_ADJUST_WIDE_STOP
+    assert capped.to_log()["size_adjust"] == "wide_stop"
+    wide_intent = capped.intent
+    assert wide_intent is not None
+    assert wide_intent.stop == pytest.approx(2659.4)
+    assert wide_intent.size == pytest.approx(3.448275)
+    assert wide_intent.size < intent.size
+    assert wide_intent.take_profit == pytest.approx(2775.4)
+    # 1.5R of the wide distance, still inside the 1–2R band and the pool.
+    assert wide_intent.take_profit <= 2800.0
+
+
+def _btc_1026_prints(now: float, *, sweep_px: float = 86054.0) -> list[TradePrint]:
+    """Oct 6 10:26 ET shape: BTC long swept 86054 and reclaimed, absorb well above 1.5."""
+    prints: list[TradePrint] = []
+    seq = 0
+
+    def add(offset: float, price: float, size: float, side: str) -> None:
+        nonlocal seq
+        prints.append(
+            TradePrint(ts=now + offset, coin="BTC", price=price, size=size, side=side, seq=seq)
+        )
+        seq += 1
+
+    for i in range(20):
+        add(-55 + i * 0.3, 86120.0, 20.0, "buy")
+    # Swept sell size 318. Reclaim buys sum to 1, so absorb is 318.
+    # Prefix buys keep the window delta non-negative.
+    add(-40, sweep_px, 159.0, "sell")
+    add(-38, sweep_px, 159.0, "sell")
+    for i in range(8):
+        add(-30 + i * 0.2, 86120.0, 0.1, "buy")
+    add(-10, 86120.0, 0.1, "buy")
+    add(-1, 86120.0, 0.1, "buy")
+    return prints
+
+
+def _btc_1026_bars(now: float, *, wick: float, swing: float = 86080.0) -> list[dict]:
+    """Swing low above the sweep. ``wick`` is the last bar and is not a fractal."""
+    t0 = now - 400
+    return [
+        {"t": t0, "o": 86200, "h": 86220, "l": 86150, "c": 86180, "v": 1},
+        {"t": t0 + 60, "o": 86180, "h": 86190, "l": swing, "c": 86140, "v": 1},
+        {"t": t0 + 120, "o": 86140, "h": 86170, "l": 86110, "c": 86150, "v": 1},
+        {"t": t0 + 180, "o": 86150, "h": 86180, "l": wick, "c": 86160, "v": 1},
+    ]
+
+
+def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
+    """Oct 6 10:26 ET BTC long: sweep 86054, absorb passed, stop past the wick.
+
+    The structural stop is inside the old 0.15% floor (~$129), which used
+    to log BAD_STOP after the flow gates. It now arms. Size is 2% of spot
+    USDC over that distance. A wick that pushes the stop past 1.5% also
+    arms, smaller, with size_adjust=wide_stop.
+    """
+    now = _now()
+    tick = 1.0
+    entry = 86054.0
+    equity = 10_000.0
+    prints = _btc_1026_prints(now)
+    # Wick under the sweep by less than the old 0.15% floor (~$129) and
+    # by more than 0.1%, so 2% / distance fits inside the 20× notional cap.
+    tight = _decide(
+        prints,
+        _btc_1026_bars(now, wick=85972.0),
+        [Pool("PDH", 90000.0, False)],
+        bid=86119.0,
+        ask=86121.0,
+        tick=tick,
+        equity=equity,
+    )
+    assert tight.armed is True
+    assert tight.fail_reason is None
+    assert tight.sweep_price == pytest.approx(entry)
+    assert tight.absorb == pytest.approx(318)
+    assert tight.size_adjust is None
+    intent = tight.intent
+    assert intent is not None
+    assert intent.side == "long"
+    assert intent.tif == "Alo"
+    assert intent.market_fallback is False
+    assert intent.limit_px == pytest.approx(entry)
+    assert intent.stop == pytest.approx(85954)
+    assert intent.stop < 85972.0
+    dist = entry - intent.stop
+    assert dist == pytest.approx(100)
+    assert dist < floor_distance(entry, tick)
+    assert intent.size == pytest.approx(math.floor((equity * 0.02) / dist * 1_000_000) / 1_000_000)
+    assert intent.size == pytest.approx(2.0)
+    # 1.5R, inside the pool, brackets sized to the Alo.
+    assert intent.take_profit == pytest.approx(entry + 1.5 * dist)
+    assert intent.take_profit <= 90000.0
+    sized, dollar = size_from_stop(equity, intent.limit_px, intent.stop, risk_pct=0.02)
+    assert intent.size == pytest.approx(sized)
+    assert dollar == pytest.approx(200.0)
+
+    wide = _decide(
+        prints,
+        _btc_1026_bars(now, wick=84700.0),
+        [Pool("PDH", 90000.0, False)],
+        bid=86119.0,
+        ask=86121.0,
+        tick=tick,
+        equity=equity,
+    )
+    assert wide.armed is True
+    assert wide.fail_reason is None
+    assert wide.size_adjust == "wide_stop"
+    assert wide.to_log()["size_adjust"] == "wide_stop"
+    wide_intent = wide.intent
+    assert wide_intent is not None
+    assert wide_intent.limit_px == pytest.approx(entry)
+    assert wide_intent.stop == pytest.approx(84682)
+    assert (entry - wide_intent.stop) / entry > 0.015
+    assert wide_intent.size < intent.size
+    assert wide_intent.size == pytest.approx(0.145772)
+    assert wide_intent.take_profit == pytest.approx(entry + 1.5 * (entry - wide_intent.stop))
+    # Not pulled up to the 1.5% level to fit the old cap.
+    assert wide_intent.stop < entry * (1.0 - 0.015)
+
+
+def test_stop_equal_to_entry_fails_closed(monkeypatch):
+    """Flow can pass and the idea still dies when the stop is not past the fill."""
+
+    def on_fill(side, extreme, entry, tick, tp_r=1.5, **kwargs):
+        del side, extreme, tick, tp_r, kwargs
+        return entry
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.engine.place_stop", on_fill)
+    same = _pass_case()
+    assert same.armed is False
+    assert same.intent is None
+    assert same.fail_reason == "BAD_STOP"
+    assert same.absorb is not None and same.absorb >= 1.5
+
+    def one_tick(side, extreme, entry, tick, tp_r=1.5, **kwargs):
+        del side, extreme, tp_r, kwargs
+        return entry - tick
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.engine.place_stop", one_tick)
+    collided = _pass_case()
+    assert collided.armed is False
+    assert collided.fail_reason == "BAD_STOP"
+
+    def wrong_side(side, extreme, entry, tick, tp_r=1.5, **kwargs):
+        del side, extreme, tick, tp_r, kwargs
+        return entry + 5
+
+    monkeypatch.setattr("hl_bot.strategy.model_b.engine.place_stop", wrong_side)
+    flipped = _pass_case()
+    assert flipped.armed is False
+    assert flipped.fail_reason == "BAD_STOP"
 
 
 def test_brackets_use_filled_size_when_margin_trimmed():

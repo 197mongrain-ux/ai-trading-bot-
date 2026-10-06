@@ -125,8 +125,9 @@ def local_bar_extreme(
 def atr14(bars: list[dict], now: float) -> float | None:
     """Mean of the last 14 true ranges, or ``None`` without 15 closed bars.
 
-    Short test tapes (four bars) must not invent a huge ATR and blow the
-    1.5% stop cap. Live candles have the history.
+    Short test tapes (four bars) must not invent a huge ATR and widen the
+    stop. Live candles have the history. A wide live ATR still arms; size
+    shrinks with the distance.
     """
     closed = _closed_bars(bars, now)
     if len(closed) < 15:

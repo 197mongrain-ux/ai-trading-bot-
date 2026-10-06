@@ -3,17 +3,18 @@
 - The stop is placed past the liquidity being swept, then the order is
   sized. Anchor is the further of the sweep wick, the swing, and the
   local 1-minute extreme. Buffer is ``max(3 ticks, 2 bps, 0.5×ATR14)``.
-- A 0.15% / 10-tick / fee floor is the minimum that anchor must already
-  clear. It is not a place to park the stop. When the sweep sits on the
-  Alo and nothing structural is beyond that floor, the floor price is
-  the cluster a stop-hunt wicks into. That arm fails closed (``BAD_STOP``)
-  instead of resting on the floor. A deeper wick is kept: the floor never
-  pulls the stop back inside it.
-- Distance above 1.5% of price is ``BAD_STOP``. The stop is not tightened
-  back into the wick to make the cap.
+- That structural stop is the stop. A distance inside the old 0.15% /
+  10-tick / fee floor is not parked on the floor and is not scrapped.
+  A deeper wick is kept: nothing pulls the stop back inside it.
+- A distance past 1.5% of price is still armed. Size shrinks with the
+  distance (``size_adjust=wide_stop`` on the journal). The stop is not
+  tightened back into the wick to make 1.5%.
 - Size = spot USDC × ``RISK_PER_TRADE`` / that stop distance. Model B
   requires the fraction to be 0.02. Wider stop, smaller size. Notional
-  capped at 20× the same balance.
+  capped at 20× the same balance, which trims a very tight stop.
+- ``BAD_STOP`` is only impossible geometry: wrong side of the fill,
+  stop == fill, or a one-tick collision (LIT). A size that rounds to
+  zero is the same fail-closed.
 - 20× only. 40× is rejected.
 - TP1 defaults to 1.5R, clamped to [1.0, 2.0] before the pool cap.
   The pool cap may pull TP inside 1R. It may not push TP through the pool.
@@ -44,8 +45,11 @@ STOP_ATR_FRACTION = 0.5
 STOP_FLOOR_TICKS = 10.0
 STOP_FLOOR_PCT = 0.0015
 STOP_FEE_R = 0.5
-# Wider than this is not armed. Do not pull the stop back up into the wick.
+# Journal threshold, not a reject. A structural stop wider than this is
+# armed at a smaller size (``size_adjust=wide_stop``). Do not pull the
+# stop back up into the wick to fit 1.5%.
 STOP_CAP_PCT = 0.015
+SIZE_ADJUST_WIDE_STOP = "wide_stop"
 # Hyperliquid base tier: maker 1.5 bps, taker 4.5 bps.
 # https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
 MAKER_FEE_RATE = 0.00015
@@ -97,10 +101,11 @@ def stop_buffer(entry: float, tick: float, atr: float | None = None) -> float:
 
 
 def floor_distance(entry: float, tick: float) -> float:
-    """Minimum distance a structural stop must already clear.
+    """Old minimum distance. A structural stop inside it still arms.
 
     ``max(10 ticks, 0.15% of entry, the distance that keeps a maker+taker
-    round trip inside 0.5R)``. This is a gate, not the stop itself.
+    round trip inside 0.5R)``. This is not where the stop is parked, and
+    a structural stop inside it is still armed.
     """
     if entry <= 0 or tick <= 0:
         return 0.0
@@ -109,10 +114,12 @@ def floor_distance(entry: float, tick: float) -> float:
 
 
 def min_stop_distance(entry: float, tick: float, tp_r: float = DEFAULT_TP_R) -> float:
-    """Smallest distance ``place_stop`` will accept. See ``floor_distance``.
+    """Old fee/tick floor. ``place_stop`` does not reject inside it.
 
+    Kept so a caller can compare a structural distance to that floor.
     ``tp_r`` is accepted so older callers keep working. The floor does not
-    shrink when R is raised: fees are capped at 0.5R, not at the TP multiple.
+    shrink when R is raised: the fee term is capped at 0.5R, not at the
+    TP multiple.
     """
     del tp_r
     return floor_distance(entry, tick)
@@ -174,6 +181,34 @@ def _snap_away(side: str, price: float, tick: float) -> float:
     return math.ceil(price / tick - 1e-9) * tick
 
 
+def collides_with_fill(entry: float, stop: float, tick: float) -> bool:
+    """True when the stop is the fill, or only one tick off it.
+
+    LIT shorts did this: one tick past the sweep was already the Alo, so
+    the stop and the fill were the same price.
+    """
+    dist = abs(float(entry) - float(stop))
+    if dist <= 1e-9:
+        return True
+    if tick > 0 and dist <= float(tick) * (1.0 + 1e-9):
+        return True
+    return False
+
+
+def size_adjust_tag(entry: float, stop: float) -> str | None:
+    """``wide_stop`` when distance is past 1.5% of entry, else ``None``.
+
+    The arm still happens. Size is risk / distance, so this tag means the
+    order was reduced instead of scrapped. It is not a gate.
+    """
+    if entry <= 0 or stop <= 0:
+        return None
+    dist = abs(float(entry) - float(stop))
+    if dist > abs(float(entry)) * STOP_CAP_PCT + 1e-6:
+        return SIZE_ADJUST_WIDE_STOP
+    return None
+
+
 def place_stop(
     side: str,
     extreme: float,
@@ -185,52 +220,38 @@ def place_stop(
     local_extreme: float | None = None,
     atr: float | None = None,
 ) -> float | None:
-    """Stop past sweep liquidity, or ``None`` when that would be a hunt stop.
+    """Stop past sweep liquidity, or ``None`` when the geometry is impossible.
 
     The anchor is the further of the sweep wick, the swing, and the local
     extreme. The buffer is added beyond that anchor and snapped away from
-    the entry. The 0.15% floor is applied only as a minimum the structural
-    stop must already satisfy:
+    the entry. That price is the stop:
 
-    - Structural distance inside the floor means the only candidate is the
-      floor itself (the ETH 2705.8 → 2701.7 case). Return ``None``.
-    - Structural distance beyond the floor is kept. The floor must not
-      lift a deeper wick back toward price.
-    - Distance above 1.5% of ``entry`` returns ``None``. The stop is not
-      tightened to the cap.
+    - Inside the old 0.15% floor, it is still used. It is not lifted onto
+      the floor (ETH 2705.8 must not rest at 2701.7) and it is not rejected.
+    - Past 1.5% of ``entry``, it is still used. Size shrinks. It is not
+      tightened into the wick.
+    - A deeper wick is never pulled back toward price.
 
-    ``tp_r`` is checked so the snapped stop still clears a round trip at
-    the clamped multiple. One tick past the Alo is never enough.
+    ``None`` is only impossible geometry: the stop is not strictly past
+    the fill, it sits on the fill, or it is only one tick away. ``tp_r``
+    does not reject the stop. TP is applied later from the distance.
     """
+    del tp_r
     if side not in ("long", "short") or tick <= 0 or extreme <= 0 or entry <= 0:
         return None
     anchor = liquidity_anchor(side, extreme, entry, swing, local_extreme)
     buffer = stop_buffer(entry, tick, atr)
-    floor_dist = floor_distance(entry, tick)
-    if buffer <= 0 or floor_dist <= 0:
+    if buffer <= 0:
         return None
     if side == "long":
         structural = anchor - buffer
-        # Tighter than the floor: the floor would be the stop. That is the
-        # wick-hunt cluster. Do not arm it.
-        if structural > entry - floor_dist + tick * 1e-6:
-            return None
         stop = _snap_away(side, structural, tick)
-        if stop <= 0 or not stop_is_valid(side, entry, stop):
+        if stop <= 0:
             return None
     else:
         structural = anchor + buffer
-        if structural < entry + floor_dist - tick * 1e-6:
-            return None
         stop = _snap_away(side, structural, tick)
-        if not stop_is_valid(side, entry, stop):
-            return None
-    dist = abs(entry - stop)
-    if dist > abs(entry) * STOP_CAP_PCT + tick * 1e-6:
-        return None
-    if dist + 1e-9 < floor_dist:
-        return None
-    if not stop_clears_fees(entry, stop, tick=tick, tp_r=tp_r):
+    if not stop_is_valid(side, entry, stop) or collides_with_fill(entry, stop, tick):
         return None
     return stop
 
@@ -245,22 +266,24 @@ def widen_stop_for_fill(
 ) -> float:
     """Keep the planned stop unless a structural recompute is wider.
 
-    Recomputing from the fill alone, with no wick beyond the floor, returns
-    ``None`` (that would be the hunt-floor stop). The stop chosen at the arm
-    stays. A one-tick nudge is never substituted.
+    A fill-only recompute has no wick. It must not replace the arm stop
+    with a tighter buffer, and a one-tick collision is never substituted.
+    Distance inside the old floor or past 1.5% does not drop the arm stop.
     """
-    del limit
+    del limit, tp_r
     if tick <= 0 or fill <= 0:
         return stop
-    pushed = place_stop(side, fill, fill, tick, tp_r=tp_r)
+    pushed = place_stop(side, fill, fill, tick)
     if pushed is None:
         return stop
     if side == "long":
         wider = min(stop, pushed)
     else:
         wider = max(stop, pushed)
-    if stop_is_valid(side, fill, wider) and stop_clears_fees(fill, wider, tick=tick, tp_r=tp_r):
+    if stop_is_valid(side, fill, wider) and not collides_with_fill(fill, wider, tick):
         return wider
+    if stop_is_valid(side, fill, stop) and not collides_with_fill(fill, stop, tick):
+        return stop
     return pushed
 
 
@@ -277,8 +300,9 @@ def size_from_stop(
     ``spot_usdc`` is the spot USDC balance (paper tests pass that balance
     in directly). It is not perp account value. ``risk_pct`` is
     ``RISK_PER_TRADE`` (0.02 for Model B), so dollar risk is at most 2% of
-    spot USDC. Notional is capped at 20× that same balance, which trims
-    size when the stop is tight. The fraction is not hard-wired here.
+    spot USDC. A wider stop returns a smaller size. Notional is capped at
+    20× that same balance, which trims size when the stop is very tight.
+    The fraction is not hard-wired here.
     """
     assert_leverage(leverage)
     if spot_usdc <= 0 or entry <= 0 or stop <= 0:

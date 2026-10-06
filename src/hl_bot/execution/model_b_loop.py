@@ -569,7 +569,7 @@ def run_model_b(
             logger.info(
                 "MODEL_B ARM %s %s alo=%s stop=%s tp=%s size=%s "
                 "bias=%s pool=%s swing=%s sweep=%s absorb=%s "
-                "dW=%s d15=%s score=%s vol=%s vp=%s",
+                "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s",
                 intent.coin,
                 intent.side,
                 intent.limit_px,
@@ -586,6 +586,7 @@ def run_model_b(
                 decision.score,
                 decision.volume_tag,
                 decision.vp_tag,
+                decision.size_adjust or "-",
             )
 
         equity_mark = equity
