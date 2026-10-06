@@ -7,7 +7,7 @@ Fail reasons, first match wins:
 
 Long, all true: a print at least 1 tick through the swing low; the last
 trade back above that low; absorb = sell size from sweep→reclaim / buy
-size from reclaim→now ≥ 1.5; 90s delta and last-15s delta at or above
+size from reclaim→now ≥ 1.3; 90s delta and last-15s delta at or above
 ``-DELTA_FLAT_EPS``. Short is the mirror (buy/sell swapped, deltas at or
 below ``+DELTA_FLAT_EPS``).
 
@@ -34,7 +34,10 @@ TESTNET_BTC_PRINTS_PER_MIN = 7.0
 # testnet floor is this bound, not 1.
 MIN_PRINTS_FLOOR = 3
 LAST_SEC = 15.0
-ABSORB_MIN = 1.5
+# Sell size from sweep→reclaim over buy size from reclaim→now. Short swaps
+# the sides. 2026-10-06: 1.5 was vetoing majors after sweep and reclaim had
+# cleared. The closest ETH short peaked at 1.34. The floor is 1.3.
+ABSORB_MIN = 1.3
 SWEEP_TICKS = 1.0
 # Flat band in coin size (buy sz − sell sz), the same units as logged dW.
 # 2026-10-06 testnet majors that already passed sweep+reclaim+absorb were

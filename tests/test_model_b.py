@@ -67,6 +67,7 @@ from hl_bot.strategy.model_b.risk import (
 from hl_bot.strategy.model_b.score import log_only_score, volume_tag
 from hl_bot.strategy.model_b.swings import atr14, local_bar_extreme
 from hl_bot.strategy.model_b.tape import (
+    ABSORB_MIN,
     DELTA_FLAT_EPS,
     MAINNET_BTC_PRINTS_PER_MIN,
     MIN_PRINTS,
@@ -380,16 +381,22 @@ def test_long_reclaim_absorb_and_deltas_arm():
 
 
 def test_absorb_boundary():
-    # 8*1.0 + 2*1.0 = 10 buy after reclaim, 2*7.5 = 15 sell → 1.5 exactly.
-    exact = _pass_case(reclaim_sz=1.0, late_sz=1.0)
+    assert ABSORB_MIN == pytest.approx(1.3)
+    # 8*1.0 + 2*1.0 = 10 buy after reclaim, 2*6.5 = 13 sell → 1.3 exactly.
+    exact = _pass_case(sweep_sz=6.5, reclaim_sz=1.0, late_sz=1.0)
     assert exact.armed is True
-    assert exact.absorb == pytest.approx(1.5)
+    assert exact.absorb == pytest.approx(1.3)
 
-    # 14.9 / 10 = 1.49
-    under = _pass_case(sweep_sz=7.45, reclaim_sz=1.0, late_sz=1.0)
+    # 13.4 / 10 = 1.34, the Oct 6 ETH short that peaked under the old 1.5 floor.
+    near = _pass_case(sweep_sz=6.7, reclaim_sz=1.0, late_sz=1.0)
+    assert near.armed is True
+    assert near.absorb == pytest.approx(1.34)
+
+    # 12.9 / 10 = 1.29
+    under = _pass_case(sweep_sz=6.45, reclaim_sz=1.0, late_sz=1.0)
     assert under.armed is False
     assert under.fail_reason == "ABSORB"
-    assert under.absorb == pytest.approx(1.49)
+    assert under.absorb == pytest.approx(1.29)
 
 
 def test_no_reclaim():
@@ -1029,7 +1036,7 @@ def test_eth_floor_only_stop_sizes_from_structure_and_a_deeper_wick_does():
 
 
 def _btc_1026_prints(now: float, *, sweep_px: float = 86054.0) -> list[TradePrint]:
-    """Oct 6 10:26 ET shape: BTC long swept 86054 and reclaimed, absorb well above 1.5."""
+    """Oct 6 10:26 ET shape: BTC long swept 86054 and reclaimed, absorb well above 1.3."""
     prints: list[TradePrint] = []
     seq = 0
 
@@ -1150,7 +1157,7 @@ def test_stop_equal_to_entry_fails_closed(monkeypatch):
     assert same.armed is False
     assert same.intent is None
     assert same.fail_reason == "BAD_STOP"
-    assert same.absorb is not None and same.absorb >= 1.5
+    assert same.absorb is not None and same.absorb >= ABSORB_MIN
 
     def one_tick(side, extreme, entry, tick, tp_r=1.5, **kwargs):
         del side, extreme, tp_r, kwargs
