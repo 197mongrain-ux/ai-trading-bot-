@@ -8,7 +8,8 @@ Exits are stop and TP only. One thesis per coin. Another coin may rest
 at the same time when the sizing balance still covers that ticket's
 initial margin (notional / 20) at the full 2% size. When it does not,
 a new coin takes the slot only by cancelling an unfilled Alo whose
-limit is strictly closer to the market, in bps.
+limit is strictly closer to the market, in bps. When BTC is the only
+close major, 60% of free-margin capacity stays available for BTC.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -29,7 +30,15 @@ from hl_bot.risk.manager import RiskManager
 from hl_bot.strategy.model_b.alo import distance_to_fill_bps, is_closer_to_fill, market_ref
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
-from hl_bot.strategy.model_b.risk import assert_leverage, initial_margin, ticket_fits
+from hl_bot.strategy.model_b.risk import (
+    BTC_FREE_MARGIN_RESERVE,
+    assert_leverage,
+    initial_margin,
+    leaves_btc_headroom,
+    non_btc_margin_cap,
+    reserve_headroom,
+    ticket_fits,
+)
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
 
@@ -185,6 +194,8 @@ def run_model_b(
         "halted": False,
     }
     iterations = 0
+    # True after a pass that held the BTC free-margin reserve.
+    btc_reserve_was = False
     allow = {c.upper() for c in coins} if coins is not None else None
     logger.info(
         "MODEL_B min_prints=%s network=%s",
@@ -344,6 +355,7 @@ def run_model_b(
         active = session_coins(now)
         if allow is not None:
             active = tuple(c for c in active if c in allow)
+        hunts: list[dict] = []
 
         # Live dollar risk is 2% of spot USDC. A missing read skips new
         # arms. It is not replaced with perp account value or STARTING_EQUITY.
@@ -426,24 +438,24 @@ def run_model_b(
                     if closed.remainder is not None and live is not None:
                         _cancel_working(closed.remainder, closed.reason, remainder=True)
 
-            if book.working(coin) is not None or book.position(coin) is not None:
-                continue
             if risk.halted_daily_loss or risk.killed:
                 continue
+            occupied = book.working(coin) is not None or book.position(coin) is not None
             if risk_base is None:
-                summary["fails"] += 1
-                journal.log(
-                    "model_b_fail",
-                    entry_mode="model_b",
-                    coin=coin,
-                    fail_reason="NO_SPOT_USDC",
-                    armed=False,
-                )
-                logger.info(
-                    "MODEL_B FAIL %s reason=NO_SPOT_USDC "
-                    "(no spot USDC; not using perp account value)",
-                    coin,
-                )
+                if not occupied:
+                    summary["fails"] += 1
+                    journal.log(
+                        "model_b_fail",
+                        entry_mode="model_b",
+                        coin=coin,
+                        fail_reason="NO_SPOT_USDC",
+                        armed=False,
+                    )
+                    logger.info(
+                        "MODEL_B FAIL %s reason=NO_SPOT_USDC "
+                        "(no spot USDC; not using perp account value)",
+                        coin,
+                    )
                 continue
 
             try:
@@ -476,6 +488,84 @@ def run_model_b(
                 equity=risk_base,
                 tick=tick,
             )
+            hunts.append(
+                {
+                    "coin": coin,
+                    "decision": decision,
+                    "bid": bid,
+                    "ask": ask,
+                    "last": last,
+                    "post": not occupied,
+                }
+            )
+
+        decisions = [item["decision"] for item in hunts]
+        reserve = btc_is_sole_close(decisions) if risk_base is not None else False
+        if reserve and not btc_reserve_was:
+            capacity = _btc_capacity(float(risk_base), book)
+            headroom = reserve_headroom(capacity)
+            logger.info(
+                "MODEL_B MARGIN BTC reserve engage fraction=%.2f capacity=%.4f reserve=%.4f",
+                BTC_FREE_MARGIN_RESERVE,
+                capacity,
+                headroom,
+            )
+            journal.log(
+                "model_b_margin",
+                entry_mode="model_b",
+                coin="BTC",
+                action="btc_reserve_engage",
+                fraction=BTC_FREE_MARGIN_RESERVE,
+                capacity=capacity,
+                reserve=headroom,
+            )
+        elif btc_reserve_was and not reserve:
+            logger.info("MODEL_B MARGIN BTC reserve release")
+            journal.log(
+                "model_b_margin",
+                entry_mode="model_b",
+                coin="BTC",
+                action="btc_reserve_release",
+            )
+        btc_reserve_was = reserve
+        if reserve and risk_base is not None:
+            capacity = _btc_capacity(float(risk_base), book)
+            cap = non_btc_margin_cap(capacity)
+            crowded = [
+                order
+                for order in book.resting_orders()
+                if order.coin.upper() != "BTC"
+            ]
+            crowded.sort(
+                key=lambda order: initial_margin(order.size, order.limit_px),
+                reverse=True,
+            )
+            kept_margin = sum(
+                initial_margin(order.size, order.limit_px) for order in crowded
+            )
+            for order in crowded:
+                if kept_margin <= cap + 1e-6:
+                    break
+                released = book.release_for_closer(order.coin)
+                if released is None:
+                    continue
+                kept_margin -= initial_margin(released.size, released.limit_px)
+                _cancel_working(
+                    released,
+                    "btc_margin_reserve",
+                    reserve=reserve_headroom(capacity),
+                    capacity=capacity,
+                    fraction=BTC_FREE_MARGIN_RESERVE,
+                )
+
+        for hunt in hunts:
+            if not hunt["post"]:
+                continue
+            coin = hunt["coin"]
+            decision = hunt["decision"]
+            bid = hunt["bid"]
+            ask = hunt["ask"]
+            last = hunt["last"]
             if not decision.armed or decision.intent is None:
                 summary["fails"] += 1
                 journal.log(
@@ -507,6 +597,49 @@ def run_model_b(
             # and open positions. When the remainder cannot fund this
             # ticket, fall back to cancelling a strictly farther unfilled
             # Alo. A filled position is never cancelled.
+            if reserve and coin != "BTC":
+                capacity = _btc_capacity(float(risk_base), book)
+                reserve_need = initial_margin(intent.size, intent.limit_px)
+                committed = _non_btc_resting_margin(book)
+                headroom = reserve_headroom(capacity)
+                free_for_btc = capacity - committed
+                if not leaves_btc_headroom(capacity, committed, reserve_need):
+                    summary["fails"] += 1
+                    journal.log(
+                        "model_b_fail",
+                        entry_mode="model_b",
+                        **{
+                            **decision.to_log(),
+                            "fail_reason": "BTC_MARGIN_RESERVE",
+                            "armed": False,
+                            "free_margin": free_for_btc,
+                            "margin_need": reserve_need,
+                            "reserve": headroom,
+                            "capacity": capacity,
+                        },
+                    )
+                    journal.log(
+                        "model_b_margin",
+                        entry_mode="model_b",
+                        coin=coin,
+                        action="btc_reserve_hold",
+                        free_margin=free_for_btc,
+                        margin_need=reserve_need,
+                        reserve=headroom,
+                        capacity=capacity,
+                        fraction=BTC_FREE_MARGIN_RESERVE,
+                    )
+                    logger.info(
+                        "MODEL_B MARGIN %s btc_reserve_hold free=%.4f need=%.4f "
+                        "reserve=%.4f capacity=%.4f",
+                        coin,
+                        free_for_btc,
+                        reserve_need,
+                        headroom,
+                        capacity,
+                    )
+                    continue
+
             resting = [order for order in book.resting_orders() if order.coin != intent.coin]
             if resting:
                 used = _margin_in_use(book)
@@ -676,6 +809,72 @@ def run_model_b(
     summary["equity"] = equity
     summary["iterations"] = iterations
     return summary
+
+
+# A confirmed swing the hunt is still waiting on. A fresh arm is a ticket,
+# not a waiting setup. Thin tape and no swing never get here.
+_CLOSE_FAILS = frozenset(
+    {
+        "NO_SWEEP",
+        "NO_RECLAIM",
+        "ABSORB",
+        "DELTA",
+        "LAST_15s",
+        "NO_ALO",
+        "BAD_STOP",
+        "BAD_TP",
+    }
+)
+
+
+def is_close_setup(decision) -> bool:
+    """True when this pass has a live swing and did not post.
+
+    Close is the sweep/reclaim path: waiting on the sweep (``NO_SWEEP``)
+    or reclaim (``NO_RECLAIM``), or a later tape/geometry fail on that
+    swing. ``THIN_TAPE``, ``NO_SWING``, ``NO_SIDE``, and ``OUT_OF_SESSION``
+    have no swing, so they are not close. ``THESIS_DONE``, ``SECOND_ALO``,
+    and ``AVERAGE_DOWN`` are not close. A coin that arms this pass is a
+    ticket, not a waiting setup.
+    """
+    if decision.swing is None or decision.armed:
+        return False
+    return decision.fail_reason in _CLOSE_FAILS
+
+
+def btc_is_sole_close(decisions) -> bool:
+    """True when BTC is the only close major and some other major was judged.
+
+    A BTC-only pass has nobody else to take the margin, so the reserve
+    stays off.
+    """
+    close = {d.coin for d in decisions if is_close_setup(d)}
+    others = {d.coin for d in decisions if d.coin != "BTC"}
+    return close == {"BTC"} and bool(others)
+
+
+def _btc_capacity(equity: float, book: ThesisBook) -> float:
+    """Sizing balance minus margin this rule will not cancel.
+
+    Open positions stay. A resting BTC Alo stays. Non-BTC Alos are not
+    included; they are the orders the reserve may cancel.
+    """
+    locked = 0.0
+    for pos in book.open_positions():
+        locked += initial_margin(pos.size, pos.entry)
+    for order in book.working_orders():
+        if order.coin.upper() == "BTC":
+            locked += initial_margin(order.size, order.limit_px)
+    return float(equity) - locked
+
+
+def _non_btc_resting_margin(book: ThesisBook) -> float:
+    used = 0.0
+    for order in book.resting_orders():
+        if order.coin.upper() == "BTC":
+            continue
+        used += initial_margin(order.size, order.limit_px)
+    return used
 
 
 def _margin_in_use(book: ThesisBook) -> float:

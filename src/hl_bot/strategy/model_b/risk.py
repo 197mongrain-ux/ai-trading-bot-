@@ -319,6 +319,53 @@ def ticket_fits(
     return need <= free + 1e-6
 
 
+# While BTC is the only close major, this fraction of free-margin capacity
+# stays available for a full BTC 2% ticket. Non-BTC Alos may use the rest.
+BTC_FREE_MARGIN_RESERVE = 0.60
+
+
+def reserve_headroom(
+    capacity: float,
+    fraction: float = BTC_FREE_MARGIN_RESERVE,
+) -> float:
+    """USDC that must stay free for BTC.
+
+    ``capacity`` is the sizing balance minus margin that will not be
+    cancelled for this rule (open positions and a BTC order).
+    """
+    if capacity <= 0 or fraction <= 0:
+        return 0.0
+    return float(capacity) * float(fraction)
+
+
+def non_btc_margin_cap(
+    capacity: float,
+    fraction: float = BTC_FREE_MARGIN_RESERVE,
+) -> float:
+    """Initial margin non-BTC Alos may use while the BTC reserve is on."""
+    if capacity <= 0:
+        return 0.0
+    frac = min(max(float(fraction), 0.0), 1.0)
+    return float(capacity) * (1.0 - frac)
+
+
+def leaves_btc_headroom(
+    capacity: float,
+    committed_non_btc: float,
+    new_need: float,
+    fraction: float = BTC_FREE_MARGIN_RESERVE,
+) -> bool:
+    """True when non-BTC margin, including ``new_need``, stays inside the cap.
+
+    After the new ticket, free margin is still at least ``fraction`` of
+    ``capacity``.
+    """
+    return (
+        float(committed_non_btc) + float(new_need)
+        <= non_btc_margin_cap(capacity, fraction) + 1e-6
+    )
+
+
 def size_from_stop(
     spot_usdc: float,
     entry: float,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from types import SimpleNamespace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -33,7 +34,12 @@ from hl_bot.exchange.info_client import (
     parse_spot_usdc_total,
 )
 from hl_bot.execution.loop import run_bot
-from hl_bot.execution.model_b_loop import format_model_b_fail, run_model_b
+from hl_bot.execution.model_b_loop import (
+    btc_is_sole_close,
+    format_model_b_fail,
+    is_close_setup,
+    run_model_b,
+)
 from hl_bot.journal import TradeJournal
 from hl_bot.strategy.model_b.alo import (
     alo_limit,
@@ -54,7 +60,10 @@ from hl_bot.strategy.model_b.risk import (
     flow_exit_reason,
     heal_stop,
     floor_distance,
+    BTC_FREE_MARGIN_RESERVE,
     initial_margin,
+    leaves_btc_headroom,
+    non_btc_margin_cap,
     place_stop,
     size_adjust_tag,
     size_from_stop,
@@ -2253,6 +2262,234 @@ def test_same_coin_stays_blocked_when_margin_is_free(tmp_path):
     arms = [r for r in rows if r["event"] == "model_b_arm"]
     assert [r["coin"] for r in arms] == ["BTC", "ETH"]
     assert not any(r.get("fail_reason") in ("SECOND_ALO", "AVERAGE_DOWN") for r in rows)
+
+
+def _setup(coin, swing, fail, armed=False):
+    return SimpleNamespace(coin=coin, swing=swing, fail_reason=fail, armed=armed)
+
+
+def _waiting_prints(now: float, coin: str, *, n: int = 40, price: float = 104.0, seq0: int = 0):
+    """Thick tape that never trades through the swing. That is NO_SWEEP."""
+    return [
+        TradePrint(
+            ts=now - 50 + i * 0.4,
+            coin=coin,
+            price=price,
+            size=0.2,
+            side="buy",
+            seq=seq0 + i,
+        )
+        for i in range(n)
+    ]
+
+
+def test_btc_reserve_heuristic_is_a_waiting_swing_not_the_delta_floor():
+    """Close = confirmed swing, still waiting. The 0.05 coin floor stays."""
+    assert DELTA_FLAT_EPS == pytest.approx(0.05)
+    assert DELTA_FLAT_USDC == pytest.approx(100)
+    assert BTC_FREE_MARGIN_RESERVE == pytest.approx(0.60)
+    assert non_btc_margin_cap(5000) == pytest.approx(2000)
+    assert leaves_btc_headroom(5000, 0, 480)
+    assert leaves_btc_headroom(5000, 0, 5000) is False
+    btc = _setup("BTC", 85922.0, "NO_SWEEP")
+    eth_thin = _setup("ETH", None, "THIN_TAPE")
+    eth_wait = _setup("ETH", 2700.0, "NO_SWEEP")
+    assert is_close_setup(btc)
+    assert is_close_setup(_setup("SOL", 150.0, "NO_RECLAIM"))
+    assert is_close_setup(_setup("ETH", 2700.0, "ABSORB"))
+    assert not is_close_setup(eth_thin)
+    assert not is_close_setup(_setup("ETH", None, "NO_SWEEP"))
+    assert not is_close_setup(_setup("ETH", 2700.0, None, armed=True))
+    assert not is_close_setup(_setup("BTC", 85922.0, "THESIS_DONE"))
+    assert not is_close_setup(_setup("ETH", 2700.0, "SECOND_ALO"))
+    assert btc_is_sole_close([btc, eth_thin, _setup("SOL", None, "NO_SWING")])
+    assert btc_is_sole_close([btc, eth_wait]) is False
+    # A BTC-only pass has no other major that could take the margin.
+    assert btc_is_sole_close([btc]) is False
+    assert btc_is_sole_close([_setup("BTC", 85922.0, None, armed=True), eth_thin]) is False
+
+
+def test_btc_reserve_holds_a_full_size_alt_and_allows_a_small_one(tmp_path, caplog):
+    """BTC waiting on the sweep. A tight ETH ticket would spend the reserve."""
+    now = _now()
+    btc = _waiting_prints(now, "BTC")
+    eth = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "ETH",
+    )
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_tight_bars(now), coin="ETH")
+    feed = MemoryFeed(
+        btc + eth,
+        bbo={"BTC": (103.0, 105.0), "ETH": (102.0, 104.0)},
+    )
+    journal = tmp_path / "reserve-hold.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC", "ETH"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 0
+    assert summary["cancels"] == 0
+    rows = TradeJournal(journal).read_all()
+    assert any(r.get("coin") == "BTC" and r.get("fail_reason") == "NO_SWEEP" for r in rows)
+    held = [r for r in rows if r.get("fail_reason") == "BTC_MARGIN_RESERVE"]
+    assert len(held) == 1
+    assert held[0]["coin"] == "ETH"
+    assert held[0]["margin_need"] > held[0]["reserve"]
+    assert any(r.get("action") == "btc_reserve_engage" for r in rows)
+    assert any(r.get("action") == "btc_reserve_hold" for r in rows)
+    assert any("reserve engage" in rec.message for rec in caplog.records)
+    assert any("btc_reserve_hold" in rec.message for rec in caplog.records)
+
+    wide = InfoClient()
+    wide.inject_bars(_bars(now), coin="BTC")
+    wide.inject_bars(_bars(now), coin="ETH")
+    wide_journal = tmp_path / "reserve-wide.jsonl"
+    wide_summary = run_model_b(
+        Settings(
+            entry_mode="model_b",
+            risk_per_trade=0.02,
+            journal_path=str(wide_journal),
+            loop_interval_sec=0,
+        ),
+        max_iterations=1,
+        info=wide,
+        feed=MemoryFeed(
+            btc + eth,
+            bbo={"BTC": (103.0, 105.0), "ETH": (102.0, 104.0)},
+        ),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC", "ETH"),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    assert wide_summary["arms"] == 1
+    assert wide_summary["cancels"] == 0
+    wide_rows = TradeJournal(wide_journal).read_all()
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in wide_rows)
+    assert not any(r.get("fail_reason") == "BTC_MARGIN_RESERVE" for r in wide_rows)
+    assert any(r.get("action") == "btc_reserve_engage" for r in wide_rows)
+
+
+def test_btc_reserve_cancels_a_resting_alt_then_releases(tmp_path, caplog):
+    """A tight ETH Alo is dropped once BTC is the only close major."""
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_tight_bars(now), coin="ETH")
+    eth = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "ETH",
+    )
+    feed = MemoryFeed(
+        _long_prints(now)[:5] + eth,
+        bbo={"BTC": (103.0, 105.0), "ETH": (102.0, 104.0)},
+    )
+    step = {"n": 0}
+
+    def sleep_fn(_sec):
+        step["n"] += 1
+        feed._prints.clear()
+        if step["n"] == 1:
+            feed._prints.extend(_waiting_prints(now, "BTC"))
+            feed._prints.extend(_retag(_long_prints(now)[:2], "ETH"))
+        elif step["n"] == 2:
+            feed._prints.extend(_long_prints(now)[:4])
+            feed._prints.extend(_retag(_long_prints(now)[:4], "ETH"))
+
+    journal = tmp_path / "reserve-cancel.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=3,
+            info=info,
+            feed=feed,
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC", "ETH"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    rows = TradeJournal(journal).read_all()
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert cancels[0]["coin"] == "ETH"
+    assert cancels[0]["reason"] == "btc_margin_reserve"
+    assert any(r.get("action") == "btc_reserve_engage" for r in rows)
+    assert any(r.get("action") == "btc_reserve_release" for r in rows)
+    assert any("reserve engage" in rec.message for rec in caplog.records)
+    assert any("reserve release" in rec.message for rec in caplog.records)
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
+
+
+def test_another_close_major_keeps_the_resting_alt(tmp_path, caplog):
+    """ETH waiting on its own sweep is also close, so the 60% lock stays off."""
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_tight_bars(now), coin="ETH")
+    eth = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "ETH",
+    )
+    feed = MemoryFeed(
+        _long_prints(now)[:5] + eth,
+        bbo={"BTC": (103.0, 105.0), "ETH": (102.0, 104.0)},
+    )
+
+    def sleep_fn(_sec):
+        feed._prints.clear()
+        feed._prints.extend(_waiting_prints(now, "BTC"))
+        feed._prints.extend(_waiting_prints(now, "ETH", seq0=100))
+
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(tmp_path / "reserve-both.jsonl"),
+                loop_interval_sec=0,
+            ),
+            max_iterations=2,
+            info=info,
+            feed=feed,
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC", "ETH"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
+    rows = TradeJournal(tmp_path / "reserve-both.jsonl").read_all()
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+    assert not any(r.get("action") == "btc_reserve_engage" for r in rows)
+    assert not any("reserve engage" in rec.message for rec in caplog.records)
 
 
 def test_ticket_fits_uses_notional_over_leverage_on_the_sizing_balance():
