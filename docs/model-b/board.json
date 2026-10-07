@@ -2,11 +2,26 @@
   "title": "Model B \u00b7 Mainnet performance",
   "model": "model_b",
   "since_et": "2026-10-06T21:34:00-04:00",
-  "generated_et": "2026-10-07T14:06:17.443853-04:00",
+  "generated_et": "2026-10-07T15:07:38.497504-04:00",
   "network": "mainnet",
   "framing": "Hyperliquid MAINNET \u2014 Model B closed trades since flip",
   "starting_fund": 14.8,
-  "total_funds": 16.012202,
+  "deposits": 54.116662,
+  "withdrawals": 0,
+  "net_flows": 54.116662,
+  "total_deposited": 68.916662,
+  "total_funds": 69.528575,
+  "cash_flows": [
+    {
+      "time_ms": 1791399625590,
+      "time_et": "2026-10-07 15:00:25 ET",
+      "amount": 54.116662,
+      "kind": "deposit",
+      "ledger_type": "send",
+      "source": "hl_ledger"
+    }
+  ],
+  "cash_flows_source": "hl_ledger",
   "money_source": "hl_fills",
   "hl": {
     "ok": true,
@@ -26,16 +41,25 @@
     "net_pnl": 0.498192,
     "vs_starting_usd": 0.498192,
     "vs_starting_pct": 3.366,
+    "net_on_capital_pct": 0.723,
+    "twr_pct": 3.4,
+    "funding": -0.003879,
     "starting_fund": 14.8,
-    "spot_usdc": 15.653802,
-    "spot_hold": 8.71864,
-    "unrealized_pnl": 0.3584,
-    "margin_used": 8.71864,
-    "total_funds": 16.012202,
-    "spot_vs_starting_usd": 0.853802,
-    "spot_vs_starting_pct": 5.769,
-    "total_vs_starting_usd": 1.212202,
-    "total_vs_starting_pct": 8.191
+    "deposits": 54.116662,
+    "withdrawals": 0,
+    "net_flows": 54.116662,
+    "total_deposited": 68.916662,
+    "spot_usdc": 69.528575,
+    "spot_hold": 8.7066,
+    "unrealized_pnl": 0.1176,
+    "margin_used": 8.7066,
+    "total_funds": 69.528575,
+    "total_pnl_usd": 0.611913,
+    "total_pnl_pct": 0.888,
+    "total_vs_starting_usd": 0.611913,
+    "total_vs_starting_pct": 0.888,
+    "expected_equity": 69.528575,
+    "recon_residual": 0.0
   },
   "daily": [
     {
@@ -48,9 +72,14 @@
       "gross_pnl": 0.747184,
       "fees": 0.243981,
       "net_pnl": 0.503203,
+      "deposits": 54.116662,
+      "withdrawals": 0.0,
+      "net_flows": 54.116662,
       "equity_start": 14.8,
-      "equity_end": 15.303203,
-      "daily_pct": 3.4
+      "capital": 68.916662,
+      "equity_end": 69.419865,
+      "daily_pct": 3.4,
+      "daily_pct_on_capital": 0.73
     }
   ],
   "closed_trades": [
@@ -121,8 +150,8 @@
       "szi": 0.0056,
       "side": "long",
       "entry": 31074.0,
-      "uPnl": 0.3584,
-      "marginUsed": 8.71864,
+      "uPnl": 0.1176,
+      "marginUsed": 8.7066,
       "dex": "xyz"
     }
   ],
@@ -130,8 +159,9 @@
     "Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.",
     "Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.",
     "Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL \u2212 fees.",
-    "Overall net = sum(closedPnl) \u2212 all fill fees in window (matches spot drift aside from transfers).",
-    "Daily % PnL = that day's net / equity at start of day (running from starting fund).",
-    "Starting fund = STARTING_EQUITY at flip (~$14.80). Total funds = spot USDC + unrealized PnL."
+    "Overall net = sum(closedPnl) \u2212 all fill fees in window (realized trades only).",
+    "Deposits/withdrawals come from HL userNonFundingLedgerUpdates (fallback: reports/model_b_deposits.json). They are capital, never PnL.",
+    "Daily % PnL is time-weighted: the day is split at each deposit/withdrawal and each slice's realized net is divided by equity at the slice start, then chained. % on capital = net / (start-of-day equity + that day's deposits).",
+    "Starting fund = $14.80 at the mainnet flip. Total deposited = starting fund + net deposits. Total funds = spot USDC (unified account: already includes perp margin + unrealized PnL). Total PnL = total funds \u2212 total deposited (includes funding + unrealized)."
   ]
 }
