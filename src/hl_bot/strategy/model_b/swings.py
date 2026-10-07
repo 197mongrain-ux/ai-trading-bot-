@@ -9,6 +9,7 @@ latest confirmed swing that is at least 3 ticks from the last trade
 from __future__ import annotations
 
 from hl_bot.strategy.model_b.types import Swing
+from hl_bot.strategy.model_b.universe import canon_coin
 
 # Epoch milliseconds are ~1e12. Values below this are treated as seconds
 # so tests can pass small bar opens without colliding with live candles.
@@ -91,7 +92,7 @@ def select_swing(
 
 
 def swing_id(coin: str, swing: Swing) -> str:
-    return f"{coin.upper()}:{swing.kind}:{swing.price:.8f}:{int(swing.ts)}"
+    return f"{canon_coin(coin)}:{swing.kind}:{swing.price:.8f}:{int(swing.ts)}"
 
 
 def closed_prices(

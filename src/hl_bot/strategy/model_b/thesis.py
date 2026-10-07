@@ -20,6 +20,7 @@ from hl_bot.strategy.model_b.risk import (
     widen_stop_for_fill,
 )
 from hl_bot.strategy.model_b.types import AloIntent, TradePrint
+from hl_bot.strategy.model_b.universe import canon_coin
 
 # 0 = no maker timer. Cancel only when the thesis is stale.
 WORK_SEC = 0.0
@@ -108,7 +109,7 @@ class ThesisBook:
         self.flatten_cancels: list[WorkingOrder] = []
 
     def _state(self, coin: str) -> _CoinState:
-        coin = coin.upper()
+        coin = canon_coin(coin)
         st = self._coins.get(coin)
         if st is None:
             st = _CoinState()
@@ -116,7 +117,7 @@ class ThesisBook:
         return st
 
     def block_reason(self, coin: str, swing_id: str) -> str | None:
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None:
             return None
         if st.position is not None:
@@ -136,7 +137,7 @@ class ThesisBook:
         if reason:
             raise ValueError(reason)
         order = WorkingOrder(
-            coin=intent.coin.upper(),
+            coin=canon_coin(intent.coin),
             side=intent.side,
             limit_px=intent.limit_px,
             size=intent.size,
@@ -184,7 +185,7 @@ class ThesisBook:
         A print that fills the resting order is not a cancel. The swing is
         consumed either way once cancelled.
         """
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None or st.working is None:
             return []
         # A partial fill keeps the position. Stale still cancels the
@@ -193,7 +194,7 @@ class ThesisBook:
         if order.sweep_px is None:
             return []
         for print_ in sorted(prints, key=lambda p: (p.ts, p.seq)):
-            if print_.coin.upper() != order.coin or print_.ts + 1e-9 < order.posted_at:
+            if canon_coin(print_.coin) != order.coin or print_.ts + 1e-9 < order.posted_at:
                 continue
             if _print_stales_order(order, print_):
                 st.consumed.add(order.swing_id)
@@ -202,7 +203,7 @@ class ThesisBook:
         return []
 
     def working(self, coin: str) -> WorkingOrder | None:
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         return None if st is None else st.working
 
     def resting_orders(self) -> list[WorkingOrder]:
@@ -241,7 +242,7 @@ class ThesisBook:
         The swing is consumed so this thesis does not immediately repost
         and take the margin back.
         """
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None or st.working is None or st.position is not None:
             return None
         order = st.working
@@ -250,7 +251,7 @@ class ThesisBook:
         return order
 
     def position(self, coin: str) -> OpenPosition | None:
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         return None if st is None else st.position
 
     def _fill(
@@ -345,7 +346,7 @@ class ThesisBook:
         """
         if not prints:
             return None
-        coin = prints[0].coin.upper()
+        coin = canon_coin(prints[0].coin)
         st = self._coins.get(coin)
         if st is None or st.working is None or st.position is not None:
             return None
@@ -391,7 +392,7 @@ class ThesisBook:
         A taker fill with no position is ignored (no market entry).
         Unknown ``crossed`` is ignored.
         """
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if crossed is True:
             if st is None or st.position is None:
                 return None
@@ -415,7 +416,7 @@ class ThesisBook:
 
     def try_exit(self, coin: str, price: float) -> CloseEvent | None:
         """Stop or TP only. Flow / delta is not consulted."""
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None or st.position is None or price <= 0:
             return None
         pos = st.position
@@ -442,7 +443,7 @@ class ThesisBook:
         exchange is flat either way. The resting Alo must not keep
         reserving margin until the thesis goes stale.
         """
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None or st.position is None or price <= 0:
             return None
         return self._close_open(st, st.position, float(price), reason)
@@ -471,7 +472,7 @@ class ThesisBook:
 
     def propose_stop(self, coin: str, proposed: float) -> float | None:
         """Heal path. A tighter stop cannot replace a wider one."""
-        st = self._coins.get(coin.upper())
+        st = self._coins.get(canon_coin(coin))
         if st is None or st.position is None:
             return None
         st.position.stop = heal_stop(st.position.side, st.position.stop, proposed)

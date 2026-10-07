@@ -57,6 +57,12 @@ def test_parse_symbols_from_env(monkeypatch):
     assert _parse_symbols() == ("BTC", "SOL", "XRP")
 
 
+def test_parse_symbols_keeps_hip3_dex_lowercase(monkeypatch):
+    monkeypatch.setenv("SYMBOLS", "btc,XYZ:gold,xyz:XYZ100")
+    monkeypatch.delenv("SYMBOL", raising=False)
+    assert _parse_symbols() == ("BTC", "xyz:GOLD", "xyz:XYZ100")
+
+
 def test_parse_symbol_fallback(monkeypatch):
     monkeypatch.delenv("SYMBOLS", raising=False)
     monkeypatch.setenv("SYMBOL", "eth")

@@ -21,6 +21,7 @@ amend that fails is logged; the hunt keeps running.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Callable
 
@@ -43,7 +44,40 @@ from hl_bot.strategy.model_b.risk import (
     ticket_fits,
 )
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
-from hl_bot.strategy.model_b.universe import NY_COINS, session_coins
+from hl_bot.strategy.model_b.universe import (
+    DEFAULT_HUNT_COINS,
+    perp_dexs_for,
+    resolve_hunt_coins,
+    session_coins,
+)
+
+
+def _env_symbols_set() -> bool:
+    raw = os.getenv("SYMBOLS")
+    if raw is not None and raw.strip():
+        return True
+    raw_one = os.getenv("SYMBOL")
+    return raw_one is not None and bool(raw_one.strip())
+
+
+def model_b_hunt_coins(
+    settings: Settings,
+    coins: tuple[str, ...] | list[str] | None = None,
+) -> tuple[str, ...]:
+    """Coins this process hunts, majors first unless ``coins`` says otherwise.
+
+    An explicit ``coins`` argument wins (tests and callers). When
+    ``ENTRY_MODE=model_b`` and ``SYMBOLS`` or ``SYMBOL`` is set, that env
+    list is the hunt, so a later edit does not need a code change. Otherwise
+    the default mainnet universe is used. The breakout default
+    ``BTC, SOL, XRP`` is not a Model B list.
+    """
+    if coins is not None:
+        return resolve_hunt_coins(coins)
+    if (settings.entry_mode or "").strip().lower() == "model_b" and _env_symbols_set():
+        return resolve_hunt_coins(settings.symbols)
+    return DEFAULT_HUNT_COINS
+
 
 logger = logging.getLogger(__name__)
 
@@ -148,11 +182,12 @@ def run_model_b(
     clock = now_fn or time.time
     info = info or InfoClient(base_url=settings.api_url)
 
+    hunt_coins = model_b_hunt_coins(settings, coins)
     own_feed = feed is None
     if feed is None:
         feed = HyperliquidTradeFeed(
             network=settings.network,
-            coins=NY_COINS,
+            coins=hunt_coins,
             user=settings.account_address or None,
         )
     if connect_feed is None:
@@ -171,6 +206,7 @@ def run_model_b(
                 private_key=settings.private_key,
                 account_address=settings.account_address or None,
                 base_url=settings.api_url,
+                perp_dexs=perp_dexs_for(hunt_coins),
             )
 
     book = ThesisBook(work_sec=settings.model_b_alo_timeout_sec)
@@ -182,6 +218,7 @@ def run_model_b(
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
         delta_flat_eps=settings.model_b_delta_flat_eps,
         delta_flat_usdc=settings.model_b_delta_flat_usdc,
+        coins=hunt_coins,
     )
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
@@ -231,11 +268,11 @@ def run_model_b(
     iterations = 0
     # True after a pass that held the BTC free-margin reserve.
     btc_reserve_was = False
-    allow = {c.upper() for c in coins} if coins is not None else None
     logger.info(
-        "MODEL_B min_prints=%s network=%s",
+        "MODEL_B min_prints=%s network=%s coins=%s",
         settings.model_b_min_prints,
         settings.network,
+        ",".join(hunt_coins),
     )
 
     while True:
@@ -410,9 +447,7 @@ def run_model_b(
                             applied.remainder, applied.reason, remainder=True
                         )
 
-        active = session_coins(now)
-        if allow is not None:
-            active = tuple(c for c in active if c in allow)
+        active = session_coins(now, symbols=hunt_coins)
         hunts: list[dict] = []
 
         # Live dollar risk is 2% of spot USDC. A missing read skips new

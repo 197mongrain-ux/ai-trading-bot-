@@ -24,6 +24,7 @@ from collections import deque
 from itertools import count
 
 from hl_bot.strategy.model_b.types import TradePrint
+from hl_bot.strategy.model_b.universe import canon_coin
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +44,12 @@ def app_ping() -> dict:
 
 
 def normalize_coin(raw: object) -> str:
-    """Hunt symbols are bare uppercase perps: ``BTC``, not ``btc`` or ``BTC-PERP``."""
-    coin = str(raw or "").strip().upper()
-    if coin.endswith("-PERP"):
-        coin = coin[: -len("-PERP")].strip()
-    return coin
+    """Bare uppercase perps, or HIP-3 ``dex:ASSET`` with a lowercase dex.
+
+    ``btc-perp`` is ``BTC``. ``XYZ:gold`` is ``xyz:GOLD`` — the info API
+    rejects the uppercased dex prefix.
+    """
+    return canon_coin(raw)
 
 
 def ws_url(network: str) -> str:
@@ -163,7 +165,7 @@ class UserFill:
         ts: float,
         crossed: bool | None,
     ):
-        self.coin = coin.upper()
+        self.coin = canon_coin(coin)
         self.oid = oid
         self.price = price
         self.size = size
@@ -206,15 +208,15 @@ class MemoryFeed:
         user_fills: list[UserFill] | None = None,
     ):
         self._prints = list(prints or [])
-        self._bbo = {k.upper(): v for k, v in (bbo or {}).items()}
+        self._bbo = {canon_coin(k): v for k, v in (bbo or {}).items()}
         self._fills = list(user_fills or [])
 
     def prints(self, coin: str) -> list[TradePrint]:
-        coin = coin.upper()
+        coin = canon_coin(coin)
         return [p for p in self._prints if p.coin == coin]
 
     def bbo(self, coin: str) -> tuple[float | None, float | None]:
-        return self._bbo.get(coin.upper(), (None, None))
+        return self._bbo.get(canon_coin(coin), (None, None))
 
     def take_user_fills(self) -> list[UserFill]:
         out = list(self._fills)
@@ -237,7 +239,7 @@ class HyperliquidTradeFeed:
     ):
         self.network = network
         self.url = ws_url(network)
-        self.coins = tuple(dict.fromkeys(c.upper() for c in coins if c))
+        self.coins = tuple(dict.fromkeys(canon_coin(c) for c in coins if canon_coin(c)))
         self.user = user or None
         self._prints: dict[str, deque[TradePrint]] = {}
         self._bbo: dict[str, tuple[float | None, float | None]] = {}

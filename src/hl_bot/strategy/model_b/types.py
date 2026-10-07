@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
+from hl_bot.strategy.model_b.universe import canon_coin
+
 
 @dataclass(frozen=True)
 class TradePrint:
@@ -21,7 +23,7 @@ class TradePrint:
     seq: int = 0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "coin", self.coin.upper())
+        object.__setattr__(self, "coin", canon_coin(self.coin))
 
 
 @dataclass(frozen=True)
