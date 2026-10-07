@@ -36,10 +36,11 @@ from hl_bot.exchange.info_client import (
 from hl_bot.execution.loop import run_bot
 from hl_bot.execution.model_b_loop import (
     _margin_in_use,
-    btc_is_sole_close,
+    close_distance_bps,
     format_model_b_fail,
     is_close_setup,
     model_b_hunt_coins,
+    preferred_close,
     run_model_b,
 )
 from hl_bot.journal import TradeJournal
@@ -64,13 +65,13 @@ from hl_bot.strategy.model_b.risk import (
     flow_exit_reason,
     heal_stop,
     floor_distance,
-    BTC_FREE_MARGIN_RESERVE,
+    CLOSE_MARGIN_RESERVE,
     initial_margin,
-    leaves_btc_headroom,
+    leaves_reserve_headroom,
     locked_take_profit,
     min_tp_distance,
     next_liquidity,
-    non_btc_margin_cap,
+    other_margin_cap,
     place_stop,
     size_adjust_tag,
     size_from_stop,
@@ -2517,6 +2518,7 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.model_b_min_prints == density_min_prints() == 3
     assert settings.model_b_alo_timeout_sec == 0
     assert settings.model_b_closer_score_guard is True
+    assert settings.model_b_close_margin_reserve == pytest.approx(0.60)
     assert settings.model_b_delta_flat_usdc == pytest.approx(100)
     assert settings.model_b_delta_flat_eps == pytest.approx(0.05)
     monkeypatch.setenv("MODEL_B_DELTA_FLAT_USDC", "50")
@@ -2538,6 +2540,18 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert load_settings().model_b_closer_score_guard is False
     monkeypatch.delenv("MODEL_B_CLOSER_SCORE_GUARD")
     assert load_settings().model_b_closer_score_guard is True
+    monkeypatch.setenv("MODEL_B_CLOSE_MARGIN_RESERVE", "0")
+    assert load_settings().model_b_close_margin_reserve == pytest.approx(0.0)
+    monkeypatch.setenv("MODEL_B_CLOSE_MARGIN_RESERVE", "0.25")
+    assert load_settings().model_b_close_margin_reserve == pytest.approx(0.25)
+    monkeypatch.setenv("MODEL_B_CLOSE_MARGIN_RESERVE", "1.5")
+    with pytest.raises(ValueError, match="MODEL_B_CLOSE_MARGIN_RESERVE"):
+        load_settings()
+    monkeypatch.setenv("MODEL_B_CLOSE_MARGIN_RESERVE", "-0.1")
+    with pytest.raises(ValueError, match="MODEL_B_CLOSE_MARGIN_RESERVE"):
+        load_settings()
+    monkeypatch.delenv("MODEL_B_CLOSE_MARGIN_RESERVE")
+    assert load_settings().model_b_close_margin_reserve == pytest.approx(0.60)
 
     monkeypatch.delenv("RISK_PER_TRADE")
     assert load_settings().risk_per_trade == pytest.approx(0.02)
@@ -3387,14 +3401,46 @@ def _waiting_prints(now: float, coin: str, *, n: int = 40, price: float = 104.0,
     ]
 
 
-def test_btc_reserve_heuristic_is_a_waiting_swing_not_the_delta_floor():
-    """Close = confirmed swing, still waiting. The 0.05 coin floor stays."""
+def _hunt(
+    coin,
+    swing,
+    fail,
+    *,
+    score=0,
+    armed=False,
+    bias="long",
+    bid=103.0,
+    ask=105.0,
+    last=104.0,
+):
+    return {
+        "decision": SimpleNamespace(
+            coin=coin,
+            swing=swing,
+            fail_reason=fail,
+            armed=armed,
+            score=score,
+            bias=bias,
+        ),
+        "bid": bid,
+        "ask": ask,
+        "last": last,
+    }
+
+
+def test_close_reserve_picks_highest_score_then_closer_bps():
+    """Preferred close coin: highest score, then closer swing bps, then hunt order.
+
+    The 0.05 coin floor is unchanged. A one-coin pass does not reserve.
+    """
     assert DELTA_FLAT_EPS == pytest.approx(0.05)
     assert DELTA_FLAT_USDC == pytest.approx(100)
-    assert BTC_FREE_MARGIN_RESERVE == pytest.approx(0.60)
-    assert non_btc_margin_cap(5000) == pytest.approx(2000)
-    assert leaves_btc_headroom(5000, 0, 480)
-    assert leaves_btc_headroom(5000, 0, 5000) is False
+    assert CLOSE_MARGIN_RESERVE == pytest.approx(0.60)
+    assert other_margin_cap(5000) == pytest.approx(2000)
+    assert other_margin_cap(5000, 0) == pytest.approx(5000)
+    assert leaves_reserve_headroom(5000, 0, 480)
+    assert leaves_reserve_headroom(5000, 0, 5000) is False
+    assert leaves_reserve_headroom(5000, 0, 5000, 0)
     btc = _setup("BTC", 85922.0, "NO_SWEEP")
     eth_thin = _setup("ETH", None, "THIN_TAPE")
     eth_wait = _setup("ETH", 2700.0, "NO_SWEEP")
@@ -3406,15 +3452,62 @@ def test_btc_reserve_heuristic_is_a_waiting_swing_not_the_delta_floor():
     assert not is_close_setup(_setup("ETH", 2700.0, None, armed=True))
     assert not is_close_setup(_setup("BTC", 85922.0, "THESIS_DONE"))
     assert not is_close_setup(_setup("ETH", 2700.0, "SECOND_ALO"))
-    assert btc_is_sole_close([btc, eth_thin, _setup("SOL", None, "NO_SWING")])
-    assert btc_is_sole_close([btc, eth_wait]) is False
-    # A BTC-only pass has no other major that could take the margin.
-    assert btc_is_sole_close([btc]) is False
-    assert btc_is_sole_close([_setup("BTC", 85922.0, None, armed=True), eth_thin]) is False
+
+    btc_close = _hunt("BTC", 100.0, "NO_SWEEP", score=4)
+    thin = _hunt("ETH", None, "THIN_TAPE")
+    no_swing = _hunt("SOL", None, "NO_SWING")
+    only = preferred_close([btc_close, thin, no_swing])
+    assert only is not None and only.coin == "BTC"
+    # Nobody else was judged, so the reserve stays off.
+    assert preferred_close([btc_close]) is None
+    assert preferred_close([
+        _hunt("BTC", 85922.0, None, armed=True, score=9),
+        thin,
+    ]) is None
+    # Two close coins still pick one. The reserve does not turn off.
+    assert preferred_close([btc_close, _hunt("ETH", 2700.0, "NO_SWEEP", score=4)]) is not None
+
+    # Score 9 on xyz:XYZ100 beats a closer-or-not BTC score 4.
+    xyz = _hunt("xyz:xyz100", 100.0, "NO_RECLAIM", score=9, bid=100.5, ask=101.5)
+    btc_low = _hunt("BTC", 103.5, "NO_SWEEP", score=4)
+    picked = preferred_close([btc_low, xyz, thin])
+    assert picked is not None
+    assert picked.coin == "xyz:XYZ100"
+    assert picked.score == 9
+
+    # Equal scores: the closer swing in bps wins, even when it is listed second.
+    # BTC mid 104, swing 103.5 → ~48 bps. ETH mid 104, swing 90 → ~1346 bps.
+    btc_near = _hunt("BTC", 103.5, "NO_SWEEP", score=4)
+    eth_far = _hunt("ETH", 90.0, "ABSORB", score=4)
+    assert close_distance_bps(btc_near["decision"], 104.0) == pytest.approx(
+        (104.0 - 103.5) / 104.0 * 10_000
+    )
+    assert close_distance_bps(eth_far["decision"], 104.0) == pytest.approx(
+        (104.0 - 90.0) / 104.0 * 10_000
+    )
+    closer = preferred_close([eth_far, btc_near])
+    assert closer is not None and closer.coin == "BTC"
+    assert closer.distance_bps == pytest.approx((104.0 - 103.5) / 104.0 * 10_000)
+    # Short gap is swing − ref. A nearer short loses to the 48 bp long.
+    short = _hunt("SOL", 110.0, "NO_SWEEP", score=4, bias="short")
+    assert close_distance_bps(short["decision"], 104.0) == pytest.approx(
+        (110.0 - 104.0) / 104.0 * 10_000
+    )
+    assert preferred_close([short, btc_near]).coin == "BTC"
+
+    # Equal score and equal bps: earlier hunt order. Not a BTC preference.
+    same_btc = _hunt("BTC", 100.0, "NO_SWEEP", score=4)
+    same_eth = _hunt("ETH", 100.0, "NO_SWEEP", score=4)
+    assert preferred_close([same_btc, same_eth]).coin == "BTC"
+    assert preferred_close([same_eth, same_btc]).coin == "ETH"
+    # A known distance beats a missing book.
+    blind = _hunt("ETH", 100.0, "NO_SWEEP", score=4, bid=None, ask=None, last=None)
+    assert close_distance_bps(blind["decision"], None) is None
+    assert preferred_close([blind, same_btc]).coin == "BTC"
 
 
-def test_btc_reserve_holds_a_full_size_alt_and_allows_a_small_one(tmp_path, caplog):
-    """BTC waiting on the sweep. A tight ETH ticket would spend the reserve."""
+def test_close_reserve_holds_a_full_size_other_and_allows_a_small_one(tmp_path, caplog):
+    """BTC is the only close setup. A tight ETH ticket would spend the reserve."""
     now = _now()
     btc = _waiting_prints(now, "BTC")
     eth = _retag(
@@ -3451,17 +3544,18 @@ def test_btc_reserve_holds_a_full_size_alt_and_allows_a_small_one(tmp_path, capl
     assert summary["cancels"] == 0
     rows = TradeJournal(journal).read_all()
     assert any(r.get("coin") == "BTC" and r.get("fail_reason") == "NO_SWEEP" for r in rows)
-    held = [r for r in rows if r.get("fail_reason") == "BTC_MARGIN_RESERVE"]
+    held = [r for r in rows if r.get("fail_reason") == "CLOSE_MARGIN_RESERVE"]
     assert len(held) == 1
     assert held[0]["coin"] == "ETH"
+    assert held[0]["preferred"] == "BTC"
     # The ticket still spends the 60% reserve: free margin after it would
     # sit under that reserve, so the 40% slice rejects it.
     assert held[0]["capacity"] - held[0]["margin_need"] < held[0]["reserve"]
-    assert held[0]["margin_need"] > non_btc_margin_cap(held[0]["capacity"])
-    assert any(r.get("action") == "btc_reserve_engage" for r in rows)
-    assert any(r.get("action") == "btc_reserve_hold" for r in rows)
-    assert any("reserve engage" in rec.message for rec in caplog.records)
-    assert any("btc_reserve_hold" in rec.message for rec in caplog.records)
+    assert held[0]["margin_need"] > other_margin_cap(held[0]["capacity"])
+    assert any(r.get("action") == "close_reserve_engage" and r.get("coin") == "BTC" for r in rows)
+    assert any(r.get("action") == "close_reserve_hold" for r in rows)
+    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
+    assert any("CLOSE_MARGIN_RESERVE hold" in rec.message for rec in caplog.records)
 
     wide = InfoClient()
     wide.inject_bars(_bars(now), coin="BTC")
@@ -3491,12 +3585,13 @@ def test_btc_reserve_holds_a_full_size_alt_and_allows_a_small_one(tmp_path, capl
     assert wide_summary["cancels"] == 0
     wide_rows = TradeJournal(wide_journal).read_all()
     assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in wide_rows)
-    assert not any(r.get("fail_reason") == "BTC_MARGIN_RESERVE" for r in wide_rows)
-    assert any(r.get("action") == "btc_reserve_engage" for r in wide_rows)
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in wide_rows)
+    assert any(r.get("action") == "close_reserve_engage" for r in wide_rows)
+    # The wide ticket fits in the 40% slice, so dual-rest / place is unchanged.
 
 
-def test_btc_reserve_cancels_a_resting_alt_then_releases(tmp_path, caplog):
-    """A tight ETH Alo is dropped once BTC is the only close major."""
+def test_close_reserve_cancels_a_resting_other_then_releases(tmp_path, caplog):
+    """A tight ETH Alo is dropped once BTC is the preferred close coin."""
     now = _now()
     info = InfoClient()
     info.inject_bars(_bars(now), coin="BTC")
@@ -3545,16 +3640,21 @@ def test_btc_reserve_cancels_a_resting_alt_then_releases(tmp_path, caplog):
     assert summary["cancels"] == 1
     cancels = [r for r in rows if r["event"] == "model_b_cancel"]
     assert cancels[0]["coin"] == "ETH"
-    assert cancels[0]["reason"] == "btc_margin_reserve"
-    assert any(r.get("action") == "btc_reserve_engage" for r in rows)
-    assert any(r.get("action") == "btc_reserve_release" for r in rows)
-    assert any("reserve engage" in rec.message for rec in caplog.records)
-    assert any("reserve release" in rec.message for rec in caplog.records)
+    assert cancels[0]["reason"] == "close_margin_reserve"
+    assert cancels[0]["preferred"] == "BTC"
+    assert any(r.get("action") == "close_reserve_engage" and r.get("coin") == "BTC" for r in rows)
+    assert any(r.get("action") == "close_reserve_release" for r in rows)
+    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
+    assert any("CLOSE_MARGIN_RESERVE release" in rec.message for rec in caplog.records)
     assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
 
 
-def test_another_close_major_keeps_the_resting_alt(tmp_path, caplog):
-    """ETH waiting on its own sweep is also close, so the 60% lock stays off."""
+def test_equal_scores_reserve_the_closer_swing_and_keep_its_alo(tmp_path, caplog):
+    """Both coins are close at score 4. ETH's swing is closer, so ETH keeps the Alo.
+
+    BTC mid 104 vs swing 100 is ~385 bps. ETH mid 103 vs the same swing is
+    ~291 bps. The reserve engages for ETH and does not cancel ETH.
+    """
     now = _now()
     info = InfoClient()
     info.inject_bars(_bars(now), coin="BTC")
@@ -3595,8 +3695,223 @@ def test_another_close_major_keeps_the_resting_alt(tmp_path, caplog):
     assert summary["cancels"] == 0
     rows = TradeJournal(tmp_path / "reserve-both.jsonl").read_all()
     assert not any(r["event"] == "model_b_cancel" for r in rows)
-    assert not any(r.get("action") == "btc_reserve_engage" for r in rows)
-    assert not any("reserve engage" in rec.message for rec in caplog.records)
+    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
+    assert len(engage) == 1
+    assert engage[0]["coin"] == "ETH"
+    assert engage[0]["score"] == 4
+    assert any(
+        "CLOSE_MARGIN_RESERVE engage" in rec.message and "coin=ETH" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_close_reserve_tie_follows_hunt_order(tmp_path):
+    """Equal score and equal bps: the earlier hunt coin owns the reserve.
+
+    Identical books. BTC listed first cancels the resting ETH Alo. ETH
+    listed first keeps it. That is hunt order, not a BTC rule.
+    """
+    now = _now()
+
+    def _run(coins, journal):
+        info = InfoClient()
+        info.inject_bars(_bars(now), coin="BTC")
+        info.inject_bars(_tight_bars(now), coin="ETH")
+        eth = _retag(
+            _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+            "ETH",
+        )
+        feed = MemoryFeed(
+            _long_prints(now)[:5] + eth,
+            bbo={"BTC": (103.0, 105.0), "ETH": (103.0, 105.0)},
+        )
+
+        def sleep_fn(_sec):
+            feed._prints.clear()
+            feed._prints.extend(_waiting_prints(now, "BTC"))
+            feed._prints.extend(_waiting_prints(now, "ETH", price=104.0, seq0=100))
+
+        run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=2,
+            info=info,
+            feed=feed,
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=coins,
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+        return TradeJournal(journal).read_all()
+
+    btc_first = _run(("BTC", "ETH"), tmp_path / "tie-btc.jsonl")
+    engage = [r for r in btc_first if r.get("action") == "close_reserve_engage"]
+    assert [r["coin"] for r in engage] == ["BTC"]
+    cancels = [r for r in btc_first if r["event"] == "model_b_cancel"]
+    assert len(cancels) == 1
+    assert cancels[0]["coin"] == "ETH"
+    assert cancels[0]["reason"] == "close_margin_reserve"
+
+    eth_first = _run(("ETH", "BTC"), tmp_path / "tie-eth.jsonl")
+    engage = [r for r in eth_first if r.get("action") == "close_reserve_engage"]
+    assert [r["coin"] for r in engage] == ["ETH"]
+    assert not any(r["event"] == "model_b_cancel" for r in eth_first)
+
+
+def test_close_reserve_follows_xyz100_not_btc(tmp_path, caplog):
+    """xyz:XYZ100 waiting is the close coin. A tight BTC ticket is held back."""
+    now = _now()
+    xyz = _waiting_prints(now, "xyz:XYZ100", n=90)
+    btc = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "BTC",
+    )
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="xyz:XYZ100")
+    info.inject_bars(_tight_bars(now), coin="BTC")
+    feed = MemoryFeed(
+        xyz + btc,
+        bbo={"xyz:XYZ100": (103.0, 105.0), "BTC": (102.0, 104.0)},
+    )
+    journal = tmp_path / "reserve-xyz.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("xyz:XYZ100", "BTC"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 0
+    rows = TradeJournal(journal).read_all()
+    held = [r for r in rows if r.get("fail_reason") == "CLOSE_MARGIN_RESERVE"]
+    assert len(held) == 1
+    assert held[0]["coin"] == "BTC"
+    assert held[0]["preferred"] == "xyz:XYZ100"
+    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
+    assert len(engage) == 1
+    assert engage[0]["coin"] == "xyz:XYZ100"
+    assert any(
+        "CLOSE_MARGIN_RESERVE engage" in rec.message and "coin=xyz:XYZ100" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_close_reserve_cancels_btc_when_xyz100_scores_higher(tmp_path, caplog):
+    """A resting BTC Alo is dropped when xyz:XYZ100 is the higher-score close."""
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_tight_bars(now), coin="BTC")
+    info.inject_bars(_bars(now), coin="xyz:XYZ100")
+    feed = MemoryFeed(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0)
+        + _retag(_long_prints(now)[:5], "xyz:XYZ100"),
+        bbo={"BTC": (102.0, 104.0), "xyz:XYZ100": (103.0, 105.0)},
+    )
+    step = {"n": 0}
+
+    def sleep_fn(_sec):
+        step["n"] += 1
+        feed._prints.clear()
+        if step["n"] == 1:
+            feed._prints.extend(_waiting_prints(now, "BTC", n=40))
+            feed._prints.extend(_waiting_prints(now, "xyz:XYZ100", n=90, seq0=1000))
+        elif step["n"] == 2:
+            feed._prints.extend(_long_prints(now)[:4])
+            feed._prints.extend(_retag(_long_prints(now)[:4], "xyz:XYZ100"))
+
+    journal = tmp_path / "reserve-xyz-cancel.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=3,
+            info=info,
+            feed=feed,
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC", "xyz:XYZ100"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    rows = TradeJournal(journal).read_all()
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert cancels[0]["coin"] == "BTC"
+    assert cancels[0]["reason"] == "close_margin_reserve"
+    assert cancels[0]["preferred"] == "xyz:XYZ100"
+    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
+    assert [r["coin"] for r in engage] == ["xyz:XYZ100"]
+    assert engage[0]["score"] == 9
+    assert any(r.get("action") == "close_reserve_release" and r.get("coin") == "xyz:XYZ100" for r in rows)
+    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "BTC" for r in rows)
+
+
+def test_close_reserve_off_does_not_hold_the_other_coin(tmp_path, caplog):
+    """MODEL_B_CLOSE_MARGIN_RESERVE=0 leaves the full-size ETH ticket free to arm."""
+    now = _now()
+    btc = _waiting_prints(now, "BTC")
+    eth = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "ETH",
+    )
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_tight_bars(now), coin="ETH")
+    feed = MemoryFeed(
+        btc + eth,
+        bbo={"BTC": (103.0, 105.0), "ETH": (102.0, 104.0)},
+    )
+    journal = tmp_path / "reserve-off.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                model_b_close_margin_reserve=0.0,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC", "ETH"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
+    rows = TradeJournal(journal).read_all()
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in rows)
+    assert not any(r.get("action") == "close_reserve_engage" for r in rows)
+    assert not any("CLOSE_MARGIN_RESERVE" in rec.message for rec in caplog.records)
 
 
 def test_ticket_fits_uses_notional_over_leverage_on_the_sizing_balance():
