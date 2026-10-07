@@ -3890,7 +3890,7 @@ def test_resting_reserve_holds_a_lower_score_ticket(tmp_path, caplog):
     info.inject_bars(_bars(now), coin="ETH")
     info.inject_bars(_tight_bars(now), coin="BTC")
     eth = _retag(
-        _long_prints(now, n_prefix=90, prefix_step=0.2, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        _long_prints(now, n_prefix=78, prefix_step=0.1, last_price=103.0, final_price=103.0, sweep_px=99.0),
         "ETH",
     )
     feed = MemoryFeed(
@@ -4206,34 +4206,40 @@ def test_same_coin_xyz_blocked_after_restart_and_resting_entry(tmp_path, caplog)
             ),
             "block-position.jsonl",
         )
-    assert sent == []
-    blocked = [r for r in rows if r.get("fail_reason") == "OPEN_POSITION"]
-    assert len(blocked) == 1
-    assert blocked[0]["coin"] == "xyz:XYZ100"
-    assert blocked[0]["armed"] is False
-    assert any("MODEL_B BLOCK xyz:XYZ100 reason=OPEN_POSITION" in rec.message for rec in caplog.records)
+        assert sent == []
+        blocked = [r for r in rows if r.get("fail_reason") == "OPEN_POSITION"]
+        assert len(blocked) == 1
+        assert blocked[0]["coin"] == "xyz:XYZ100"
+        assert blocked[0]["armed"] is False
+        assert any(
+            "MODEL_B BLOCK xyz:XYZ100 reason=OPEN_POSITION" in rec.message
+            for rec in caplog.records
+        )
 
-    caplog.clear()
-    sent, rows = _run(
-        AccountSnapshot(
-            ok=True,
-            entry_orders=(
-                EntryOrder(
-                    coin="xyz:XYZ100",
-                    oid=44,
-                    side="long",
-                    limit_px=31000.0,
-                    size=0.01,
+        caplog.clear()
+        sent, rows = _run(
+            AccountSnapshot(
+                ok=True,
+                entry_orders=(
+                    EntryOrder(
+                        coin="xyz:XYZ100",
+                        oid=44,
+                        side="long",
+                        limit_px=31000.0,
+                        size=0.01,
+                    ),
                 ),
             ),
-        ),
-        "block-entry.jsonl",
-    )
+            "block-entry.jsonl",
+        )
     assert sent == []
     blocked = [r for r in rows if r.get("fail_reason") == "RESTING_ENTRY"]
     assert len(blocked) == 1
     assert blocked[0]["coin"] == "xyz:XYZ100"
-    assert any("MODEL_B BLOCK xyz:XYZ100 reason=RESTING_ENTRY" in rec.message for rec in caplog.records)
+    assert any(
+        "MODEL_B BLOCK xyz:XYZ100 reason=RESTING_ENTRY" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_close_reserve_off_does_not_hold_the_other_coin(tmp_path, caplog):
