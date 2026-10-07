@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Model B · Mainnet performance</title>
+<style>
+:root {
+  --bg:#000; --bg2:#0b0b0b; --panel:#0e0e0e; --border:#1a1a1a;
+  --text:#e8e8e8; --muted:#8b8b8b; --dim:#5c5c5c;
+  --green:#00c805; --red:#ff4d4f; --amber:#e6c07b;
+  --mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}
+.topbar{display:flex;align-items:center;gap:1rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.brand-title{font-weight:650;font-size:14px}
+.brand-sub{color:var(--muted);font-size:10px}
+.badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;border:1px solid #1a5c2a;color:var(--green);background:#06140a}
+.spacer{flex:1}
+.meta{color:var(--muted);font-size:11px}
+.wrap{max-width:1100px;margin:0 auto;padding:1rem 1.1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.7rem}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem .85rem}
+.card .lbl{color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.25rem}
+.card .val{font-family:var(--mono);font-size:1.15rem;font-weight:650}
+.card .sub{color:var(--muted);font-size:10px;margin-top:.2rem}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.panel h2{margin:0;padding:.65rem .85rem;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+th,td{padding:.45rem .7rem;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+td.num,th.num{text-align:right}
+.notes{color:var(--muted);font-size:11px;line-height:1.5;padding:0 .2rem}
+.notes li{margin:.25rem 0}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <div class="brand-title">Model B · Mainnet performance</div>
+    <div class="brand-sub" id="sub"></div>
+  </div>
+  <span class="badge" id="netBadge">MAINNET</span>
+  <div class="spacer"></div>
+  <div class="meta mono" id="gen"></div>
+</div>
+<div class="wrap">
+  <div class="cards" id="cards"></div>
+  <div class="panel">
+    <h2>Daily · % PnL &amp; win rate</h2>
+    <div style="overflow-x:auto"><table id="daily"></table></div>
+  </div>
+  <div class="panel">
+    <h2>Closed trades</h2>
+    <div style="overflow-x:auto"><table id="trades"></table></div>
+  </div>
+  <div class="panel">
+    <h2>Open positions</h2>
+    <div style="overflow-x:auto"><table id="opens"></table></div>
+  </div>
+  <ul class="notes" id="notes"></ul>
+</div>
+<script>
+const BOARD = {"title":"Model B \u00b7 Mainnet performance","model":"model_b","since_et":"2026-10-06T21:34:00-04:00","generated_et":"2026-10-07T14:06:17.443853-04:00","network":"mainnet","framing":"Hyperliquid MAINNET \u2014 Model B closed trades since flip","starting_fund":14.8,"total_funds":16.012202,"money_source":"hl_fills","hl":{"ok":true,"reason":null,"address_redacted":"0x0520\u2026d541","fills_n":13,"api":"https://api.hyperliquid.xyz"},"summary":{"trades":5,"wins":3,"losses":2,"breakeven":0,"win_rate_pct":60.0,"gross_pnl":0.747184,"fees":0.248992,"net_pnl":0.498192,"vs_starting_usd":0.498192,"vs_starting_pct":3.366,"starting_fund":14.8,"spot_usdc":15.653802,"spot_hold":8.71864,"unrealized_pnl":0.3584,"margin_used":8.71864,"total_funds":16.012202,"spot_vs_starting_usd":0.853802,"spot_vs_starting_pct":5.769,"total_vs_starting_usd":1.212202,"total_vs_starting_pct":8.191},"daily":[{"date":"2026-10-07","trades":5,"wins":3,"losses":2,"breakeven":0,"win_rate_pct":60.0,"gross_pnl":0.747184,"fees":0.243981,"net_pnl":0.503203,"equity_start":14.8,"equity_end":15.303203,"daily_pct":3.4}],"closed_trades":[{"symbol":"ETH","dir":"Close Long","pnl":-0.29574,"fees":0.083785,"net":-0.379525,"fills":1,"sz":0.0558,"closed_ts":1791347495.812,"result":"LOSS","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":0.1782,"fees":0.044887,"net":0.133313,"fills":1,"sz":0.66,"closed_ts":1791347603.978,"result":"WIN","source":"hl_fills"},{"symbol":"PUMP","dir":"Close Short","pnl":0.478124,"fees":0.076378,"net":0.401746,"fills":1,"sz":20788.0,"closed_ts":1791375306.776,"result":"WIN","source":"hl_fills"},{"symbol":"xyz:XYZ100","dir":"Close Long","pnl":-0.121,"fees":0.019635,"net":-0.140635,"fills":1,"sz":0.0055,"closed_ts":1791379937.163,"result":"LOSS","source":"hl_fills"},{"symbol":"xyz:XYZ100","dir":"Close Long","pnl":0.5076,"fees":0.019296,"net":0.488304,"fills":1,"sz":0.0054,"closed_ts":1791386025.856,"result":"WIN","source":"hl_fills"}],"open_positions":[{"coin":"xyz:XYZ100","szi":0.0056,"side":"long","entry":31074.0,"uPnl":0.3584,"marginUsed":8.71864,"dex":"xyz"}],"notes":["Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.","Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.","Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL \u2212 fees.","Overall net = sum(closedPnl) \u2212 all fill fees in window (matches spot drift aside from transfers).","Daily % PnL = that day's net / equity at start of day (running from starting fund).","Starting fund = STARTING_EQUITY at flip (~$14.80). Total funds = spot USDC + unrealized PnL."]};
+const s = BOARD.summary || {};
+const fmtUsd = (v, signed=false) => {
+  if (v==null || Number.isNaN(Number(v))) return "—";
+  const n = Number(v);
+  const body = Math.abs(n).toFixed(4);
+  if (!signed) return "$"+body;
+  return (n>0?"+$":n<0?"-$":"$")+body;
+};
+const cls = (v) => (v==null?"":(Number(v)>0?"pos":Number(v)<0?"neg":""));
+document.getElementById("sub").textContent =
+  `since flip ${BOARD.since_et||"—"} · ${BOARD.money_source||""} · starting $${Number(BOARD.starting_fund||0).toFixed(2)}`;
+document.getElementById("gen").textContent = `generated ${BOARD.generated_et||""}`;
+const wr = s.win_rate_pct;
+const cards = [
+  {lbl:"Starting fund", val:fmtUsd(BOARD.starting_fund).replace(/(\.\d{2})\d+/,"$1"), c:"", sub:"at mainnet flip"},
+  {lbl:"Total funds", val:fmtUsd(s.total_funds), c:cls(s.total_vs_starting_usd),
+   sub: s.total_vs_starting_pct!=null ? `${s.total_vs_starting_pct>0?"+":""}${s.total_vs_starting_pct}% vs start` : "spot + uPnL"},
+  {lbl:"Spot USDC", val:fmtUsd(s.spot_usdc), c:"",
+   sub: s.spot_hold!=null ? `hold $${Number(s.spot_hold).toFixed(2)}` : "—"},
+  {lbl:"Win rate", val: wr!=null ? `${wr}%` : "—", c:"",
+   sub: `${s.wins||0}W / ${s.losses||0}L / ${s.breakeven||0}BE · n=${s.trades||0}`},
+  {lbl:"Net PnL", val:fmtUsd(s.net_pnl,true), c:cls(s.net_pnl),
+   sub: s.vs_starting_pct!=null ? `${s.vs_starting_pct>0?"+":""}${s.vs_starting_pct}% of starting fund` : "—"},
+  {lbl:"Unrealized", val:fmtUsd(s.unrealized_pnl,true), c:cls(s.unrealized_pnl),
+   sub: "open perps"},
+];
+document.getElementById("cards").innerHTML = cards.map(c =>
+  `<div class="card"><div class="lbl">${c.lbl}</div><div class="val mono ${c.c}">${c.val}</div><div class="sub">${c.sub}</div></div>`
+).join("");
+
+const daily = BOARD.daily || [];
+const dHead = `<tr><th>Date (ET)</th><th class="num">Trades</th><th>W/L/BE</th><th class="num">Win rate</th><th class="num">Net $</th><th class="num">Daily %</th><th class="num">Equity EOD</th></tr>`;
+const dBody = daily.length ? daily.map(d => {
+  const wr = d.win_rate_pct!=null ? `${d.win_rate_pct}%` : "—";
+  const pct = d.daily_pct!=null ? `${d.daily_pct>0?"+":""}${d.daily_pct}%` : "—";
+  return `<tr>
+    <td>${d.date}</td>
+    <td class="num">${d.trades}</td>
+    <td>${d.wins}/${d.losses}/${d.breakeven}</td>
+    <td class="num">${wr}</td>
+    <td class="num ${cls(d.net_pnl)}">${fmtUsd(d.net_pnl,true)}</td>
+    <td class="num ${cls(d.daily_pct)}">${pct}</td>
+    <td class="num">${fmtUsd(d.equity_end)}</td>
+  </tr>`;
+}).join("") : `<tr><td colspan="7" class="muted">No closed days yet.</td></tr>`;
+document.getElementById("daily").innerHTML = dHead + dBody;
+
+const trades = BOARD.closed_trades || [];
+const tHead = `<tr><th>When (ET)</th><th>Symbol</th><th>Result</th><th class="num">PnL</th><th class="num">Fees</th><th class="num">Net</th></tr>`;
+const tBody = trades.length ? trades.map(t => {
+  const when = t.closed_ts ? new Date(t.closed_ts*1000).toLocaleString("en-CA",{timeZone:"America/Toronto"}) : "—";
+  return `<tr>
+    <td>${when}</td><td>${t.symbol||""}</td><td class="${t.result==="WIN"?"pos":t.result==="LOSS"?"neg":""}">${t.result||""}</td>
+    <td class="num ${cls(t.pnl)}">${fmtUsd(t.pnl,true)}</td>
+    <td class="num">${fmtUsd(t.fees)}</td>
+    <td class="num ${cls(t.net)}">${fmtUsd(t.net,true)}</td>
+  </tr>`;
+}).join("") : `<tr><td colspan="6" class="muted">None in window.</td></tr>`;
+document.getElementById("trades").innerHTML = tHead + tBody;
+
+const opens = BOARD.open_positions || [];
+const oHead = `<tr><th>Coin</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">uPnL</th><th class="num">Margin</th><th>Dex</th></tr>`;
+const oBody = opens.length ? opens.map(p => {
+  if (p.error) return `<tr><td colspan="7" class="neg">${p.error}</td></tr>`;
+  return `<tr>
+    <td>${p.coin||""}</td><td>${p.side||""}</td>
+    <td class="num">${p.szi}</td><td class="num">${p.entry}</td>
+    <td class="num ${cls(p.uPnl)}">${fmtUsd(p.uPnl,true)}</td>
+    <td class="num">${fmtUsd(p.marginUsed)}</td><td>${p.dex||""}</td>
+  </tr>`;
+}).join("") : `<tr><td colspan="7" class="muted">Flat — no open HL perps.</td></tr>`;
+document.getElementById("opens").innerHTML = oHead + oBody;
+
+document.getElementById("notes").innerHTML = (BOARD.notes||[]).map(n => `<li>${n}</li>`).join("");
+</script>
+</body>
+</html>
