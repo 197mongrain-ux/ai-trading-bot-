@@ -1,0 +1,137 @@
+{
+  "title": "Model B \u00b7 Mainnet performance",
+  "model": "model_b",
+  "since_et": "2026-10-06T21:34:00-04:00",
+  "generated_et": "2026-10-07T14:06:17.443853-04:00",
+  "network": "mainnet",
+  "framing": "Hyperliquid MAINNET \u2014 Model B closed trades since flip",
+  "starting_fund": 14.8,
+  "total_funds": 16.012202,
+  "money_source": "hl_fills",
+  "hl": {
+    "ok": true,
+    "reason": null,
+    "address_redacted": "0x0520\u2026d541",
+    "fills_n": 13,
+    "api": "https://api.hyperliquid.xyz"
+  },
+  "summary": {
+    "trades": 5,
+    "wins": 3,
+    "losses": 2,
+    "breakeven": 0,
+    "win_rate_pct": 60.0,
+    "gross_pnl": 0.747184,
+    "fees": 0.248992,
+    "net_pnl": 0.498192,
+    "vs_starting_usd": 0.498192,
+    "vs_starting_pct": 3.366,
+    "starting_fund": 14.8,
+    "spot_usdc": 15.653802,
+    "spot_hold": 8.71864,
+    "unrealized_pnl": 0.3584,
+    "margin_used": 8.71864,
+    "total_funds": 16.012202,
+    "spot_vs_starting_usd": 0.853802,
+    "spot_vs_starting_pct": 5.769,
+    "total_vs_starting_usd": 1.212202,
+    "total_vs_starting_pct": 8.191
+  },
+  "daily": [
+    {
+      "date": "2026-10-07",
+      "trades": 5,
+      "wins": 3,
+      "losses": 2,
+      "breakeven": 0,
+      "win_rate_pct": 60.0,
+      "gross_pnl": 0.747184,
+      "fees": 0.243981,
+      "net_pnl": 0.503203,
+      "equity_start": 14.8,
+      "equity_end": 15.303203,
+      "daily_pct": 3.4
+    }
+  ],
+  "closed_trades": [
+    {
+      "symbol": "ETH",
+      "dir": "Close Long",
+      "pnl": -0.29574,
+      "fees": 0.083785,
+      "net": -0.379525,
+      "fills": 1,
+      "sz": 0.0558,
+      "closed_ts": 1791347495.812,
+      "result": "LOSS",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "SOL",
+      "dir": "Close Short",
+      "pnl": 0.1782,
+      "fees": 0.044887,
+      "net": 0.133313,
+      "fills": 1,
+      "sz": 0.66,
+      "closed_ts": 1791347603.978,
+      "result": "WIN",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "PUMP",
+      "dir": "Close Short",
+      "pnl": 0.478124,
+      "fees": 0.076378,
+      "net": 0.401746,
+      "fills": 1,
+      "sz": 20788.0,
+      "closed_ts": 1791375306.776,
+      "result": "WIN",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "xyz:XYZ100",
+      "dir": "Close Long",
+      "pnl": -0.121,
+      "fees": 0.019635,
+      "net": -0.140635,
+      "fills": 1,
+      "sz": 0.0055,
+      "closed_ts": 1791379937.163,
+      "result": "LOSS",
+      "source": "hl_fills"
+    },
+    {
+      "symbol": "xyz:XYZ100",
+      "dir": "Close Long",
+      "pnl": 0.5076,
+      "fees": 0.019296,
+      "net": 0.488304,
+      "fills": 1,
+      "sz": 0.0054,
+      "closed_ts": 1791386025.856,
+      "result": "WIN",
+      "source": "hl_fills"
+    }
+  ],
+  "open_positions": [
+    {
+      "coin": "xyz:XYZ100",
+      "szi": 0.0056,
+      "side": "long",
+      "entry": 31074.0,
+      "uPnl": 0.3584,
+      "marginUsed": 8.71864,
+      "dex": "xyz"
+    }
+  ],
+  "notes": [
+    "Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.",
+    "Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.",
+    "Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL \u2212 fees.",
+    "Overall net = sum(closedPnl) \u2212 all fill fees in window (matches spot drift aside from transfers).",
+    "Daily % PnL = that day's net / equity at start of day (running from starting fund).",
+    "Starting fund = STARTING_EQUITY at flip (~$14.80). Total funds = spot USDC + unrealized PnL."
+  ]
+}
