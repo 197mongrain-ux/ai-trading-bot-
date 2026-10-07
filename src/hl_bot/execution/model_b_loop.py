@@ -8,8 +8,12 @@ Exits are stop and TP only. One thesis per coin. Another coin may rest
 at the same time when the sizing balance still covers that ticket's
 initial margin (notional / 20) at the full 2% size. When it does not,
 a new coin takes the slot only by cancelling an unfilled Alo whose
-limit is strictly closer to the market, in bps. When BTC is the only
-close major, 60% of free-margin capacity stays available for BTC.
+limit is strictly closer to the market, in bps, and whose arm score
+is not strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on:
+resting score 9 is not cancelled for a closer score 4
+(``CLOSER_SKIP_LOWER_SCORE``). Equal scores still swap on closer bps.
+When BTC is the only close major, 60% of free-margin capacity stays
+available for BTC.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -31,7 +35,12 @@ from hl_bot.exchange.info_client import InfoClient
 from hl_bot.execution.loop import killswitch_active
 from hl_bot.journal import TradeJournal
 from hl_bot.risk.manager import RiskManager
-from hl_bot.strategy.model_b.alo import distance_to_fill_bps, is_closer_to_fill, market_ref
+from hl_bot.strategy.model_b.alo import (
+    distance_to_fill_bps,
+    is_closer_to_fill,
+    market_ref,
+    resting_score_blocks_closer_cancel,
+)
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import (
@@ -269,10 +278,11 @@ def run_model_b(
     # True after a pass that held the BTC free-margin reserve.
     btc_reserve_was = False
     logger.info(
-        "MODEL_B min_prints=%s network=%s coins=%s",
+        "MODEL_B min_prints=%s network=%s coins=%s closer_score_guard=%s",
         settings.model_b_min_prints,
         settings.network,
         ",".join(hunt_coins),
+        "on" if settings.model_b_closer_score_guard else "off",
     )
 
     while True:
@@ -827,12 +837,58 @@ def run_model_b(
                             need,
                         )
                         continue
+                    # Bps already says the candidate is closer. A strictly
+                    # higher resting score keeps that ticket. Equal scores
+                    # fall through and still swap. One higher-score Alo
+                    # blocks the whole cancel: margin cannot dual-rest.
+                    if settings.model_b_closer_score_guard:
+                        blocker = None
+                        for order in resting:
+                            if resting_score_blocks_closer_cancel(
+                                order.score, decision.score
+                            ):
+                                if blocker is None or int(order.score) > int(
+                                    blocker.score
+                                ):
+                                    blocker = order
+                        if blocker is not None:
+                            summary["fails"] += 1
+                            journal.log(
+                                "model_b_fail",
+                                entry_mode="model_b",
+                                **{
+                                    **decision.to_log(),
+                                    "fail_reason": "CLOSER_SKIP_LOWER_SCORE",
+                                    "armed": False,
+                                    "held_by": blocker.coin,
+                                    "resting_score": blocker.score,
+                                    "candidate_score": decision.score,
+                                    "challenger_bps": challenger_bps,
+                                    "free_margin": free,
+                                    "margin_need": need,
+                                },
+                            )
+                            logger.info(
+                                "MODEL_B FAIL %s reason=CLOSER_SKIP_LOWER_SCORE "
+                                "held_by=%s resting_score=%s candidate_score=%s "
+                                "challenger_bps=%s free=%.4f need=%.4f",
+                                coin,
+                                blocker.coin,
+                                blocker.score,
+                                decision.score,
+                                challenger_bps,
+                                free,
+                                need,
+                            )
+                            continue
                     logger.info(
-                        "MODEL_B MARGIN %s closer_cancel free=%.4f need=%.4f held=%s",
+                        "MODEL_B MARGIN %s closer_cancel free=%.4f need=%.4f held=%s "
+                        "candidate_score=%s",
                         coin,
                         free,
                         need,
                         held,
+                        decision.score,
                     )
                     for order in resting:
                         released = book.release_for_closer(order.coin)
@@ -846,6 +902,8 @@ def run_model_b(
                             challenger_bps=challenger_bps,
                             free_margin=free,
                             margin_need=need,
+                            resting_score=released.score,
+                            candidate_score=decision.score,
                         )
 
             oid = None
@@ -906,7 +964,7 @@ def run_model_b(
                         detail=detail,
                     )
                     continue
-            book.post(intent, now, oid=oid)
+            book.post(intent, now, oid=oid, score=decision.score)
             summary["arms"] += 1
             journal.log("model_b_arm", entry_mode="model_b", **decision.to_log())
             logger.info(

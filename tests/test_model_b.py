@@ -47,6 +47,7 @@ from hl_bot.strategy.model_b.alo import (
     alo_limit,
     distance_to_fill_bps,
     is_closer_to_fill,
+    resting_score_blocks_closer_cancel,
 )
 from hl_bot.strategy.model_b.bias import resolve_bias
 from hl_bot.strategy.model_b.engine import ModelBEngine
@@ -151,6 +152,7 @@ def _long_prints(
     final_price: float | None = None,
     sweep_px: float = 99.0,
     n_prefix: int = 20,
+    prefix_step: float = 0.3,
     extra: list[tuple] | None = None,
 ) -> list[TradePrint]:
     prints: list[TradePrint] = []
@@ -172,8 +174,10 @@ def _long_prints(
 
     # Keep the whole window inside the last ~55s so a 20s-later re-check
     # still contains the sweep (the 90s window has not dropped it).
+    # Stay before the sweep at -40s. A tighter step packs a score-9 tape
+    # (90 prints) without dumping buys into the reclaim leg.
     for i in range(n_prefix):
-        add(-55 + i * 0.3, 104.0, 0.5, "buy")
+        add(-55 + i * prefix_step, 104.0, 0.5, "buy")
     add(-40, sweep_px, sweep_sz, "sell")
     add(-38, sweep_px, sweep_sz, "sell")
     for i in range(8):
@@ -2512,6 +2516,7 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     assert settings.leverage == 20
     assert settings.model_b_min_prints == density_min_prints() == 3
     assert settings.model_b_alo_timeout_sec == 0
+    assert settings.model_b_closer_score_guard is True
     assert settings.model_b_delta_flat_usdc == pytest.approx(100)
     assert settings.model_b_delta_flat_eps == pytest.approx(0.05)
     monkeypatch.setenv("MODEL_B_DELTA_FLAT_USDC", "50")
@@ -2529,6 +2534,10 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
     monkeypatch.setenv("MODEL_B_ALO_TIMEOUT_SEC", "15")
     assert load_settings().model_b_alo_timeout_sec == pytest.approx(15)
     monkeypatch.delenv("MODEL_B_ALO_TIMEOUT_SEC")
+    monkeypatch.setenv("MODEL_B_CLOSER_SCORE_GUARD", "0")
+    assert load_settings().model_b_closer_score_guard is False
+    monkeypatch.delenv("MODEL_B_CLOSER_SCORE_GUARD")
+    assert load_settings().model_b_closer_score_guard is True
 
     monkeypatch.delenv("RISK_PER_TRADE")
     assert load_settings().risk_per_trade == pytest.approx(0.02)
@@ -3080,6 +3089,15 @@ def test_live_brackets_use_filled_alo_size(tmp_path):
     assert opened and opened[0]["size"] == pytest.approx(40.0)
 
 
+def test_resting_score_blocks_only_a_strictly_higher_ticket():
+    """Equal scores do not block. Closer-bps still decides that swap."""
+    assert resting_score_blocks_closer_cancel(9, 4) is True
+    assert resting_score_blocks_closer_cancel(5, 9) is False
+    assert resting_score_blocks_closer_cancel(4, 4) is False
+    assert resting_score_blocks_closer_cancel(None, 9) is False
+    assert resting_score_blocks_closer_cancel(9, None) is False
+
+
 def test_distance_to_fill_is_bps_and_tie_keeps_the_resting_order():
     # Long 21 points under a 120 mid is much farther than 4 points under a 103 mid.
     far = distance_to_fill_bps("long", 99.0, 120.0)
@@ -3104,11 +3122,30 @@ def _two_coin_hunt(
     eth_last: float,
     iterations: int = 1,
     tight_stop: bool = False,
+    btc_prefix: int = 20,
+    eth_prefix: int = 20,
+    btc_step: float = 0.3,
+    eth_step: float = 0.3,
+    closer_score_guard: bool | None = None,
 ):
     now = _now()
-    btc = _long_prints(now, last_price=btc_last, final_price=btc_last, sweep_px=99.0)
+    btc = _long_prints(
+        now,
+        last_price=btc_last,
+        final_price=btc_last,
+        sweep_px=99.0,
+        n_prefix=btc_prefix,
+        prefix_step=btc_step,
+    )
     eth = _retag(
-        _long_prints(now, last_price=eth_last, final_price=eth_last, sweep_px=99.0),
+        _long_prints(
+            now,
+            last_price=eth_last,
+            final_price=eth_last,
+            sweep_px=99.0,
+            n_prefix=eth_prefix,
+            prefix_step=eth_step,
+        ),
         "ETH",
     )
     info = InfoClient()
@@ -3123,13 +3160,16 @@ def _two_coin_hunt(
         },
     )
     journal = tmp_path / "closer.jsonl"
+    settings_kw: dict = dict(
+        entry_mode="model_b",
+        risk_per_trade=0.02,
+        journal_path=str(journal),
+        loop_interval_sec=0,
+    )
+    if closer_score_guard is not None:
+        settings_kw["model_b_closer_score_guard"] = closer_score_guard
     summary = run_model_b(
-        Settings(
-            entry_mode="model_b",
-            risk_per_trade=0.02,
-            journal_path=str(journal),
-            loop_interval_sec=0,
-        ),
+        Settings(**settings_kw),
         max_iterations=iterations,
         info=info,
         feed=feed,
@@ -3164,6 +3204,117 @@ def test_closer_ticker_cancels_the_far_alo_and_places_the_near_one(tmp_path, cap
     assert [r["coin"] for r in arms] == ["BTC", "ETH"]
     assert any("MODEL_B MARGIN" in rec.message and "closer_cancel" in rec.message for rec in caplog.records)
     assert not any("dual_rest" in rec.message for rec in caplog.records)
+
+
+def test_closer_ticker_keeps_a_higher_score_alo(tmp_path, caplog):
+    """The Oct 7 case: score-9 SOL must not die for a closer score-4 XYZ100.
+
+    BTC stands in for the resting ticket (far, score 9). ETH is closer in
+    bps and scores 4. Free margin cannot dual-rest. The guard keeps BTC.
+    """
+    # 78 prefix prints + 12 tape prints = 90 → score 9. Step 0.1 stays
+    # before the sweep. 28 + 12 = 40 → score 4.
+    with caplog.at_level(logging.INFO):
+        summary, rows = _two_coin_hunt(
+            tmp_path,
+            btc_last=120.0,
+            eth_last=103.0,
+            tight_stop=True,
+            btc_prefix=78,
+            btc_step=0.1,
+            eth_prefix=28,
+        )
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["BTC"]
+    assert arms[0]["score"] == 9
+    skips = [r for r in rows if r.get("fail_reason") == "CLOSER_SKIP_LOWER_SCORE"]
+    assert len(skips) == 1
+    assert skips[0]["coin"] == "ETH"
+    assert skips[0]["held_by"] == "BTC"
+    assert skips[0]["resting_score"] == 9
+    assert skips[0]["candidate_score"] == 4
+    assert skips[0]["score"] == 4
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+    assert any(
+        "CLOSER_SKIP_LOWER_SCORE" in rec.message
+        and "held_by=BTC" in rec.message
+        and "resting_score=9" in rec.message
+        and "candidate_score=4" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_closer_ticker_cancels_when_the_candidate_scores_higher(tmp_path, caplog):
+    """Resting 5 vs a closer 9 still swaps. The guard only protects a higher score."""
+    # 38 + 12 = 50 → score 5. 78 + 12 = 90 → score 9.
+    with caplog.at_level(logging.INFO):
+        summary, rows = _two_coin_hunt(
+            tmp_path,
+            btc_last=120.0,
+            eth_last=103.0,
+            tight_stop=True,
+            btc_prefix=38,
+            eth_prefix=78,
+            eth_step=0.1,
+        )
+    assert summary["arms"] == 2
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert len(cancels) == 1
+    assert cancels[0]["coin"] == "BTC"
+    assert cancels[0]["reason"] == "closer_ticker"
+    assert cancels[0]["winner"] == "ETH"
+    assert cancels[0]["resting_score"] == 5
+    assert cancels[0]["candidate_score"] == 9
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["BTC", "ETH"]
+    assert arms[0]["score"] == 5
+    assert arms[1]["score"] == 9
+    assert not any(r.get("fail_reason") == "CLOSER_SKIP_LOWER_SCORE" for r in rows)
+    assert any("closer_cancel" in rec.message for rec in caplog.records)
+
+
+def test_equal_scores_still_cancel_the_farther_alo(tmp_path):
+    """Equal scores keep today's closer-bps swap. A tie does not prefer the resting ticket.
+
+    Both tapes are 40 prints (score 4). ETH is closer, so BTC is cancelled.
+    """
+    summary, rows = _two_coin_hunt(
+        tmp_path,
+        btc_last=120.0,
+        eth_last=103.0,
+        tight_stop=True,
+        btc_prefix=28,
+        eth_prefix=28,
+    )
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert cancels[0]["reason"] == "closer_ticker"
+    assert cancels[0]["resting_score"] == 4
+    assert cancels[0]["candidate_score"] == 4
+    assert not any(r.get("fail_reason") == "CLOSER_SKIP_LOWER_SCORE" for r in rows)
+
+
+def test_closer_score_guard_off_cancels_the_higher_score(tmp_path):
+    """MODEL_B_CLOSER_SCORE_GUARD=0 restores the bps-only cancel."""
+    summary, rows = _two_coin_hunt(
+        tmp_path,
+        btc_last=120.0,
+        eth_last=103.0,
+        tight_stop=True,
+        btc_prefix=78,
+        btc_step=0.1,
+        eth_prefix=28,
+        closer_score_guard=False,
+    )
+    assert summary["cancels"] == 1
+    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
+    assert cancels[0]["coin"] == "BTC"
+    assert cancels[0]["reason"] == "closer_ticker"
+    assert cancels[0]["resting_score"] == 9
+    assert cancels[0]["candidate_score"] == 4
 
 
 def test_farther_ticker_does_not_cancel_the_closer_alo(tmp_path, caplog):

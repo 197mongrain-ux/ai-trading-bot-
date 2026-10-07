@@ -59,6 +59,8 @@ class WorkingOrder:
     tick: float = 1.0
     pool_px: float | None = None
     tp_r: float = 1.5
+    # Arm score, kept so a closer-ticker cancel can compare it. Not an entry gate.
+    score: int | None = None
 
 
 @dataclass
@@ -128,7 +130,13 @@ class ThesisBook:
             return THESIS_DONE
         return None
 
-    def post(self, intent: AloIntent, now: float, oid: object | None = None) -> WorkingOrder:
+    def post(
+        self,
+        intent: AloIntent,
+        now: float,
+        oid: object | None = None,
+        score: int | None = None,
+    ) -> WorkingOrder:
         if intent.tif != "Alo" or intent.market_fallback:
             raise ValueError("Model B is post-only Alo; market fallback is off")
         if int(intent.leverage) != 20:
@@ -151,6 +159,7 @@ class ThesisBook:
             tick=intent.tick if intent.tick > 0 else max(abs(intent.limit_px - intent.stop), 1e-12),
             pool_px=intent.pool_px,
             tp_r=intent.tp_r,
+            score=None if score is None else int(score),
         )
         self._state(intent.coin).working = order
         return order

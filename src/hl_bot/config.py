@@ -136,6 +136,11 @@ class Settings:
     # Coin-size floor (buy sz − sell sz). The larger of this and the USDC
     # term is the band. 0 drops this term. Both at 0 is the strict sign check.
     model_b_delta_flat_eps: float = DELTA_FLAT_EPS
+    # Closer-ticker cancel compares arm scores. On (default): do not cancel
+    # a resting Alo whose score is strictly higher than the closer coin.
+    # Equal scores still use the closer-bps swap. Off restores the old cancel.
+    # Not an entry gate and not a size change.
+    model_b_closer_score_guard: bool = True
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -375,6 +380,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_alo_timeout_sec=_float("MODEL_B_ALO_TIMEOUT_SEC", 0.0),
         model_b_delta_flat_usdc=_float("MODEL_B_DELTA_FLAT_USDC", DELTA_FLAT_USDC),
         model_b_delta_flat_eps=_float("MODEL_B_DELTA_FLAT_EPS", DELTA_FLAT_EPS),
+        model_b_closer_score_guard=_bool("MODEL_B_CLOSER_SCORE_GUARD", True),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
