@@ -2,7 +2,7 @@
   "title": "Model B \u00b7 Mainnet performance",
   "model": "model_b",
   "since_et": "2026-10-06T21:34:00-04:00",
-  "generated_et": "2026-10-07T15:07:38.497504-04:00",
+  "generated_et": "2026-10-07T15:35:12.939696-04:00",
   "network": "mainnet",
   "framing": "Hyperliquid MAINNET \u2014 Model B closed trades since flip",
   "starting_fund": 14.8,
@@ -10,7 +10,7 @@
   "withdrawals": 0,
   "net_flows": 54.116662,
   "total_deposited": 68.916662,
-  "total_funds": 69.528575,
+  "total_funds": 69.707775,
   "cash_flows": [
     {
       "time_ms": 1791399625590,
@@ -43,22 +43,32 @@
     "vs_starting_pct": 3.366,
     "net_on_capital_pct": 0.723,
     "twr_pct": 3.4,
+    "avg_win_pct": 2.3191,
+    "avg_loss_pct": -1.7524,
+    "win_loss_ratio": 1.323,
+    "expectancy_pct": 0.6905,
+    "avg_win_r": 1.288,
+    "avg_loss_r": -0.878,
+    "win_loss_ratio_r": 1.466,
+    "expectancy_r": 0.421,
+    "n_pct": 5,
+    "n_r": 5,
     "funding": -0.003879,
     "starting_fund": 14.8,
     "deposits": 54.116662,
     "withdrawals": 0,
     "net_flows": 54.116662,
     "total_deposited": 68.916662,
-    "spot_usdc": 69.528575,
-    "spot_hold": 8.7066,
-    "unrealized_pnl": 0.1176,
-    "margin_used": 8.7066,
-    "total_funds": 69.528575,
-    "total_pnl_usd": 0.611913,
-    "total_pnl_pct": 0.888,
-    "total_vs_starting_usd": 0.611913,
-    "total_vs_starting_pct": 0.888,
-    "expected_equity": 69.528575,
+    "spot_usdc": 69.707775,
+    "spot_hold": 8.71556,
+    "unrealized_pnl": 0.2968,
+    "margin_used": 8.71556,
+    "total_funds": 69.707775,
+    "total_pnl_usd": 0.791113,
+    "total_pnl_pct": 1.148,
+    "total_vs_starting_usd": 0.791113,
+    "total_vs_starting_pct": 1.148,
+    "expected_equity": 69.707775,
     "recon_residual": 0.0
   },
   "daily": [
@@ -79,7 +89,17 @@
       "capital": 68.916662,
       "equity_end": 69.419865,
       "daily_pct": 3.4,
-      "daily_pct_on_capital": 0.73
+      "daily_pct_on_capital": 0.73,
+      "avg_win_pct": 2.3191,
+      "avg_loss_pct": -1.7524,
+      "win_loss_ratio": 1.323,
+      "expectancy_pct": 0.6905,
+      "avg_win_r": 1.288,
+      "avg_loss_r": -0.878,
+      "win_loss_ratio_r": 1.466,
+      "expectancy_r": 0.421,
+      "n_pct": 5,
+      "n_r": 5
     }
   ],
   "closed_trades": [
@@ -92,8 +112,15 @@
       "fills": 1,
       "sz": 0.0558,
       "closed_ts": 1791347495.812,
+      "open_ts": 1791345496.861,
       "result": "LOSS",
-      "source": "hl_fills"
+      "source": "hl_fills",
+      "equity_at_open": 14.8,
+      "pct_of_account": -2.5644,
+      "planned_risk": 0.29574,
+      "r_multiple": -1.283,
+      "entry_px": 2610.8,
+      "planned_stop": 2605.5
     },
     {
       "symbol": "SOL",
@@ -104,8 +131,15 @@
       "fills": 1,
       "sz": 0.66,
       "closed_ts": 1791347603.978,
+      "open_ts": 1791347304.018,
       "result": "WIN",
-      "source": "hl_fills"
+      "source": "hl_fills",
+      "equity_at_open": 14.8,
+      "pct_of_account": 0.9008,
+      "planned_risk": 0.165,
+      "r_multiple": 0.808,
+      "entry_px": 118.28,
+      "planned_stop": 118.53
     },
     {
       "symbol": "PUMP",
@@ -116,8 +150,15 @@
       "fills": 1,
       "sz": 20788.0,
       "closed_ts": 1791375306.776,
+      "open_ts": 1791375054.454,
       "result": "WIN",
-      "source": "hl_fills"
+      "source": "hl_fills",
+      "equity_at_open": 14.553788,
+      "pct_of_account": 2.7604,
+      "planned_risk": 0.291032,
+      "r_multiple": 1.38,
+      "entry_px": 0.006396,
+      "planned_stop": 0.00641
     },
     {
       "symbol": "xyz:XYZ100",
@@ -128,8 +169,15 @@
       "fills": 1,
       "sz": 0.0055,
       "closed_ts": 1791379937.163,
+      "open_ts": 1791375498.904,
       "result": "LOSS",
-      "source": "hl_fills"
+      "source": "hl_fills",
+      "equity_at_open": 14.955534,
+      "pct_of_account": -0.9404,
+      "planned_risk": 0.297,
+      "r_multiple": -0.474,
+      "entry_px": 31008.0,
+      "planned_stop": 30954.0
     },
     {
       "symbol": "xyz:XYZ100",
@@ -140,8 +188,15 @@
       "fills": 1,
       "sz": 0.0054,
       "closed_ts": 1791386025.856,
+      "open_ts": 1791381982.826,
       "result": "WIN",
-      "source": "hl_fills"
+      "source": "hl_fills",
+      "equity_at_open": 14.814899,
+      "pct_of_account": 3.296,
+      "planned_risk": 0.2916,
+      "r_multiple": 1.675,
+      "entry_px": 30950.0,
+      "planned_stop": 30896.0
     }
   ],
   "open_positions": [
@@ -150,8 +205,8 @@
       "szi": 0.0056,
       "side": "long",
       "entry": 31074.0,
-      "uPnl": 0.1176,
-      "marginUsed": 8.7066,
+      "uPnl": 0.2968,
+      "marginUsed": 8.71556,
       "dex": "xyz"
     }
   ],
@@ -159,6 +214,7 @@
     "Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.",
     "Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.",
     "Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL \u2212 fees.",
+    "% of acct (per position) = net PnL after fees / account equity when that position opened (starting fund + deposits + realized net before the open). Avg win % / avg loss % average that over wins / losses; ratio = avg win \u00f7 |avg loss|; expectancy = mean % per closed trade. R = net / planned risk (|entry \u2212 journal stop| \u00d7 size).",
     "Overall net = sum(closedPnl) \u2212 all fill fees in window (realized trades only).",
     "Deposits/withdrawals come from HL userNonFundingLedgerUpdates (fallback: reports/model_b_deposits.json). They are capital, never PnL.",
     "Daily % PnL is time-weighted: the day is split at each deposit/withdrawal and each slice's realized net is divided by equity at the slice start, then chained. % on capital = net / (start-of-day equity + that day's deposits).",
