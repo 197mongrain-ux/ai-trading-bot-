@@ -10,6 +10,12 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from hl_bot.exchange.account import (
+    AccountSnapshot,
+    parse_account_fills,
+    parse_clearinghouse,
+    parse_entry_orders,
+)
 from hl_bot.strategy.model_b.universe import canon_coin
 
 logger = logging.getLogger(__name__)
@@ -206,6 +212,8 @@ class InfoClient:
         self._now = time.time
         self._has_injected_spot = False
         self._injected_spot_usdc: float | None = None
+        self._has_injected_account = False
+        self._injected_account: AccountSnapshot | None = None
 
     def _ensure_client(self) -> Any:
         if self._info is None:
@@ -367,6 +375,104 @@ class InfoClient:
         """Force the spot USDC balance. ``None`` is a failed read, not zero."""
         self._has_injected_spot = True
         self._injected_spot_usdc = None if balance is None else float(balance)
+
+    @property
+    def has_injected_account(self) -> bool:
+        return self._has_injected_account
+
+    def inject_account_snapshot(self, snapshot: AccountSnapshot | None) -> None:
+        """Force the perp snapshot. ``None`` is a failed read, not a flat account."""
+        self._has_injected_account = True
+        self._injected_account = snapshot
+
+    def load_account_snapshot(
+        self,
+        user: str,
+        dexs: tuple[str, ...] | list[str] | None = None,
+        *,
+        fills_start_ms: int | None = None,
+    ) -> AccountSnapshot:
+        """Positions, resting entries, and recent fills for every perp dex.
+
+        The original dex is ``""``. Builder dexes (``xyz``) are separate
+        clearinghouses; skipping them hides ``xyz:XYZ100`` margin. A failed
+        dex read returns ``ok=False`` so the caller does not treat the
+        account as flat. An injected snapshot skips the network.
+        """
+        if self._has_injected_account:
+            if self._injected_account is None:
+                return AccountSnapshot(ok=False)
+            return self._injected_account
+        names = tuple(dexs) if dexs is not None else ("",)
+        user = (user or "").strip()
+        if not user:
+            return AccountSnapshot(ok=False, dexs=tuple(names))
+        positions = []
+        orders = []
+        reported = 0.0
+        ok = True
+        for dex in names:
+            body: dict = {"type": "clearinghouseState", "user": user, "dex": dex}
+            try:
+                status, raw = _post_info(self.base_url, body)
+            except Exception as exc:
+                logger.warning("clearinghouseState dex=%s failed: %s", dex or "default", exc)
+                ok = False
+                continue
+            if status != 200:
+                logger.warning("clearinghouseState dex=%s HTTP %s", dex or "default", status)
+                ok = False
+                continue
+            try:
+                parsed_pos, margin = parse_clearinghouse(raw)
+            except ValueError as exc:
+                logger.warning("clearinghouseState dex=%s unreadable: %s", dex or "default", exc)
+                ok = False
+                continue
+            positions.extend(parsed_pos)
+            reported += margin
+            order_body = {"type": "frontendOpenOrders", "user": user, "dex": dex}
+            try:
+                order_status, order_raw = _post_info(self.base_url, order_body)
+            except Exception as exc:
+                logger.warning("frontendOpenOrders dex=%s failed: %s", dex or "default", exc)
+                ok = False
+                continue
+            if order_status != 200:
+                logger.warning(
+                    "frontendOpenOrders dex=%s HTTP %s", dex or "default", order_status
+                )
+                ok = False
+                continue
+            try:
+                orders.extend(parse_entry_orders(order_raw))
+            except ValueError as exc:
+                logger.warning("frontendOpenOrders dex=%s unreadable: %s", dex or "default", exc)
+                ok = False
+        fills: list = []
+        start_ms = fills_start_ms
+        if start_ms is None:
+            start_ms = int(self._now() * 1000) - 24 * 3600 * 1000
+        try:
+            fill_status, fill_raw = _post_info(
+                self.base_url,
+                {"type": "userFillsByTime", "user": user, "startTime": int(start_ms)},
+            )
+        except Exception as exc:
+            logger.warning("userFillsByTime failed: %s", exc)
+            fill_status, fill_raw = 0, None
+        if fill_status == 200:
+            fills = parse_account_fills(fill_raw)
+        else:
+            logger.warning("userFillsByTime HTTP %s", fill_status)
+        return AccountSnapshot(
+            ok=ok,
+            positions=tuple(positions),
+            entry_orders=tuple(orders),
+            fills=tuple(fills),
+            reported_margin=reported,
+            dexs=tuple(names),
+        )
 
     def inject_bars(self, bars: list[dict[str, float]], coin: str | None = None) -> None:
         """Inject synthetic bars (for tests / offline VWAP).

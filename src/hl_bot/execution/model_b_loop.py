@@ -13,9 +13,19 @@ is not strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on:
 resting score 9 is not cancelled for a closer score 4
 (``CLOSER_SKIP_LOWER_SCORE``). Equal scores still swap on closer bps.
 ``MODEL_B_CLOSE_MARGIN_RESERVE`` (default 0.60, ``0`` off) keeps that
-fraction of free-margin capacity for the preferred close coin: highest
-score among close setups, then the closer swing in bps. It is not
-hard-coded to BTC.
+fraction of free-margin capacity for a resting unfilled Alo: highest
+arm score, then the closer limit in bps. A close setup that has not
+armed does not hold it, and an equal or lower score does not steal it
+when only the distance twitches. A strictly higher score takes it
+immediately. It is not hard-coded to BTC. Spot USDC ``total`` is still
+the 2% sizing base. Free margin subtracts margin already held by open
+positions and resting entries, including builder-dex positions.
+A reconcile close is only for a position this process is holding.
+One exchange fill (tid, else hash) can close one journal open, and
+that id is stored on the close so a later loop or restart cannot
+spend it on an older open. Opens from another network, or opens
+the book never adopted, are logged once and left alone. The
+daily-loss tally sees each of those fills once.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -33,7 +43,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 from hl_bot.config import Settings
-from hl_bot.exchange.hl_trades import HyperliquidTradeFeed, MemoryFeed
+from hl_bot.exchange.account import (
+    AccountSnapshot,
+    BookView,
+    PlannedClose,
+    consumed_fill_ids,
+    dexs_for_coins,
+    fill_id,
+    plan_reconcile_closes,
+)
+from hl_bot.exchange.hl_trades import HyperliquidTradeFeed, MemoryFeed, UserFill
 from hl_bot.exchange.info_client import InfoClient
 from hl_bot.execution.loop import killswitch_active
 from hl_bot.journal import TradeJournal
@@ -261,6 +280,7 @@ def run_model_b(
         delta_flat_usdc=settings.model_b_delta_flat_usdc,
         delta_flat_eps=settings.model_b_delta_flat_eps,
         close_margin_reserve=settings.model_b_close_margin_reserve,
+        account=settings.account_address or "",
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -283,13 +303,19 @@ def run_model_b(
     reserve_coin: str | None = None
     logger.info(
         "MODEL_B min_prints=%s network=%s coins=%s closer_score_guard=%s "
-        "close_margin_reserve=%.2f",
+        "close_margin_reserve=%.2f resting_only=1",
         settings.model_b_min_prints,
         settings.network,
         ",".join(hunt_coins),
         "on" if settings.model_b_closer_score_guard else "off",
         settings.model_b_close_margin_reserve,
     )
+    announced_adopts: set[str] = set()
+    announced_stale: set[str] = set()
+    used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
+    risked_fill_ids: set[str] = set()
+    session_started_at: float | None = None
+    last_margin_sig: tuple | None = None
 
     while True:
         iterations += 1
@@ -308,6 +334,96 @@ def run_model_b(
                 action="release",
                 reason=reason,
                 **extra,
+            )
+
+        def _apply_close_risk(pnl: float, ids: tuple[str, ...] | list[str]) -> None:
+            """Count a close in the daily-loss tally once per fill id.
+
+            A reconcile that runs every loop must not add the same loss
+            again. Ids already charged (this process, including a
+            websocket close of the same fill) are skipped.
+            """
+            nonlocal equity
+            fresh = [item for item in ids if item not in risked_fill_ids]
+            if ids and not fresh:
+                return
+            equity += pnl
+            risk.record_trade_close(pnl)
+            risked_fill_ids.update(ids)
+
+        def _journal_reconciled_close(plan: PlannedClose) -> None:
+            """Write one close for a position this process is still holding.
+
+            A flat book is not closed from a journal open. That path
+            replayed stale opens against one fill. The fill ids are
+            stored on the row so a restart cannot spend them again.
+            """
+            ids = tuple(plan.fill_ids)
+            if ids and all(item in used_fill_ids for item in ids):
+                return
+            existing = book.position(plan.coin)
+            if existing is None:
+                return
+            closed = book.force_flat(plan.coin, plan.exit, reason=plan.reason)
+            if closed is None:
+                return
+            closed.pnl = plan.pnl
+            if plan.size > 0:
+                closed.size = plan.size
+            summary["closes"] += 1
+            journal.log(
+                "close",
+                symbol=closed.coin,
+                side=closed.side,
+                size=closed.size,
+                price=plan.exit,
+                pnl=plan.pnl,
+                reason=plan.reason,
+                entry_mode="model_b",
+                source=plan.source,
+                entry=plan.entry,
+                fill_ids=list(ids),
+                network=settings.network,
+                account=settings.account_address or "",
+            )
+            used_fill_ids.update(ids)
+            _apply_close_risk(plan.pnl, ids)
+            logger.info(
+                "MODEL_B RECONCILE close %s @ %s pnl=%s reason=%s source=%s",
+                closed.coin,
+                plan.exit,
+                plan.pnl,
+                plan.reason,
+                plan.source,
+            )
+            _release_margin(closed.coin, plan.reason)
+            if closed.remainder is not None:
+                _cancel_working(closed.remainder, plan.reason, remainder=True)
+
+        def _block_same_coin(coin: str, reason: str, decision) -> None:
+            """Do not arm or send when this coin already has a position or entry."""
+            pos = book.position(coin)
+            summary["fails"] += 1
+            extra = {
+                **decision.to_log(),
+                "fail_reason": reason,
+                "armed": False,
+            }
+            if pos is not None:
+                extra["position_size"] = pos.size
+                extra["position_side"] = pos.side
+                margin = _position_margin(pos)
+                extra["margin"] = margin
+            else:
+                margin = None
+            journal.log("model_b_fail", entry_mode="model_b", **extra)
+            logger.info(
+                "MODEL_B BLOCK %s reason=%s side=%s size=%s margin=%s",
+                canon_coin(coin),
+                reason,
+                getattr(pos, "side", None) or "-",
+                getattr(pos, "size", None) or "-",
+                f"{margin:.4f}" if margin is not None else "-",
             )
 
         def _cancel_working(order, reason: str, **extra) -> None:
@@ -387,8 +503,66 @@ def run_model_b(
         for order in book.expire(now):
             _cancel_working(order, "unfilled_timeout")
 
+        snapshot: AccountSnapshot | None = None
+        ws_fills: list[UserFill] = []
+        if settings.is_live and (
+            getattr(info, "has_injected_account", False)
+            or (settings.account_address or getattr(live, "account_address", "") or "").strip()
+        ):
+            user = settings.account_address or getattr(live, "account_address", "") or ""
+            try:
+                snapshot = info.load_account_snapshot(user, dexs_for_coins(hunt_coins))
+            except Exception:
+                logger.exception("MODEL_B account snapshot failed")
+                snapshot = None
+            if snapshot is not None and snapshot.ok:
+                for kind, item in sync_exchange_book(book, snapshot, now):
+                    key = f"{kind}:{canon_coin(item.coin)}"
+                    if key in announced_adopts:
+                        continue
+                    announced_adopts.add(key)
+                    if kind == "position":
+                        logger.info(
+                            "MODEL_B ADOPT %s %s size=%s entry=%s margin=%.4f",
+                            item.coin,
+                            item.side,
+                            item.size,
+                            item.entry,
+                            item.held_margin(),
+                        )
+                        journal.log(
+                            "model_b_margin",
+                            entry_mode="model_b",
+                            coin=item.coin,
+                            action="adopt_position",
+                            side=item.side,
+                            size=item.size,
+                            entry=item.entry,
+                            margin=item.held_margin(),
+                        )
+                    else:
+                        logger.info(
+                            "MODEL_B ADOPT %s resting entry side=%s size=%s px=%s oid=%s",
+                            item.coin,
+                            item.side,
+                            item.size,
+                            item.limit_px,
+                            item.oid,
+                        )
+                        journal.log(
+                            "model_b_margin",
+                            entry_mode="model_b",
+                            coin=item.coin,
+                            action="adopt_entry",
+                            side=item.side,
+                            size=item.size,
+                            limit_px=item.limit_px,
+                            oid=item.oid,
+                        )
+
         if settings.is_live:
-            for fill in feed.take_user_fills():
+            ws_fills = list(feed.take_user_fills())
+            for fill in ws_fills:
                 applied = book.apply_user_fill(
                     coin=fill.coin,
                     oid=fill.oid,
@@ -410,6 +584,8 @@ def run_model_b(
                             tp=applied.take_profit,
                             entry_mode="model_b",
                             reason="alo_fill",
+                            network=settings.network,
+                            account=settings.account_address or "",
                         )
                     if applied.remainder_kept:
                         journal.log(
@@ -429,9 +605,11 @@ def run_model_b(
                             applied.size,
                             applied.remainder_size,
                         )
-                    if live is not None:
+                    if live is not None and not applied.adopted:
                         # Brackets stay in this process. An amend that fails
-                        # is logged. It does not end the hunt.
+                        # is logged. It does not end the hunt. An adopted
+                        # position already has exchange brackets; a stop of 0
+                        # must not be sent.
                         try:
                             if applied.just_opened:
                                 _place_brackets(live, applied)
@@ -444,8 +622,7 @@ def run_model_b(
                                 applied.take_profit,
                             )
                 elif isinstance(applied, CloseEvent):
-                    equity += applied.pnl
-                    risk.record_trade_close(applied.pnl)
+                    fid = fill_id(fill)
                     summary["closes"] += 1
                     journal.log(
                         "close",
@@ -456,12 +633,55 @@ def run_model_b(
                         pnl=applied.pnl,
                         reason=applied.reason,
                         entry_mode="model_b",
+                        source="user_fill",
+                        fill_ids=[fid],
+                        network=settings.network,
+                        account=settings.account_address or "",
                     )
+                    used_fill_ids.add(fid)
+                    _apply_close_risk(applied.pnl, (fid,))
                     _release_margin(applied.coin, applied.reason)
                     if applied.remainder is not None:
                         _cancel_working(
                             applied.remainder, applied.reason, remainder=True
                         )
+
+        if session_started_at is None:
+            session_started_at = now
+
+        if snapshot is not None and snapshot.ok:
+            merged = _merge_fills(snapshot.fills, ws_fills)
+            reconcile_snapshot = AccountSnapshot(
+                ok=True,
+                positions=snapshot.positions,
+                entry_orders=snapshot.entry_orders,
+                fills=tuple(merged),
+                reported_margin=snapshot.reported_margin,
+                dexs=snapshot.dexs,
+            )
+            # Journal rows written above (a websocket close) are already
+            # in the file, so their fill ids cannot be spent again here.
+            used_fill_ids.update(consumed_fill_ids(journal.read_all()))
+            planned = plan_reconcile_closes(
+                journal.read_all(),
+                reconcile_snapshot,
+                _book_views(book),
+                network=settings.network,
+                account=settings.account_address or "",
+                session_started_at=session_started_at,
+            )
+            for coin, count, reason in planned.ignored:
+                if coin in announced_stale:
+                    continue
+                announced_stale.add(coin)
+                logger.info(
+                    "MODEL_B RECONCILE ignore stale coin=%s opens=%s reason=%s",
+                    coin,
+                    count,
+                    reason,
+                )
+            for plan in planned.closes:
+                _journal_reconciled_close(plan)
 
         active = session_coins(now, symbols=hunt_coins)
         hunts: list[dict] = []
@@ -488,6 +708,35 @@ def run_model_b(
         else:
             risk_base = equity
 
+        if risk_base is not None:
+            held_now = _margin_in_use(book)
+            free_now = float(risk_base) - held_now
+            held_names = tuple(
+                sorted(pos.coin for pos in book.open_positions() if pos.size > 0)
+            )
+            order_names = tuple(sorted(order.coin for order in book.working_orders()))
+            margin_sig = (round(held_now, 4), held_names, order_names)
+            if held_now > 1e-9 and margin_sig != last_margin_sig:
+                logger.info(
+                    "MODEL_B MARGIN free spot=%.4f held=%.4f free=%.4f positions=%s orders=%s",
+                    float(risk_base),
+                    held_now,
+                    free_now,
+                    ",".join(held_names) or "-",
+                    ",".join(order_names) or "-",
+                )
+                journal.log(
+                    "model_b_margin",
+                    entry_mode="model_b",
+                    action="free_margin",
+                    spot=float(risk_base),
+                    held=held_now,
+                    free_margin=free_now,
+                    positions=",".join(held_names),
+                    orders=",".join(order_names),
+                )
+            last_margin_sig = margin_sig
+
         for coin in active:
             prints = feed.prints(coin)
             if not settings.is_live:
@@ -504,6 +753,8 @@ def run_model_b(
                         tp=pos.take_profit,
                         entry_mode="model_b",
                         reason="alo_fill",
+                        network=settings.network,
+                        account=settings.account_address or "",
                     )
                     logger.info(
                         "MODEL_B FILL %s %s size=%s @ %s stop=%s tp=%s",
@@ -550,7 +801,8 @@ def run_model_b(
 
             if risk.halted_daily_loss or risk.killed:
                 continue
-            occupied = book.working(coin) is not None or book.position(coin) is not None
+            exposure = _exposure_reason(book, coin, snapshot)
+            occupied = exposure is not None
             if risk_base is None:
                 if not occupied:
                     summary["fails"] += 1
@@ -606,12 +858,16 @@ def run_model_b(
                     "ask": ask,
                     "last": last,
                     "post": not occupied,
+                    "exposure": exposure,
                 }
             )
 
         fraction = float(settings.model_b_close_margin_reserve)
+        # Only a resting unfilled Alo owns the reserve. An unswept close
+        # setup does not, so a coin that cleared every gate is not held
+        # back for it. Equal scores do not flip the owner on bps alone.
         preference = (
-            preferred_close(hunts)
+            stick_preferred(resting_reserve_candidates(book, hunts), reserve_coin)
             if risk_base is not None and fraction > 0
             else None
         )
@@ -638,7 +894,8 @@ def run_model_b(
                 )
                 logger.info(
                     "MODEL_B MARGIN CLOSE_MARGIN_RESERVE engage coin=%s "
-                    "fraction=%.2f capacity=%.4f reserve=%.4f score=%s bps=%s",
+                    "fraction=%.2f capacity=%.4f reserve=%.4f score=%s bps=%s "
+                    "protected=resting",
                     preference.coin,
                     fraction,
                     capacity,
@@ -676,6 +933,14 @@ def run_model_b(
             for order in crowded:
                 if kept_margin <= cap + 1e-6:
                     break
+                if settings.model_b_closer_score_guard and resting_score_blocks_closer_cancel(
+                    order.score, preference.score
+                ):
+                    # PR #5: a strictly higher resting score is not cancelled
+                    # to fund the reserve. It stays, and it no longer forces
+                    # the smaller tickets out.
+                    kept_margin -= initial_margin(order.size, order.limit_px)
+                    continue
                 released = book.release_for_closer(order.coin)
                 if released is None:
                     continue
@@ -691,6 +956,12 @@ def run_model_b(
 
         for hunt in hunts:
             if not hunt["post"]:
+                reason = hunt.get("exposure")
+                decision = hunt["decision"]
+                if reason and (
+                    decision.fail_reason in ("AVERAGE_DOWN", "SECOND_ALO") or decision.armed
+                ):
+                    _block_same_coin(hunt["coin"], reason, decision)
                 continue
             coin = hunt["coin"]
             decision = hunt["decision"]
@@ -728,7 +999,11 @@ def run_model_b(
             # and open positions. When the remainder cannot fund this
             # ticket, fall back to cancelling a strictly farther unfilled
             # Alo. A filled position is never cancelled.
-            if preference is not None and canon_coin(coin) != preference.coin:
+            if (
+                preference is not None
+                and canon_coin(coin) != preference.coin
+                and not _score_beats_reserve(decision.score, preference.score)
+            ):
                 capacity = _reserve_capacity(float(risk_base), book, preference.coin)
                 reserve_need = initial_margin(intent.size, intent.limit_px)
                 committed = _other_resting_margin(book, preference.coin)
@@ -777,6 +1052,66 @@ def run_model_b(
                     continue
 
             resting = [order for order in book.resting_orders() if order.coin != intent.coin]
+            used_now = _margin_in_use(book)
+            need_now = initial_margin(intent.size, intent.limit_px)
+            free_now = float(risk_base) - used_now
+            if (
+                used_now > 1e-9
+                and not resting
+                and not ticket_fits(float(risk_base), used_now, intent.size, intent.limit_px)
+            ):
+                held_by = ",".join(pos.coin for pos in book.open_positions()) or "-"
+                summary["fails"] += 1
+                journal.log(
+                    "model_b_fail",
+                    entry_mode="model_b",
+                    **{
+                        **decision.to_log(),
+                        "fail_reason": "INSUFFICIENT_MARGIN",
+                        "armed": False,
+                        "free_margin": free_now,
+                        "margin_need": need_now,
+                        "held": used_now,
+                        "spot": float(risk_base),
+                        "held_by": held_by,
+                    },
+                )
+                logger.info(
+                    "MODEL_B MARGIN %s insufficient free=%.4f need=%.4f "
+                    "spot=%.4f held=%.4f held_by=%s",
+                    coin,
+                    free_now,
+                    need_now,
+                    float(risk_base),
+                    used_now,
+                    held_by,
+                )
+                continue
+            if used_now > 1e-9 and not resting and ticket_fits(
+                float(risk_base), used_now, intent.size, intent.limit_px
+            ):
+                held_by = ",".join(pos.coin for pos in book.open_positions()) or "-"
+                logger.info(
+                    "MODEL_B MARGIN %s position_free free=%.4f need=%.4f "
+                    "spot=%.4f held=%.4f held_by=%s",
+                    coin,
+                    free_now,
+                    need_now,
+                    float(risk_base),
+                    used_now,
+                    held_by,
+                )
+                journal.log(
+                    "model_b_margin",
+                    entry_mode="model_b",
+                    coin=coin,
+                    action="position_free",
+                    free_margin=free_now,
+                    margin_need=need_now,
+                    spot=float(risk_base),
+                    held=used_now,
+                    held_by=held_by,
+                )
             if resting:
                 used = _margin_in_use(book)
                 free = float(risk_base) - used
@@ -937,6 +1272,11 @@ def run_model_b(
                             resting_score=released.score,
                             candidate_score=decision.score,
                         )
+
+            exposure_now = _exposure_reason(book, intent.coin, snapshot)
+            if exposure_now:
+                _block_same_coin(intent.coin, exposure_now, decision)
+                continue
 
             oid = None
             if live is not None:
@@ -1139,6 +1479,170 @@ def preferred_close(hunts) -> ClosePreference | None:
     return best
 
 
+def stick_preferred(candidates: list[ClosePreference], incumbent: str | None) -> ClosePreference | None:
+    """Keep the current reserve coin unless a strictly higher score shows up.
+
+    Equal scores do not flip on a closer bps print. That is what made
+    BTC/ETH/SOL trade the reserve every few seconds while none of them
+    had armed. The incumbent is dropped when it is no longer resting.
+    """
+    best: ClosePreference | None = None
+    for cand in candidates:
+        if best is None or cand.score > best.score or (
+            cand.score == best.score and _bps_is_closer(cand.distance_bps, best.distance_bps)
+        ):
+            best = cand
+    if best is None:
+        return None
+    if not incumbent:
+        return best
+    current = next((cand for cand in candidates if cand.coin == canon_coin(incumbent)), None)
+    if current is None:
+        return best
+    if best.score > current.score:
+        return best
+    return current
+
+
+def _score_beats_reserve(candidate: int | None, resting: int | None) -> bool:
+    """A strictly higher score is not reserve-blocked. The closer guard still applies."""
+    if candidate is None or resting is None:
+        return False
+    return int(candidate) > int(resting)
+
+
+def resting_reserve_candidates(book: ThesisBook, hunts) -> list[ClosePreference]:
+    """Resting unfilled Alos, in hunt order. Unarmed close setups are not included."""
+    hunt_by = {canon_coin(hunt["decision"].coin): hunt for hunt in hunts}
+    coins = [canon_coin(hunt["decision"].coin) for hunt in hunts]
+    for order in book.resting_orders():
+        if order.coin not in coins:
+            coins.append(order.coin)
+    candidates: list[ClosePreference] = []
+    for coin in coins:
+        order = next((item for item in book.resting_orders() if item.coin == coin), None)
+        if order is None:
+            continue
+        hunt = hunt_by.get(coin)
+        ref = None
+        if hunt is not None:
+            ref = market_ref(hunt.get("bid"), hunt.get("ask"), hunt.get("last"))
+        bps = None
+        if ref is not None and float(ref) > 0:
+            bps = distance_to_fill_bps(order.side, order.limit_px, float(ref))
+        score = int(order.score) if order.score is not None else 0
+        candidates.append(ClosePreference(coin=coin, score=score, distance_bps=bps))
+    return candidates
+
+
+def _exposure_reason(book: ThesisBook, coin: str, snapshot: AccountSnapshot | None) -> str | None:
+    """Why this coin cannot take a new entry. ``None`` when it is flat."""
+    name = canon_coin(coin)
+    if book.position(name) is not None:
+        return "OPEN_POSITION"
+    if snapshot is not None and snapshot.ok and snapshot.position(name) is not None:
+        return "OPEN_POSITION"
+    if book.working(name) is not None:
+        return "RESTING_ENTRY"
+    if snapshot is not None and snapshot.ok and snapshot.entry_order(name) is not None:
+        return "RESTING_ENTRY"
+    return None
+
+
+def sync_exchange_book(book: ThesisBook, snapshot: AccountSnapshot, now: float) -> list[tuple]:
+    """Adopt exchange positions and resting entries. Drop stubs the exchange released.
+
+    Returns ``("position"|"entry", item)`` for each newly adopted row.
+    Managed orders this process posted are left alone.
+    """
+    if not snapshot.ok:
+        return []
+    events: list[tuple] = []
+    open_coins = {pos.coin for pos in snapshot.positions if pos.size > 0}
+    entry_coins = {order.coin for order in snapshot.entry_orders}
+    entry_oids = {order.oid for order in snapshot.entry_orders if order.oid is not None}
+    for order in list(book.working_orders()):
+        if not getattr(order, "external", False):
+            continue
+        if order.coin in open_coins and order.coin not in entry_coins:
+            book.drop_external(order.coin)
+            continue
+        still_resting = (order.oid is not None and order.oid in entry_oids) or (
+            order.coin in entry_coins
+        )
+        if not still_resting:
+            book.drop_external(order.coin)
+    known_oids = {order.oid for order in book.working_orders() if order.oid is not None}
+    for pos in snapshot.positions:
+        if pos.size <= 0:
+            continue
+        existed = book.position(pos.coin) is not None
+        adopted = book.adopt_position(
+            coin=pos.coin,
+            side=pos.side,
+            size=pos.size,
+            entry=pos.entry,
+            now=now,
+            margin_used=pos.held_margin(),
+        )
+        if adopted is not None and not existed:
+            events.append(("position", pos))
+    for order in snapshot.entry_orders:
+        if order.oid is not None and order.oid in known_oids:
+            continue
+        if book.working(order.coin) is not None:
+            continue
+        created = book.adopt_entry(
+            coin=order.coin,
+            side=order.side,
+            limit_px=order.limit_px,
+            size=order.size,
+            now=now,
+            oid=order.oid,
+        )
+        if created is not None:
+            events.append(("entry", order))
+    book.margin_floor = max(0.0, float(snapshot.reported_margin))
+    return events
+
+
+def _book_views(book: ThesisBook) -> list[BookView]:
+    return [
+        BookView(
+            coin=pos.coin,
+            side=pos.side,
+            size=pos.size,
+            entry=pos.entry,
+            stop=pos.stop,
+            take_profit=pos.take_profit,
+            opened_at=pos.opened_at,
+        )
+        for pos in book.open_positions()
+    ]
+
+
+def _merge_fills(snapshot_fills, ws_fills: list[UserFill]) -> list[UserFill]:
+    """Snapshot fills plus this pass's websocket fills, one row per tid."""
+    merged: list[UserFill] = []
+    seen: set[object] = set()
+    for fill in list(snapshot_fills) + list(ws_fills):
+        tid = getattr(fill, "tid", None)
+        if tid is not None and tid != "":
+            if tid in seen:
+                continue
+            seen.add(tid)
+        merged.append(fill)
+    return merged
+
+
+def _position_margin(pos) -> float:
+    """Exchange ``marginUsed`` when the position has one, else notional / 20."""
+    held = getattr(pos, "margin_used", None)
+    if held is not None and float(held) > 0:
+        return float(held)
+    return initial_margin(pos.size, pos.entry)
+
+
 def _reserve_capacity(equity: float, book: ThesisBook, coin: str) -> float:
     """Sizing balance minus margin this rule will not cancel.
 
@@ -1148,7 +1652,7 @@ def _reserve_capacity(equity: float, book: ThesisBook, coin: str) -> float:
     preferred = canon_coin(coin)
     locked = 0.0
     for pos in book.open_positions():
-        locked += initial_margin(pos.size, pos.entry)
+        locked += _position_margin(pos)
     for order in book.working_orders():
         if canon_coin(order.coin) == preferred:
             locked += initial_margin(order.size, order.limit_px)
@@ -1168,16 +1672,20 @@ def _other_resting_margin(book: ThesisBook, coin: str) -> float:
 def _margin_in_use(book: ThesisBook) -> float:
     """Initial margin already reserved, in the same units as the sizing balance.
 
-    A resting Alo uses its limit. An open position uses its fill. A partial
-    counts both the filled size and the resting remainder. Spot USDC (or
-    paper equity) is not re-read here.
+    A resting Alo uses its limit. An open position uses exchange
+    ``marginUsed`` when that was adopted, otherwise its fill. A partial
+    counts both the filled size and the resting remainder. ``margin_floor``
+    is the clearinghouse ``totalMarginUsed`` when that figure is larger,
+    so a builder-dex position is not dropped just because the local book
+    was empty at startup. Spot USDC (or paper equity) is not re-read here.
     """
     used = 0.0
     for order in book.working_orders():
         used += initial_margin(order.size, order.limit_px)
     for pos in book.open_positions():
-        used += initial_margin(pos.size, pos.entry)
-    return used
+        used += _position_margin(pos)
+    floor = float(getattr(book, "margin_floor", 0.0) or 0.0)
+    return max(used, floor)
 
 
 def _default_tick(coin: str, last: float | None) -> float:

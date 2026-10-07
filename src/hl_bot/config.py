@@ -18,7 +18,15 @@ from hl_bot.strategy.model_b.tape import (
 )
 from hl_bot.strategy.model_b.universe import canon_coin
 
-load_dotenv()
+
+def _dotenv_skipped() -> bool:
+    """Tests set this so a laptop ``.env`` cannot change defaults."""
+    return os.getenv("HL_BOT_SKIP_DOTENV", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -142,9 +150,9 @@ class Settings:
     # Equal scores still use the closer-bps swap. Off restores the old cancel.
     # Not an entry gate and not a size change.
     model_b_closer_score_guard: bool = True
-    # Fraction of free-margin capacity held for the preferred close coin
-    # (highest score among close setups, then closer swing in bps).
-    # 0 turns the reserve off. Not hard-coded to BTC.
+    # Fraction of free-margin capacity held for a resting preferred Alo
+    # (highest score, then closer limit in bps). An unarmed close setup
+    # does not hold it. 0 turns the reserve off. Not hard-coded to BTC.
     model_b_close_margin_reserve: float = CLOSE_MARGIN_RESERVE
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -308,6 +316,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     """Load settings from environment (optionally from a specific .env path)."""
     if env_file is not None:
         load_dotenv(env_file, override=True)
+    elif not _dotenv_skipped():
+        load_dotenv()
 
     network = os.getenv("HL_NETWORK", "mainnet").strip().lower()
     default_url = (

@@ -61,6 +61,10 @@ class WorkingOrder:
     tp_r: float = 1.5
     # Arm score, kept so a closer-ticker cancel can compare it. Not an entry gate.
     score: int | None = None
+    # Adopted from the exchange after a restart. No sweep, so the thesis
+    # timer and stale-print path must not invent a cancel. A user fill is
+    # recorded as an adopted position instead of a stop at 0.
+    external: bool = False
 
 
 @dataclass
@@ -80,6 +84,11 @@ class OpenPosition:
     remainder_size: float = 0.0
     fill_added: float = 0.0
     just_opened: bool = False
+    # Exchange position this process did not open. Stop and TP are unknown,
+    # so a public price must not stop it out. Closes come from fills.
+    adopted: bool = False
+    # Exchange ``marginUsed`` when we have it. None uses notional / 20.
+    margin_used: float | None = None
 
 
 @dataclass
@@ -109,6 +118,9 @@ class ThesisBook:
         self._coins: dict[str, _CoinState] = {}
         # Working orders cleared by flatten that had no position to hang on.
         self.flatten_cancels: list[WorkingOrder] = []
+        # Exchange ``totalMarginUsed`` when it is larger than the sum of the
+        # positions and entry orders this book is tracking.
+        self.margin_floor: float = 0.0
 
     def _state(self, coin: str) -> _CoinState:
         coin = canon_coin(coin)
@@ -175,10 +187,11 @@ class ThesisBook:
         cancelled: list[WorkingOrder] = []
         for st in self._coins.values():
             order = st.working
-            if order is None:
+            if order is None or order.external:
                 continue
             # A partial fill may already have a position. The timer still
             # drops only the resting remainder; the position stays.
+            # An adopted exchange entry is not this process's thesis timer.
             if float(now) + 1e-9 >= order.posted_at + self.work_sec:
                 st.consumed.add(order.swing_id)
                 st.working = None
@@ -210,6 +223,95 @@ class ThesisBook:
                 st.working = None
                 return [order]
         return []
+
+    def adopt_position(
+        self,
+        *,
+        coin: str,
+        side: str,
+        size: float,
+        entry: float,
+        now: float,
+        margin_used: float | None = None,
+    ) -> OpenPosition | None:
+        """Record a position the exchange already has.
+
+        A position this process opened keeps its stop and TP. An adopted
+        one is refreshed from the exchange (size, entry, margin) so a
+        restart does not size the next ticket off the full spot balance.
+        """
+        if side not in ("long", "short") or size <= 0 or entry <= 0:
+            return None
+        st = self._state(coin)
+        if st.position is not None and not st.position.adopted:
+            return st.position
+        if st.position is not None:
+            pos = st.position
+            pos.size = float(size)
+            pos.entry = float(entry)
+            pos.side = side
+            if margin_used is not None and float(margin_used) > 0:
+                pos.margin_used = float(margin_used)
+            return pos
+        pos = OpenPosition(
+            coin=canon_coin(coin),
+            side=side,
+            size=float(size),
+            entry=float(entry),
+            stop=0.0,
+            take_profit=0.0,
+            swing_id=f"adopted:{canon_coin(coin)}",
+            opened_at=float(now),
+            adopted=True,
+            margin_used=None if margin_used is None or float(margin_used) <= 0 else float(margin_used),
+        )
+        st.position = pos
+        return pos
+
+    def adopt_entry(
+        self,
+        *,
+        coin: str,
+        side: str,
+        limit_px: float,
+        size: float,
+        now: float,
+        oid: object | None = None,
+    ) -> WorkingOrder | None:
+        """Block a second entry on a resting order this process did not post.
+
+        ``sweep_px`` stays empty so a public print cannot stale-cancel it.
+        The oid is the exchange id, so a later closer-cancel can pull it.
+        """
+        if side not in ("long", "short") or limit_px <= 0 or size <= 0:
+            return None
+        st = self._state(coin)
+        if st.working is not None:
+            return None
+        order = WorkingOrder(
+            coin=canon_coin(coin),
+            side=side,
+            limit_px=float(limit_px),
+            size=float(size),
+            stop=float(limit_px),
+            take_profit=float(limit_px),
+            swing_id=f"external:{canon_coin(coin)}",
+            posted_at=float(now),
+            oid=oid,
+            sweep_px=None,
+            external=True,
+        )
+        st.working = order
+        return order
+
+    def drop_external(self, coin: str) -> WorkingOrder | None:
+        """Drop an adopted entry that is gone from the exchange. No thesis consume."""
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.working is None or not st.working.external:
+            return None
+        order = st.working
+        st.working = None
+        return order
 
     def working(self, coin: str) -> WorkingOrder | None:
         st = self._coins.get(canon_coin(coin))
@@ -346,6 +448,56 @@ class ThesisBook:
         pos.just_opened = just_opened
         return pos
 
+    def _fill_external(
+        self,
+        order: WorkingOrder,
+        price: float,
+        ts: float,
+        size: float | None = None,
+    ) -> OpenPosition:
+        """A fill on an order adopted from the exchange.
+
+        Stop and TP are not invented. The position stays ``adopted`` so a
+        later public price cannot stop it out between the real brackets.
+        """
+        st = self._state(order.coin)
+        if size is None or float(size) <= 0:
+            added = float(order.size)
+        else:
+            added = min(float(size), float(order.size))
+        dust = max(1e-12, abs(order.size) * 1e-8)
+        remainder_kept = added < float(order.size) - dust
+        if remainder_kept:
+            order.size = float(order.size) - added
+            remainder = float(order.size)
+        else:
+            remainder = 0.0
+            st.working = None
+        just_opened = st.position is None
+        if just_opened:
+            pos = OpenPosition(
+                coin=order.coin,
+                side=order.side,
+                size=added,
+                entry=price,
+                stop=0.0,
+                take_profit=0.0,
+                swing_id=order.swing_id,
+                opened_at=ts,
+                adopted=True,
+            )
+            st.position = pos
+        else:
+            pos = st.position
+            assert pos is not None
+            pos.entry = (pos.entry * pos.size + price * added) / (pos.size + added)
+            pos.size = pos.size + added
+        pos.remainder_kept = remainder_kept
+        pos.remainder_size = remainder
+        pos.fill_added = added
+        pos.just_opened = just_opened
+        return pos
+
     def try_fill_from_prints(self, prints: list[TradePrint]) -> OpenPosition | None:
         """Paper fill. A resting buy fills on a later sell at or through the bid.
 
@@ -360,6 +512,9 @@ class ThesisBook:
         if st is None or st.working is None or st.position is not None:
             return None
         order = st.working
+        # An adopted exchange order is not filled from the public tape.
+        if order.external:
+            return None
         for print_ in sorted(prints, key=lambda p: (p.ts, p.seq)):
             if print_.coin != coin or print_.ts + 1e-9 < order.posted_at:
                 continue
@@ -416,6 +571,13 @@ class ThesisBook:
         order = st.working
         if oid is not None and order.oid is not None and oid != order.oid:
             return None
+        if order.external and (st.position is None or st.position.adopted):
+            return self._fill_external(
+                order,
+                price if price > 0 else order.limit_px,
+                ts,
+                size=size,
+            )
         return self._fill(
             order,
             price if price > 0 else order.limit_px,
@@ -429,6 +591,9 @@ class ThesisBook:
         if st is None or st.position is None or price <= 0:
             return None
         pos = st.position
+        # Adopted stops are unknown. A price must not flat the coin.
+        if pos.adopted:
+            return None
         reason: str | None = None
         if pos.side == "long":
             if price <= pos.stop:
