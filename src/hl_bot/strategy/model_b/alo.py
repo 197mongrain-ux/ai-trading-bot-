@@ -95,3 +95,18 @@ def distance_to_fill_bps(side: str, limit_px: float, ref_px: float) -> float | N
 def is_closer_to_fill(challenger_bps: float, resting_bps: float) -> bool:
     """True only when the challenger is strictly closer. A tie keeps the resting Alo."""
     return float(challenger_bps) < float(resting_bps) - 1e-6
+
+
+def resting_score_blocks_closer_cancel(
+    resting_score: int | None,
+    candidate_score: int | None,
+) -> bool:
+    """Keep the resting Alo when its score is strictly higher.
+
+    Equal scores do not block. A strictly closer limit still swaps, the
+    same closer-bps rule as before this guard. A missing score does not
+    block either: the bps comparison stands.
+    """
+    if resting_score is None or candidate_score is None:
+        return False
+    return int(resting_score) > int(candidate_score)

@@ -82,7 +82,10 @@ class AloIntent:
 
 @dataclass
 class Decision:
-    """One arm or one fail. ``score`` is logged and never read as a gate."""
+    """One arm or one fail. ``score`` is logged and is not an arm gate.
+
+    The closer-ticker cancel reads the score stored on the resting Alo.
+    """
 
     coin: str
     bias: str
