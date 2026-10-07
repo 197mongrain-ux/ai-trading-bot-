@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from types import SimpleNamespace
@@ -34,7 +35,15 @@ from hl_bot.exchange.info_client import (
     parse_spot_usdc_total,
 )
 from hl_bot.execution.loop import run_bot
+from hl_bot.exchange.account import (
+    AccountSnapshot,
+    EntryOrder,
+    PerpPosition,
+    parse_clearinghouse,
+    parse_entry_orders,
+)
 from hl_bot.execution.model_b_loop import (
+    ClosePreference,
     _margin_in_use,
     close_distance_bps,
     format_model_b_fail,
@@ -42,6 +51,7 @@ from hl_bot.execution.model_b_loop import (
     model_b_hunt_coins,
     preferred_close,
     run_model_b,
+    stick_preferred,
 )
 from hl_bot.journal import TradeJournal
 from hl_bot.strategy.model_b.alo import (
@@ -3507,7 +3517,11 @@ def test_close_reserve_picks_highest_score_then_closer_bps():
 
 
 def test_close_reserve_holds_a_full_size_other_and_allows_a_small_one(tmp_path, caplog):
-    """BTC is the only close setup. A tight ETH ticket would spend the reserve."""
+    """An unswept BTC does not block a ready ETH ticket.
+
+    The reserve used to hold 60% for BTC's NO_SWEEP and veto ETH. A setup
+    that cleared every gate is allowed through. The wide ticket still arms.
+    """
     now = _now()
     btc = _waiting_prints(now, "BTC")
     eth = _retag(
@@ -3540,22 +3554,14 @@ def test_close_reserve_holds_a_full_size_other_and_allows_a_small_one(tmp_path, 
             pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
             tick_for=lambda coin: 0.01,
         )
-    assert summary["arms"] == 0
+    assert summary["arms"] == 1
     assert summary["cancels"] == 0
     rows = TradeJournal(journal).read_all()
     assert any(r.get("coin") == "BTC" and r.get("fail_reason") == "NO_SWEEP" for r in rows)
-    held = [r for r in rows if r.get("fail_reason") == "CLOSE_MARGIN_RESERVE"]
-    assert len(held) == 1
-    assert held[0]["coin"] == "ETH"
-    assert held[0]["preferred"] == "BTC"
-    # The ticket still spends the 60% reserve: free margin after it would
-    # sit under that reserve, so the 40% slice rejects it.
-    assert held[0]["capacity"] - held[0]["margin_need"] < held[0]["reserve"]
-    assert held[0]["margin_need"] > other_margin_cap(held[0]["capacity"])
-    assert any(r.get("action") == "close_reserve_engage" and r.get("coin") == "BTC" for r in rows)
-    assert any(r.get("action") == "close_reserve_hold" for r in rows)
-    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
-    assert any("CLOSE_MARGIN_RESERVE hold" in rec.message for rec in caplog.records)
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in rows)
+    assert not any(r.get("action") == "close_reserve_engage" for r in rows)
+    assert not any("CLOSE_MARGIN_RESERVE" in rec.message for rec in caplog.records)
 
     wide = InfoClient()
     wide.inject_bars(_bars(now), coin="BTC")
@@ -3586,12 +3592,15 @@ def test_close_reserve_holds_a_full_size_other_and_allows_a_small_one(tmp_path, 
     wide_rows = TradeJournal(wide_journal).read_all()
     assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in wide_rows)
     assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in wide_rows)
-    assert any(r.get("action") == "close_reserve_engage" for r in wide_rows)
-    # The wide ticket fits in the 40% slice, so dual-rest / place is unchanged.
+    assert not any(r.get("action") == "close_reserve_engage" for r in wide_rows)
 
 
 def test_close_reserve_cancels_a_resting_other_then_releases(tmp_path, caplog):
-    """A tight ETH Alo is dropped once BTC is the preferred close coin."""
+    """A resting ETH Alo stays when BTC has not armed.
+
+    BTC waiting on the sweep used to become the preferred close coin and
+    cancel ETH. The reserve now protects the resting ticket instead.
+    """
     now = _now()
     info = InfoClient()
     info.inject_bars(_bars(now), coin="BTC")
@@ -3637,15 +3646,16 @@ def test_close_reserve_cancels_a_resting_other_then_releases(tmp_path, caplog):
         )
     rows = TradeJournal(journal).read_all()
     assert summary["arms"] == 1
-    assert summary["cancels"] == 1
-    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
-    assert cancels[0]["coin"] == "ETH"
-    assert cancels[0]["reason"] == "close_margin_reserve"
-    assert cancels[0]["preferred"] == "BTC"
-    assert any(r.get("action") == "close_reserve_engage" and r.get("coin") == "BTC" for r in rows)
-    assert any(r.get("action") == "close_reserve_release" for r in rows)
-    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
-    assert any("CLOSE_MARGIN_RESERVE release" in rec.message for rec in caplog.records)
+    assert summary["cancels"] == 0
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
+    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
+    assert [r["coin"] for r in engage] == ["ETH"]
+    assert not any(r.get("action") == "close_reserve_release" for r in rows)
+    assert any(
+        "CLOSE_MARGIN_RESERVE engage" in rec.message and "protected=resting" in rec.message
+        for rec in caplog.records
+    )
+    assert not any("CLOSE_MARGIN_RESERVE release" in rec.message for rec in caplog.records)
     assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
 
 
@@ -3698,7 +3708,8 @@ def test_equal_scores_reserve_the_closer_swing_and_keep_its_alo(tmp_path, caplog
     engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
     assert len(engage) == 1
     assert engage[0]["coin"] == "ETH"
-    assert engage[0]["score"] == 4
+    # Arm score from the resting Alo (32 prints → 3), not the later NO_SWEEP tape.
+    assert engage[0]["score"] == 3
     assert any(
         "CLOSE_MARGIN_RESERVE engage" in rec.message and "coin=ETH" in rec.message
         for rec in caplog.records
@@ -3706,10 +3717,11 @@ def test_equal_scores_reserve_the_closer_swing_and_keep_its_alo(tmp_path, caplog
 
 
 def test_close_reserve_tie_follows_hunt_order(tmp_path):
-    """Equal score and equal bps: the earlier hunt coin owns the reserve.
+    """A resting ETH Alo is not cancelled for an unswept BTC.
 
-    Identical books. BTC listed first cancels the resting ETH Alo. ETH
-    listed first keeps it. That is hunt order, not a BTC rule.
+    Hunt order used to hand the reserve to whichever close setup was
+    listed first and cancel the other Alo. ETH is the coin that actually
+    rested, so it keeps the reserve in both hunt orders.
     """
     now = _now()
 
@@ -3752,11 +3764,9 @@ def test_close_reserve_tie_follows_hunt_order(tmp_path):
 
     btc_first = _run(("BTC", "ETH"), tmp_path / "tie-btc.jsonl")
     engage = [r for r in btc_first if r.get("action") == "close_reserve_engage"]
-    assert [r["coin"] for r in engage] == ["BTC"]
-    cancels = [r for r in btc_first if r["event"] == "model_b_cancel"]
-    assert len(cancels) == 1
-    assert cancels[0]["coin"] == "ETH"
-    assert cancels[0]["reason"] == "close_margin_reserve"
+    assert [r["coin"] for r in engage] == ["ETH"]
+    assert not any(r["event"] == "model_b_cancel" for r in btc_first)
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in btc_first)
 
     eth_first = _run(("ETH", "BTC"), tmp_path / "tie-eth.jsonl")
     engage = [r for r in eth_first if r.get("action") == "close_reserve_engage"]
@@ -3765,7 +3775,7 @@ def test_close_reserve_tie_follows_hunt_order(tmp_path):
 
 
 def test_close_reserve_follows_xyz100_not_btc(tmp_path, caplog):
-    """xyz:XYZ100 waiting is the close coin. A tight BTC ticket is held back."""
+    """A ready BTC is not blocked to save margin for an unswept xyz:XYZ100."""
     now = _now()
     xyz = _waiting_prints(now, "xyz:XYZ100", n=90)
     btc = _retag(
@@ -3798,23 +3808,18 @@ def test_close_reserve_follows_xyz100_not_btc(tmp_path, caplog):
             pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
             tick_for=lambda coin: 0.01,
         )
-    assert summary["arms"] == 0
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
     rows = TradeJournal(journal).read_all()
-    held = [r for r in rows if r.get("fail_reason") == "CLOSE_MARGIN_RESERVE"]
-    assert len(held) == 1
-    assert held[0]["coin"] == "BTC"
-    assert held[0]["preferred"] == "xyz:XYZ100"
-    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
-    assert len(engage) == 1
-    assert engage[0]["coin"] == "xyz:XYZ100"
-    assert any(
-        "CLOSE_MARGIN_RESERVE engage" in rec.message and "coin=xyz:XYZ100" in rec.message
-        for rec in caplog.records
-    )
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "BTC" for r in rows)
+    assert any(r.get("coin") == "xyz:XYZ100" and r.get("fail_reason") == "NO_SWEEP" for r in rows)
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in rows)
+    assert not any(r.get("action") == "close_reserve_engage" for r in rows)
+    assert not any("CLOSE_MARGIN_RESERVE" in rec.message for rec in caplog.records)
 
 
 def test_close_reserve_cancels_btc_when_xyz100_scores_higher(tmp_path, caplog):
-    """A resting BTC Alo is dropped when xyz:XYZ100 is the higher-score close."""
+    """An unswept score-9 xyz:XYZ100 does not cancel a resting BTC Alo."""
     now = _now()
     info = InfoClient()
     info.inject_bars(_tight_bars(now), coin="BTC")
@@ -3857,17 +3862,378 @@ def test_close_reserve_cancels_btc_when_xyz100_scores_higher(tmp_path, caplog):
         )
     rows = TradeJournal(journal).read_all()
     assert summary["arms"] == 1
-    assert summary["cancels"] == 1
-    cancels = [r for r in rows if r["event"] == "model_b_cancel"]
-    assert cancels[0]["coin"] == "BTC"
-    assert cancels[0]["reason"] == "close_margin_reserve"
-    assert cancels[0]["preferred"] == "xyz:XYZ100"
-    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
-    assert [r["coin"] for r in engage] == ["xyz:XYZ100"]
-    assert engage[0]["score"] == 9
-    assert any(r.get("action") == "close_reserve_release" and r.get("coin") == "xyz:XYZ100" for r in rows)
-    assert any("CLOSE_MARGIN_RESERVE engage" in rec.message for rec in caplog.records)
+    assert summary["cancels"] == 0
+    assert not any(r["event"] == "model_b_cancel" for r in rows)
     assert any(r["event"] == "model_b_arm" and r["coin"] == "BTC" for r in rows)
+    assert any(r.get("coin") == "xyz:XYZ100" and r.get("fail_reason") == "NO_SWEEP" for r in rows)
+    engage = [r for r in rows if r.get("action") == "close_reserve_engage"]
+    assert [r["coin"] for r in engage] == ["BTC"]
+    assert not any(r.get("fail_reason") == "CLOSE_MARGIN_RESERVE" for r in rows)
+    assert any("protected=resting" in rec.message for rec in caplog.records)
+
+
+def test_stick_preferred_ignores_a_bps_flip_until_score_is_higher():
+    """Equal-score distance noise does not move the reserve. A higher score does."""
+    btc = ClosePreference("BTC", 4, 10.0)
+    eth = ClosePreference("ETH", 4, 1.0)
+    assert stick_preferred([btc, eth], "BTC").coin == "BTC"
+    assert stick_preferred([btc, eth], None).coin == "ETH"
+    higher = ClosePreference("ETH", 9, 80.0)
+    assert stick_preferred([btc, higher], "BTC").coin == "ETH"
+    assert stick_preferred([eth], "BTC").coin == "ETH"
+
+
+def test_resting_reserve_holds_a_lower_score_ticket(tmp_path, caplog):
+    """A resting score-9 Alo still blocks a lower score that would spend the reserve."""
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="ETH")
+    info.inject_bars(_tight_bars(now), coin="BTC")
+    eth = _retag(
+        _long_prints(now, n_prefix=90, prefix_step=0.2, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "ETH",
+    )
+    feed = MemoryFeed(
+        eth + _long_prints(now)[:5],
+        bbo={"ETH": (102.0, 104.0), "BTC": (102.0, 104.0)},
+    )
+
+    def sleep_fn(_sec):
+        feed._prints.clear()
+        feed._prints.extend(_waiting_prints(now, "ETH", n=40))
+        feed._prints.extend(
+            _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0)
+        )
+
+    journal = tmp_path / "reserve-resting-hold.jsonl"
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(journal),
+                loop_interval_sec=0,
+            ),
+            max_iterations=2,
+            info=info,
+            feed=feed,
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("ETH", "BTC"),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    rows = TradeJournal(journal).read_all()
+    assert summary["arms"] == 1
+    assert summary["cancels"] == 0
+    held = [r for r in rows if r.get("fail_reason") == "CLOSE_MARGIN_RESERVE"]
+    assert len(held) == 1
+    assert held[0]["coin"] == "BTC"
+    assert held[0]["preferred"] == "ETH"
+    assert held[0]["score"] < 9
+    assert any(r["event"] == "model_b_arm" and r["coin"] == "ETH" for r in rows)
+    assert any("CLOSE_MARGIN_RESERVE hold" in rec.message for rec in caplog.records)
+
+
+def test_clearinghouse_margin_includes_xyz_and_skips_reduce_only():
+    """xyz marginUsed is real held margin. A reduce-only TP is not an entry."""
+    positions, reported = parse_clearinghouse(
+        {
+            "marginSummary": {
+                "accountValue": "69.75",
+                "totalNtlPos": "174.01",
+                "totalRawUsd": "69.75",
+                "totalMarginUsed": "8.72",
+            },
+            "assetPositions": [
+                {
+                    "type": "oneWay",
+                    "position": {
+                        "coin": "xyz:XYZ100",
+                        "szi": "0.0056",
+                        "entryPx": "31074",
+                        "marginUsed": "8.72",
+                    },
+                }
+            ],
+        }
+    )
+    assert reported == pytest.approx(8.72)
+    assert positions[0].coin == "xyz:XYZ100"
+    assert positions[0].side == "long"
+    assert positions[0].held_margin() == pytest.approx(8.72)
+    snapshot = AccountSnapshot(
+        ok=True,
+        positions=tuple(positions),
+        reported_margin=reported,
+    )
+    assert snapshot.margin_held() == pytest.approx(8.72)
+    orders = parse_entry_orders(
+        [
+            {
+                "coin": "XYZ:XYZ100",
+                "side": "B",
+                "limitPx": "31000",
+                "sz": "0.01",
+                "oid": 1,
+                "reduceOnly": False,
+            },
+            {
+                "coin": "xyz:XYZ100",
+                "side": "A",
+                "limitPx": "31165",
+                "sz": "0.0056",
+                "oid": 2,
+                "reduceOnly": True,
+                "orderType": "Take Profit Market",
+            },
+        ]
+    )
+    assert len(orders) == 1
+    assert orders[0].coin == "xyz:XYZ100"
+    assert orders[0].side == "long"
+    assert isinstance(orders[0], EntryOrder)
+
+
+def _live_account_settings(tmp_path, name: str) -> Settings:
+    return Settings(
+        entry_mode="model_b",
+        risk_per_trade=0.02,
+        trading_mode="live",
+        i_understand_live_trading=True,
+        private_key="0x" + "ab" * 32,
+        account_address="0x" + "11" * 20,
+        network="mainnet",
+        journal_path=str(tmp_path / name),
+        loop_interval_sec=0,
+    )
+
+
+def test_free_margin_subtracts_held_xyz_position(tmp_path, caplog):
+    """Spot USDC total stays the 2% base. Free margin subtracts xyz marginUsed.
+
+    A tight BTC ticket sized off $69.75 does not fit once $40 is already
+    held. The old book, empty after a restart, treated $69.75 as free.
+    """
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_tight_bars(now), coin="BTC")
+    info.inject_spot_usdc(69.75)
+    info.inject_account_snapshot(
+        AccountSnapshot(
+            ok=True,
+            positions=(
+                PerpPosition(
+                    coin="xyz:XYZ100",
+                    szi=0.0056,
+                    entry=31074.0,
+                    margin_used=40.0,
+                ),
+            ),
+            reported_margin=40.0,
+        )
+    )
+    feed = MemoryFeed(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        bbo={"BTC": (102.0, 104.0)},
+    )
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            self.alos.append(coin)
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 1}}]}}}
+
+    fake = FakeLive()
+    with caplog.at_level(logging.INFO):
+        run_model_b(
+            _live_account_settings(tmp_path, "free-xyz.jsonl"),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            exchange=fake,
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC",),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert fake.alos == []
+    rows = TradeJournal(tmp_path / "free-xyz.jsonl").read_all()
+    failed = [r for r in rows if r.get("fail_reason") == "INSUFFICIENT_MARGIN"]
+    assert len(failed) == 1
+    assert failed[0]["coin"] == "BTC"
+    assert failed[0]["spot"] == pytest.approx(69.75)
+    assert failed[0]["held"] == pytest.approx(40.0)
+    assert failed[0]["free_margin"] == pytest.approx(29.75)
+    # Sized off the full spot balance, not off the smaller free number.
+    assert failed[0]["margin_need"] > failed[0]["free_margin"]
+    assert failed[0]["margin_need"] > 35
+    assert any(r.get("action") == "free_margin" and r.get("positions") == "xyz:XYZ100" for r in rows)
+    assert any(r.get("action") == "adopt_position" and r.get("coin") == "xyz:XYZ100" for r in rows)
+    assert any("MODEL_B MARGIN free" in rec.message and "held=40.0000" in rec.message for rec in caplog.records)
+    assert any("MODEL_B ADOPT xyz:XYZ100" in rec.message for rec in caplog.records)
+
+
+def test_reconcile_journals_xyz_close_from_fills(tmp_path, caplog):
+    """A TP fill missed by the websocket still gets a journal close.
+
+    The open is already in the journal (the 13:01 xyz:XYZ100). The book is
+    empty, as after the 14:34 restart, and the exchange is flat. The fill
+    at 31162 is 3 points under the 31165 trigger.
+    """
+    now = _now()
+    journal = tmp_path / "reconcile.jsonl"
+    opened_at = now - 10_000
+    journal.write_text(
+        json.dumps(
+            {
+                "ts": opened_at,
+                "event": "open",
+                "symbol": "xyz:XYZ100",
+                "side": "long",
+                "size": 0.0056,
+                "price": 31074.0,
+                "stop": 31020.0,
+                "tp": 31165.0,
+                "entry_mode": "model_b",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(69.75)
+    info.inject_account_snapshot(
+        AccountSnapshot(
+            ok=True,
+            positions=(),
+            fills=(
+                UserFill(
+                    coin="xyz:XYZ100",
+                    oid=77,
+                    price=31162.0,
+                    size=0.0056,
+                    ts=opened_at + 100,
+                    crossed=True,
+                    side="sell",
+                    direction="Close Long",
+                    closed_pnl=(31162.0 - 31074.0) * 0.0056,
+                    start_position=0.0056,
+                    tid=9001,
+                ),
+            ),
+            reported_margin=0.0,
+        )
+    )
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            _live_account_settings(tmp_path, "reconcile.jsonl"),
+            max_iterations=1,
+            info=info,
+            feed=MemoryFeed([]),
+            exchange=object(),
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC",),
+        )
+    assert summary["closes"] == 1
+    rows = TradeJournal(journal).read_all()
+    closes = [r for r in rows if r["event"] == "close" and r.get("symbol") == "xyz:XYZ100"]
+    assert len(closes) == 1
+    assert closes[0]["price"] == pytest.approx(31162.0)
+    assert closes[0]["reason"] == "tp"
+    assert closes[0]["source"] == "reconcile"
+    assert closes[0]["side"] == "long"
+    assert closes[0]["pnl"] == pytest.approx((31162.0 - 31074.0) * 0.0056)
+    assert any("MODEL_B RECONCILE close xyz:XYZ100" in rec.message for rec in caplog.records)
+
+
+def test_same_coin_xyz_blocked_after_restart_and_resting_entry(tmp_path, caplog):
+    """A restart with an open xyz position, or a resting entry, never sends."""
+    now = _now()
+    prints = _retag(
+        _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0),
+        "xyz:XYZ100",
+    )
+
+    def _run(snapshot, name):
+        info = InfoClient()
+        info.inject_bars(_tight_bars(now), coin="xyz:XYZ100")
+        info.inject_spot_usdc(69.75)
+        info.inject_account_snapshot(snapshot)
+        sent = []
+
+        class FakeLive:
+            def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+                sent.append(coin)
+                return {"response": {"data": {"statuses": [{"resting": {"oid": 3}}]}}}
+
+        run_model_b(
+            _live_account_settings(tmp_path, name),
+            max_iterations=1,
+            info=info,
+            feed=MemoryFeed(prints, bbo={"xyz:XYZ100": (102.0, 104.0)}),
+            exchange=FakeLive(),
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("xyz:XYZ100",),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+        return sent, TradeJournal(tmp_path / name).read_all()
+
+    with caplog.at_level(logging.INFO):
+        sent, rows = _run(
+            AccountSnapshot(
+                ok=True,
+                positions=(
+                    PerpPosition(
+                        coin="xyz:XYZ100",
+                        szi=0.0056,
+                        entry=31074.0,
+                        margin_used=8.72,
+                    ),
+                ),
+                reported_margin=8.72,
+            ),
+            "block-position.jsonl",
+        )
+    assert sent == []
+    blocked = [r for r in rows if r.get("fail_reason") == "OPEN_POSITION"]
+    assert len(blocked) == 1
+    assert blocked[0]["coin"] == "xyz:XYZ100"
+    assert blocked[0]["armed"] is False
+    assert any("MODEL_B BLOCK xyz:XYZ100 reason=OPEN_POSITION" in rec.message for rec in caplog.records)
+
+    caplog.clear()
+    sent, rows = _run(
+        AccountSnapshot(
+            ok=True,
+            entry_orders=(
+                EntryOrder(
+                    coin="xyz:XYZ100",
+                    oid=44,
+                    side="long",
+                    limit_px=31000.0,
+                    size=0.01,
+                ),
+            ),
+        ),
+        "block-entry.jsonl",
+    )
+    assert sent == []
+    blocked = [r for r in rows if r.get("fail_reason") == "RESTING_ENTRY"]
+    assert len(blocked) == 1
+    assert blocked[0]["coin"] == "xyz:XYZ100"
+    assert any("MODEL_B BLOCK xyz:XYZ100 reason=RESTING_ENTRY" in rec.message for rec in caplog.records)
 
 
 def test_close_reserve_off_does_not_hold_the_other_coin(tmp_path, caplog):

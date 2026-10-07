@@ -10,8 +10,9 @@ log an external Model 3 number instead — it is still not an arm gate, and
 it is not combined with a FLOW_OK pre-place check. Two readers use it.
 The closer-ticker cancel keeps a resting Alo whose score is strictly
 above the candidate; equal scores still follow the closer-bps swap.
-The close-margin reserve keeps its fraction for the highest score among
-close setups, then the closer swing in bps.
+The close-margin reserve keeps its fraction for the highest-scoring
+resting Alo, then the closer limit in bps. An unarmed close setup
+does not hold it.
 """
 
 from __future__ import annotations

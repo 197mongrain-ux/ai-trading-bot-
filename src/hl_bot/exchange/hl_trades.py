@@ -164,6 +164,12 @@ class UserFill:
         size: float,
         ts: float,
         crossed: bool | None,
+        side: str | None = None,
+        direction: str | None = None,
+        closed_pnl: float | None = None,
+        start_position: float | None = None,
+        tid: object | None = None,
+        fee: float | None = None,
     ):
         self.coin = canon_coin(coin)
         self.oid = oid
@@ -171,6 +177,14 @@ class UserFill:
         self.size = size
         self.ts = ts
         self.crossed = crossed
+        # Aggressor side (buy/sell). Close-long fills are sells.
+        self.side = side
+        # Exchange ``dir``: "Close Long", "Open Long", "Long > Short", ...
+        self.direction = direction
+        self.closed_pnl = closed_pnl
+        self.start_position = start_position
+        self.tid = tid
+        self.fee = fee
 
 
 def parse_user_fill(raw: dict) -> UserFill | None:
@@ -195,6 +209,12 @@ def parse_user_fill(raw: dict) -> UserFill | None:
         size=size,
         ts=ts,
         crossed=crossed,
+        side=map_aggressor_side(raw.get("side")),
+        direction=str(raw.get("dir")).strip() if raw.get("dir") else None,
+        closed_pnl=_as_float(raw.get("closedPnl")),
+        start_position=_as_float(raw.get("startPosition")),
+        tid=raw.get("tid"),
+        fee=_as_float(raw.get("fee")),
     )
 
 

@@ -142,9 +142,9 @@ class Settings:
     # Equal scores still use the closer-bps swap. Off restores the old cancel.
     # Not an entry gate and not a size change.
     model_b_closer_score_guard: bool = True
-    # Fraction of free-margin capacity held for the preferred close coin
-    # (highest score among close setups, then closer swing in bps).
-    # 0 turns the reserve off. Not hard-coded to BTC.
+    # Fraction of free-margin capacity held for a resting preferred Alo
+    # (highest score, then closer limit in bps). An unarmed close setup
+    # does not hold it. 0 turns the reserve off. Not hard-coded to BTC.
     model_b_close_margin_reserve: float = CLOSE_MARGIN_RESERVE
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
