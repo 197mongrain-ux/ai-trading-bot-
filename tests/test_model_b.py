@@ -37,11 +37,15 @@ from hl_bot.exchange.info_client import (
 from hl_bot.execution.loop import run_bot
 from hl_bot.exchange.account import (
     AccountSnapshot,
+    BookView,
     EntryOrder,
     PerpPosition,
+    fill_id,
     parse_clearinghouse,
     parse_entry_orders,
+    plan_reconcile_closes,
 )
+from hl_bot.risk.manager import RiskManager
 from hl_bot.execution.model_b_loop import (
     ClosePreference,
     _margin_in_use,
@@ -3996,8 +4000,8 @@ def test_clearinghouse_margin_includes_xyz_and_skips_reduce_only():
     assert isinstance(orders[0], EntryOrder)
 
 
-def _live_account_settings(tmp_path, name: str) -> Settings:
-    return Settings(
+def _live_account_settings(tmp_path, name: str, **extra) -> Settings:
+    fields = dict(
         entry_mode="model_b",
         risk_per_trade=0.02,
         trading_mode="live",
@@ -4008,6 +4012,8 @@ def _live_account_settings(tmp_path, name: str) -> Settings:
         journal_path=str(tmp_path / name),
         loop_interval_sec=0,
     )
+    fields.update(extra)
+    return Settings(**fields)
 
 
 def test_free_margin_subtracts_held_xyz_position(tmp_path, caplog):
@@ -4079,31 +4085,168 @@ def test_free_margin_subtracts_held_xyz_position(tmp_path, caplog):
     assert any("MODEL_B ADOPT xyz:XYZ100" in rec.message for rec in caplog.records)
 
 
-def test_reconcile_journals_xyz_close_from_fills(tmp_path, caplog):
-    """A TP fill missed by the websocket still gets a journal close.
+def _jsonl(rows: list[dict]) -> str:
+    return "".join(json.dumps(row) + "\n" for row in rows)
 
-    The open is already in the journal (the 13:01 xyz:XYZ100). The book is
-    empty, as after the 14:34 restart, and the exchange is flat. The fill
-    at 31162 is 3 points under the 31165 trigger.
-    """
+
+def _xyz_fill(*, ts: float, tid: object = 9001, pnl: float | None = None, tx_hash: str | None = None) -> UserFill:
+    if pnl is None:
+        pnl = (31162.0 - 31074.0) * 0.0056
+    return UserFill(
+        coin="xyz:XYZ100",
+        oid=77,
+        price=31162.0,
+        size=0.0056,
+        ts=ts,
+        crossed=True,
+        side="sell",
+        direction="Close Long",
+        closed_pnl=pnl,
+        start_position=0.0056,
+        tid=tid,
+        hash=tx_hash,
+    )
+
+
+def _xyz_open(*, ts: float, price: float, network: str | None, account: str | None = None) -> dict:
+    row = {
+        "ts": ts,
+        "event": "open",
+        "symbol": "xyz:XYZ100",
+        "side": "long",
+        "size": 0.0056,
+        "price": price,
+        "stop": price - 54.0,
+        "tp": price + 91.0,
+        "entry_mode": "model_b",
+    }
+    if network:
+        row["network"] = network
+    if account:
+        row["account"] = account
+    return row
+
+
+def _risk_calls(monkeypatch) -> list[float]:
+    calls: list[float] = []
+    real = RiskManager.record_trade_close
+
+    def spy(self, pnl: float, _real=real) -> None:
+        calls.append(float(pnl))
+        _real(self, pnl)
+
+    monkeypatch.setattr(RiskManager, "record_trade_close", spy)
+    return calls
+
+
+def test_fill_id_prefers_tid_then_hash():
+    fill = UserFill("xyz:XYZ100", 1, 10.0, 1.0, 1.0, True, tid=9, hash="0xabc")
+    assert fill_id(fill) == "tid:9"
+    bare = UserFill("xyz:XYZ100", 1, 10.0, 1.0, 1.0, True, hash="0xabc")
+    assert fill_id(bare) == "hash:0xabc"
+
+
+def test_one_fill_cannot_close_the_next_stale_open():
+    """The stack used to pop one open per loop and reuse the same tid."""
+    now = 1_700_000_000.0
+    account = "0x" + "11" * 20
+    opens = [
+        _xyz_open(ts=now - 50_000, price=1000.0, network="testnet"),
+        _xyz_open(ts=now - 40_000, price=2000.0, network="testnet"),
+        _xyz_open(ts=now - 30_000, price=29000.0, network="mainnet", account=account),
+        _xyz_open(ts=now - 10_000, price=31074.0, network="mainnet", account=account),
+    ]
+    fill = _xyz_fill(ts=now + 50)
+    flat = AccountSnapshot(ok=True, positions=(), fills=(fill,), reported_margin=0.0)
+    held = BookView(
+        coin="xyz:XYZ100",
+        side="long",
+        size=0.0056,
+        entry=31074.0,
+        stop=0.0,
+        take_profit=0.0,
+        opened_at=now,
+    )
+    # Flat book: every leftover open is stale. The fill closes none of them.
+    idle = plan_reconcile_closes(
+        opens, flat, [], network="mainnet", account=account, session_started_at=now
+    )
+    assert idle.closes == ()
+    assert idle.ignored == (("xyz:XYZ100", 4, "not_held"),)
+
+    first = plan_reconcile_closes(
+        opens,
+        flat,
+        [held],
+        network="mainnet",
+        account=account,
+        session_started_at=now,
+    )
+    assert len(first.closes) == 1
+    assert first.closes[0].reason == "tp"
+    assert first.closes[0].entry == pytest.approx(31074.0)
+    assert first.closes[0].fill_ids == ("tid:9001",)
+    assert any(reason == "stale_open" for _coin, _n, reason in first.ignored)
+
+    closed = opens + [
+        {
+            "ts": now + 50,
+            "event": "close",
+            "symbol": "xyz:XYZ100",
+            "side": "long",
+            "price": 31162.0,
+            "fill_ids": ["tid:9001"],
+        }
+    ]
+    # A later journal open must not inherit that same tid.
+    closed.append(_xyz_open(ts=now + 10, price=31074.0, network="mainnet", account=account))
+    again = plan_reconcile_closes(
+        closed,
+        flat,
+        [held],
+        network="mainnet",
+        account=account,
+        session_started_at=now,
+    )
+    assert again.closes == ()
+
+    # A newer testnet open inherits the start above it and loses to the
+    # older mainnet open, even when the entry would otherwise match.
+    inherited = [
+        {"ts": now - 90_000, "event": "start", "network": "mainnet", "account": account},
+        _xyz_open(ts=now - 10_000, price=31074.0, network=None, account=None),
+        {"ts": now - 5_000, "event": "start", "network": "testnet"},
+        _xyz_open(ts=now - 1_000, price=31074.5, network=None, account=None),
+    ]
+    picked = plan_reconcile_closes(
+        inherited,
+        flat,
+        [held],
+        network="mainnet",
+        account=account,
+        session_started_at=now,
+    )
+    assert len(picked.closes) == 1
+    assert picked.closes[0].entry == pytest.approx(31074.0)
+    assert picked.closes[0].reason == "tp"
+
+
+def test_stale_opens_do_not_replay_a_fill_or_the_risk_tally(tmp_path, caplog, monkeypatch):
+    """Flat book, old unclosed opens, one fill, many loops: no close, no loss."""
     now = _now()
-    journal = tmp_path / "reconcile.jsonl"
-    opened_at = now - 10_000
+    account = "0x" + "11" * 20
+    journal = tmp_path / "stale.jsonl"
     journal.write_text(
-        json.dumps(
-            {
-                "ts": opened_at,
-                "event": "open",
-                "symbol": "xyz:XYZ100",
-                "side": "long",
-                "size": 0.0056,
-                "price": 31074.0,
-                "stop": 31020.0,
-                "tp": 31165.0,
-                "entry_mode": "model_b",
-            }
-        )
-        + "\n",
+        _jsonl(
+            [
+                {"ts": now - 80_000, "event": "start", "network": "testnet"},
+                _xyz_open(ts=now - 70_000, price=1000.0, network="testnet"),
+                _xyz_open(ts=now - 60_000, price=2000.0, network="testnet"),
+                {"ts": now - 50_000, "event": "start", "network": "mainnet", "account": account},
+                _xyz_open(ts=now - 40_000, price=29000.0, network="mainnet", account=account),
+                _xyz_open(ts=now - 30_000, price=30000.0, network="mainnet", account=account),
+            ]
+        ),
         encoding="utf-8",
     )
     info = InfoClient()
@@ -4113,37 +4256,123 @@ def test_reconcile_journals_xyz_close_from_fills(tmp_path, caplog):
         AccountSnapshot(
             ok=True,
             positions=(),
-            fills=(
-                UserFill(
-                    coin="xyz:XYZ100",
-                    oid=77,
-                    price=31162.0,
-                    size=0.0056,
-                    ts=opened_at + 100,
-                    crossed=True,
-                    side="sell",
-                    direction="Close Long",
-                    closed_pnl=(31162.0 - 31074.0) * 0.0056,
-                    start_position=0.0056,
-                    tid=9001,
-                ),
-            ),
+            fills=(_xyz_fill(ts=now - 100, pnl=-0.12),),
             reported_margin=0.0,
         )
     )
+    calls = _risk_calls(monkeypatch)
     with caplog.at_level(logging.INFO):
         summary = run_model_b(
-            _live_account_settings(tmp_path, "reconcile.jsonl"),
-            max_iterations=1,
+            _live_account_settings(
+                tmp_path,
+                "stale.jsonl",
+                starting_equity=10.0,
+                max_daily_loss_pct=0.03,
+                max_drawdown_pct=0.05,
+            ),
+            max_iterations=8,
             info=info,
             feed=MemoryFeed([]),
             exchange=object(),
             sleep_fn=lambda *_: None,
             now_fn=lambda: now,
             connect_feed=False,
+            coins=("xyz:XYZ100",),
+        )
+    assert summary["closes"] == 0
+    assert summary["halted"] is False
+    assert calls == []
+    rows = TradeJournal(journal).read_all()
+    assert not any(r["event"] == "close" for r in rows)
+    ignored = [
+        rec.message
+        for rec in caplog.records
+        if "MODEL_B RECONCILE ignore stale coin=xyz:XYZ100" in rec.message
+    ]
+    assert ignored == ["MODEL_B RECONCILE ignore stale coin=xyz:XYZ100 opens=4 reason=not_held"]
+
+
+def test_reconcile_journals_xyz_close_from_fills(tmp_path, caplog, monkeypatch):
+    """Adopted after a restart, then a TP fill: one close, including across loops.
+
+    Older testnet and mainnet opens on the same coin stay open. The fill
+    tid is stored, so a second process cannot spend it.
+    """
+    now = _now()
+    account = "0x" + "11" * 20
+    opened_at = now - 10_000
+    journal = tmp_path / "reconcile.jsonl"
+    journal.write_text(
+        _jsonl(
+            [
+                {"ts": opened_at - 50_000, "event": "start", "network": "testnet"},
+                _xyz_open(ts=opened_at - 40_000, price=1000.0, network="testnet"),
+                _xyz_open(ts=opened_at - 30_000, price=2000.0, network="testnet"),
+                {
+                    "ts": opened_at - 20_000,
+                    "event": "start",
+                    "network": "mainnet",
+                    "account": account,
+                },
+                _xyz_open(ts=opened_at - 15_000, price=29000.0, network="mainnet", account=account),
+                _xyz_open(
+                    ts=opened_at,
+                    price=31074.0,
+                    network="mainnet",
+                    account=account,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    # The real open's stop/tp are the 13:01 ticket, not price +/- the helper.
+    text = journal.read_text(encoding="utf-8").splitlines()
+    real = json.loads(text[-1])
+    real["stop"] = 31020.0
+    real["tp"] = 31165.0
+    text[-1] = json.dumps(real)
+    journal.write_text("\n".join(text) + "\n", encoding="utf-8")
+
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(69.75)
+    open_position = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(coin="xyz:XYZ100", szi=0.0056, entry=31074.0, margin_used=8.72),
+        ),
+        reported_margin=8.72,
+    )
+    flat = AccountSnapshot(
+        ok=True,
+        positions=(),
+        fills=(_xyz_fill(ts=now + 50),),
+        reported_margin=0.0,
+    )
+    info.inject_account_snapshot(open_position)
+    phase = {"flat": False}
+
+    def sleep_fn(_sec):
+        phase["flat"] = True
+        info.inject_account_snapshot(flat)
+
+    calls = _risk_calls(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            _live_account_settings(tmp_path, "reconcile.jsonl"),
+            max_iterations=6,
+            info=info,
+            feed=MemoryFeed([]),
+            exchange=object(),
+            sleep_fn=sleep_fn,
+            now_fn=lambda: now,
+            connect_feed=False,
             coins=("BTC",),
         )
     assert summary["closes"] == 1
+    assert summary["halted"] is False
+    assert len(calls) == 1
+    assert calls[0] == pytest.approx((31162.0 - 31074.0) * 0.0056)
     rows = TradeJournal(journal).read_all()
     closes = [r for r in rows if r["event"] == "close" and r.get("symbol") == "xyz:XYZ100"]
     assert len(closes) == 1
@@ -4152,7 +4381,36 @@ def test_reconcile_journals_xyz_close_from_fills(tmp_path, caplog):
     assert closes[0]["source"] == "reconcile"
     assert closes[0]["side"] == "long"
     assert closes[0]["pnl"] == pytest.approx((31162.0 - 31074.0) * 0.0056)
+    assert closes[0]["entry"] == pytest.approx(31074.0)
+    assert closes[0]["fill_ids"] == ["tid:9001"]
+    ignore = [
+        rec.message
+        for rec in caplog.records
+        if "MODEL_B RECONCILE ignore stale" in rec.message
+    ]
+    assert len(ignore) == 1
+    assert "reason=stale_open" in ignore[0]
     assert any("MODEL_B RECONCILE close xyz:XYZ100" in rec.message for rec in caplog.records)
+
+    # Restart: same journal, same fill, flat exchange. Nothing new.
+    info.inject_account_snapshot(flat)
+    before = len(calls)
+    again = run_model_b(
+        _live_account_settings(tmp_path, "reconcile.jsonl"),
+        max_iterations=4,
+        info=info,
+        feed=MemoryFeed([]),
+        exchange=object(),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now + 100,
+        connect_feed=False,
+        coins=("BTC",),
+    )
+    assert again["closes"] == 0
+    assert len(calls) == before
+    rows = TradeJournal(journal).read_all()
+    closes = [r for r in rows if r["event"] == "close" and r.get("symbol") == "xyz:XYZ100"]
+    assert len(closes) == 1
 
 
 def test_same_coin_xyz_blocked_after_restart_and_resting_entry(tmp_path, caplog):

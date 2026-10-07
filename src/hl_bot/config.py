@@ -18,7 +18,15 @@ from hl_bot.strategy.model_b.tape import (
 )
 from hl_bot.strategy.model_b.universe import canon_coin
 
-load_dotenv()
+
+def _dotenv_skipped() -> bool:
+    """Tests set this so a laptop ``.env`` cannot change defaults."""
+    return os.getenv("HL_BOT_SKIP_DOTENV", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -308,6 +316,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     """Load settings from environment (optionally from a specific .env path)."""
     if env_file is not None:
         load_dotenv(env_file, override=True)
+    elif not _dotenv_skipped():
+        load_dotenv()
 
     network = os.getenv("HL_NETWORK", "mainnet").strip().lower()
     default_url = (

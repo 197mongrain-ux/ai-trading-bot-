@@ -20,6 +20,12 @@ when only the distance twitches. A strictly higher score takes it
 immediately. It is not hard-coded to BTC. Spot USDC ``total`` is still
 the 2% sizing base. Free margin subtracts margin already held by open
 positions and resting entries, including builder-dex positions.
+A reconcile close is only for a position this process is holding.
+One exchange fill (tid, else hash) can close one journal open, and
+that id is stored on the close so a later loop or restart cannot
+spend it on an older open. Opens from another network, or opens
+the book never adopted, are logged once and left alone. The
+daily-loss tally sees each of those fills once.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -41,7 +47,9 @@ from hl_bot.exchange.account import (
     AccountSnapshot,
     BookView,
     PlannedClose,
+    consumed_fill_ids,
     dexs_for_coins,
+    fill_id,
     plan_reconcile_closes,
 )
 from hl_bot.exchange.hl_trades import HyperliquidTradeFeed, MemoryFeed, UserFill
@@ -272,6 +280,7 @@ def run_model_b(
         delta_flat_usdc=settings.model_b_delta_flat_usdc,
         delta_flat_eps=settings.model_b_delta_flat_eps,
         close_margin_reserve=settings.model_b_close_margin_reserve,
+        account=settings.account_address or "",
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -302,6 +311,10 @@ def run_model_b(
         settings.model_b_close_margin_reserve,
     )
     announced_adopts: set[str] = set()
+    announced_stale: set[str] = set()
+    used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
+    risked_fill_ids: set[str] = set()
+    session_started_at: float | None = None
     last_margin_sig: tuple | None = None
 
     while True:
@@ -323,68 +336,69 @@ def run_model_b(
                 **extra,
             )
 
-        def _journal_reconciled_close(plan: PlannedClose) -> None:
-            """Write one close the websocket path did not journal."""
+        def _apply_close_risk(pnl: float, ids: tuple[str, ...] | list[str]) -> None:
+            """Count a close in the daily-loss tally once per fill id.
+
+            A reconcile that runs every loop must not add the same loss
+            again. Ids already charged (this process, including a
+            websocket close of the same fill) are skipped.
+            """
             nonlocal equity
-            existing = book.position(plan.coin)
-            if existing is not None:
-                closed = book.force_flat(plan.coin, plan.exit, reason=plan.reason)
-                if closed is None:
-                    return
-                closed.pnl = plan.pnl
-                if plan.size > 0:
-                    closed.size = plan.size
-                equity += closed.pnl
-                risk.record_trade_close(closed.pnl)
-                summary["closes"] += 1
-                journal.log(
-                    "close",
-                    symbol=closed.coin,
-                    side=closed.side,
-                    size=closed.size,
-                    price=plan.exit,
-                    pnl=plan.pnl,
-                    reason=plan.reason,
-                    entry_mode="model_b",
-                    source=plan.source,
-                    entry=plan.entry,
-                )
-                logger.info(
-                    "MODEL_B RECONCILE close %s @ %s pnl=%s reason=%s source=%s",
-                    closed.coin,
-                    plan.exit,
-                    plan.pnl,
-                    plan.reason,
-                    plan.source,
-                )
-                _release_margin(closed.coin, plan.reason)
-                if closed.remainder is not None:
-                    _cancel_working(closed.remainder, plan.reason, remainder=True)
+            fresh = [item for item in ids if item not in risked_fill_ids]
+            if ids and not fresh:
                 return
-            equity += plan.pnl
-            risk.record_trade_close(plan.pnl)
+            equity += pnl
+            risk.record_trade_close(pnl)
+            risked_fill_ids.update(ids)
+
+        def _journal_reconciled_close(plan: PlannedClose) -> None:
+            """Write one close for a position this process is still holding.
+
+            A flat book is not closed from a journal open. That path
+            replayed stale opens against one fill. The fill ids are
+            stored on the row so a restart cannot spend them again.
+            """
+            ids = tuple(plan.fill_ids)
+            if ids and all(item in used_fill_ids for item in ids):
+                return
+            existing = book.position(plan.coin)
+            if existing is None:
+                return
+            closed = book.force_flat(plan.coin, plan.exit, reason=plan.reason)
+            if closed is None:
+                return
+            closed.pnl = plan.pnl
+            if plan.size > 0:
+                closed.size = plan.size
             summary["closes"] += 1
             journal.log(
                 "close",
-                symbol=plan.coin,
-                side=plan.side,
-                size=plan.size,
+                symbol=closed.coin,
+                side=closed.side,
+                size=closed.size,
                 price=plan.exit,
                 pnl=plan.pnl,
                 reason=plan.reason,
                 entry_mode="model_b",
                 source=plan.source,
                 entry=plan.entry,
+                fill_ids=list(ids),
+                network=settings.network,
+                account=settings.account_address or "",
             )
+            used_fill_ids.update(ids)
+            _apply_close_risk(plan.pnl, ids)
             logger.info(
                 "MODEL_B RECONCILE close %s @ %s pnl=%s reason=%s source=%s",
-                plan.coin,
+                closed.coin,
                 plan.exit,
                 plan.pnl,
                 plan.reason,
                 plan.source,
             )
-            _release_margin(plan.coin, plan.reason)
+            _release_margin(closed.coin, plan.reason)
+            if closed.remainder is not None:
+                _cancel_working(closed.remainder, plan.reason, remainder=True)
 
         def _block_same_coin(coin: str, reason: str, decision) -> None:
             """Do not arm or send when this coin already has a position or entry."""
@@ -570,6 +584,8 @@ def run_model_b(
                             tp=applied.take_profit,
                             entry_mode="model_b",
                             reason="alo_fill",
+                            network=settings.network,
+                            account=settings.account_address or "",
                         )
                     if applied.remainder_kept:
                         journal.log(
@@ -606,8 +622,7 @@ def run_model_b(
                                 applied.take_profit,
                             )
                 elif isinstance(applied, CloseEvent):
-                    equity += applied.pnl
-                    risk.record_trade_close(applied.pnl)
+                    fid = fill_id(fill)
                     summary["closes"] += 1
                     journal.log(
                         "close",
@@ -618,12 +633,21 @@ def run_model_b(
                         pnl=applied.pnl,
                         reason=applied.reason,
                         entry_mode="model_b",
+                        source="user_fill",
+                        fill_ids=[fid],
+                        network=settings.network,
+                        account=settings.account_address or "",
                     )
+                    used_fill_ids.add(fid)
+                    _apply_close_risk(applied.pnl, (fid,))
                     _release_margin(applied.coin, applied.reason)
                     if applied.remainder is not None:
                         _cancel_working(
                             applied.remainder, applied.reason, remainder=True
                         )
+
+        if session_started_at is None:
+            session_started_at = now
 
         if snapshot is not None and snapshot.ok:
             merged = _merge_fills(snapshot.fills, ws_fills)
@@ -635,12 +659,28 @@ def run_model_b(
                 reported_margin=snapshot.reported_margin,
                 dexs=snapshot.dexs,
             )
-            plans = plan_reconcile_closes(
+            # Journal rows written above (a websocket close) are already
+            # in the file, so their fill ids cannot be spent again here.
+            used_fill_ids.update(consumed_fill_ids(journal.read_all()))
+            planned = plan_reconcile_closes(
                 journal.read_all(),
                 reconcile_snapshot,
                 _book_views(book),
+                network=settings.network,
+                account=settings.account_address or "",
+                session_started_at=session_started_at,
             )
-            for plan in plans:
+            for coin, count, reason in planned.ignored:
+                if coin in announced_stale:
+                    continue
+                announced_stale.add(coin)
+                logger.info(
+                    "MODEL_B RECONCILE ignore stale coin=%s opens=%s reason=%s",
+                    coin,
+                    count,
+                    reason,
+                )
+            for plan in planned.closes:
                 _journal_reconciled_close(plan)
 
         active = session_coins(now, symbols=hunt_coins)
@@ -713,6 +753,8 @@ def run_model_b(
                         tp=pos.take_profit,
                         entry_mode="model_b",
                         reason="alo_fill",
+                        network=settings.network,
+                        account=settings.account_address or "",
                     )
                     logger.info(
                         "MODEL_B FILL %s %s size=%s @ %s stop=%s tp=%s",

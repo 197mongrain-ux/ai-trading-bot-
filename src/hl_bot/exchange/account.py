@@ -359,10 +359,151 @@ class PlannedClose:
     pnl: float
     reason: str
     source: str = "reconcile"
+    # Stable ids (``tid:`` / ``hash:`` / ``fill:``). One id closes one open.
+    fill_ids: tuple[str, ...] = ()
+
+
+def fill_id(fill: UserFill) -> str:
+    """Identity of one exchange fill. A tid wins, then the tx hash.
+
+    The fallback still changes when the fill does, so a row with neither
+    field cannot be reused on the next open.
+    """
+    tid = getattr(fill, "tid", None)
+    if tid is not None and str(tid).strip() != "":
+        return f"tid:{tid}"
+    tx_hash = getattr(fill, "hash", None)
+    if tx_hash is not None and str(tx_hash).strip() != "":
+        return f"hash:{tx_hash}"
+    oid = getattr(fill, "oid", None)
+    return f"fill:{fill.coin}:{float(fill.ts):.3f}:{fill.price}:{fill.size}:{oid}"
+
+
+def consumed_fill_ids(rows: list[dict]) -> set[str]:
+    """Fill ids already written on a journal close. Survives a restart."""
+    found: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("event") != "close":
+            continue
+        raw = row.get("fill_ids")
+        items: list[object]
+        if isinstance(raw, str):
+            items = [raw]
+        elif isinstance(raw, (list, tuple)):
+            items = list(raw)
+        else:
+            items = []
+        for item in items:
+            if item is not None and str(item).strip() != "":
+                found.add(str(item))
+        tid = row.get("tid")
+        if tid is not None and str(tid).strip() != "":
+            found.add(f"tid:{tid}")
+        tx_hash = row.get("hash")
+        if tx_hash is not None and str(tx_hash).strip() != "":
+            found.add(f"hash:{tx_hash}")
+    return found
+
+
+def _row_coin(row: dict) -> str:
+    return canon_coin(row.get("symbol") or row.get("coin") or "")
+
+
+def _row_ts(row: dict) -> float:
+    try:
+        return float(row.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _norm_token(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def annotate_opens(rows: list[dict]) -> list[dict]:
+    """Each journal open, with the network and account of the start before it.
+
+    A row's own ``network`` / ``account`` wins. Otherwise it inherits the
+    latest ``start`` above it, so a testnet session stays testnet after a
+    later mainnet start is appended.
+    """
+    network = ""
+    account = ""
+    annotated: list[dict] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        event = row.get("event")
+        if event == "start":
+            if row.get("network"):
+                network = _norm_token(row.get("network"))
+            acct = row.get("account") or row.get("account_address")
+            if acct:
+                account = _norm_token(acct)
+            continue
+        if event != "open":
+            continue
+        own_net = row.get("network")
+        own_acct = row.get("account") or row.get("account_address")
+        annotated.append(
+            {
+                "index": index,
+                "row": row,
+                "coin": _row_coin(row),
+                "network": _norm_token(own_net) if own_net else network,
+                "account": _norm_token(own_acct) if own_acct else account,
+                "ts": _row_ts(row),
+            }
+        )
+    return annotated
+
+
+def _latest_close_index(rows: list[dict], coin: str) -> int:
+    """File order, not the stack. One close covers every open above it."""
+    last = -1
+    name = canon_coin(coin)
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("event") != "close":
+            continue
+        if _row_coin(row) == name:
+            last = index
+    return last
+
+
+def _network_ok(item: dict, network: str) -> bool:
+    """Untagged history is allowed. An explicit other network is not."""
+    own = item.get("network") or ""
+    current = _norm_token(network)
+    if not own or not current:
+        return True
+    return own == current
+
+
+def _account_ok(item: dict, account: str) -> bool:
+    """Untagged history is allowed. Both sides set and different is not."""
+    own = item.get("account") or ""
+    current = _norm_token(account)
+    if not own or not current:
+        return True
+    return own == current
+
+
+def _entry_matches(row: dict, entry: float, side: str) -> bool:
+    """The journal open is the position we adopted, not an older ticket."""
+    if side in ("long", "short") and row.get("side") not in (None, "", side):
+        return False
+    price = _as_float(row.get("price"))
+    if price is None or entry <= 0 or price <= 0:
+        return False
+    return abs(price - entry) <= max(1e-6, abs(entry) * 1e-4)
 
 
 def unmatched_journal_opens(rows: list[dict]) -> dict[str, dict]:
-    """Latest still-open journal ``open`` per coin. A later ``close`` pops it."""
+    """Latest still-open journal ``open`` per coin. A later ``close`` pops it.
+
+    Kept for callers that want the stack view. Reconcile does not use it:
+    popping one close exposed the next stale open to the same fill.
+    """
     stacks: dict[str, list[dict]] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -410,17 +551,22 @@ def plan_close_for_open(
     tp: float | None,
     since_ts: float,
     fills: list[UserFill],
+    used_ids: set[str] | None = None,
 ) -> PlannedClose | None:
     """One journal close when reducing fills flatten the coin after ``since_ts``.
 
-    No fill means no invented price. The position stays missing from the
-    journal until a fill shows up.
+    No fill means no invented price. A fill id already on a journal close
+    is skipped, so the same tid cannot close the next open.
     """
     name = canon_coin(coin)
+    spent = used_ids or set()
     relevant = [
         fill
         for fill in fills
-        if fill.coin == name and fill.ts + 1e-9 >= float(since_ts) and fill_reduces_position(fill, side)
+        if fill.coin == name
+        and fill.ts + 1e-9 >= float(since_ts)
+        and fill_id(fill) not in spent
+        and fill_reduces_position(fill, side)
     ]
     relevant.sort(key=lambda fill: (fill.ts, fill.tid or 0))
     if not relevant or not fills_flatten(relevant):
@@ -445,6 +591,7 @@ def plan_close_for_open(
         exit=exit_px,
         pnl=pnl,
         reason=reason,
+        fill_ids=tuple(fill_id(fill) for fill in relevant),
     )
 
 
@@ -461,62 +608,138 @@ class BookView:
     opened_at: float
 
 
+@dataclass(frozen=True)
+class ReconcileResult:
+    """Closes to write, and stale opens to mention once."""
+
+    closes: tuple[PlannedClose, ...]
+    # ``(coin, open_count, reason)``. ``not_held`` is a flat book.
+    # ``stale_open`` is an older or other-network open beside a live position.
+    ignored: tuple[tuple[str, int, str], ...] = ()
+
+
 def plan_reconcile_closes(
     journal_rows: list[dict],
     snapshot: AccountSnapshot,
     book_positions: list[BookView],
-) -> list[PlannedClose]:
-    """Closes to journal because the exchange is flat and a fill shows it.
+    *,
+    network: str = "",
+    account: str = "",
+    session_started_at: float = 0.0,
+) -> ReconcileResult:
+    """Close a position this process is holding when the exchange is flat.
 
-    A snapshot that failed (``ok`` is False) returns nothing. Missing a dex
-    must not journal a close for a position that is still open.
+    A failed snapshot returns nothing. A journal open the book is not
+    holding is not closed: that is how a testnet leftover and a recent
+    fill produced a new loss every loop. One fill id can close only the
+    single open after that coin's latest journaled close, on this
+    network and account, matching the position we adopted. Older opens
+    are reported in ``ignored`` and are not paired with the fill.
     """
     if not snapshot.ok:
-        return []
+        return ReconcileResult(closes=())
+    used = consumed_fill_ids(journal_rows)
+    annotated = annotate_opens(journal_rows)
     exchange_open = {pos.coin for pos in snapshot.positions if pos.size > 0}
+    held = {canon_coin(pos.coin): pos for pos in book_positions if pos.size > 0}
+    coins = {item["coin"] for item in annotated if item["coin"]}
+    coins.update(held)
     plans: list[PlannedClose] = []
-    seen: set[str] = set()
-    opens = unmatched_journal_opens(journal_rows)
-    for coin, row in opens.items():
-        if coin in exchange_open:
+    ignored: list[tuple[str, int, str]] = []
+    for coin in sorted(coins):
+        last_close = _latest_close_index(journal_rows, coin)
+        leftover = [
+            item
+            for item in annotated
+            if item["coin"] == coin and item["index"] > last_close
+        ]
+        pos = held.get(coin)
+        if pos is None:
+            if leftover:
+                ignored.append((coin, len(leftover), "not_held"))
             continue
-        try:
-            since = float(row.get("ts") or 0)
-        except (TypeError, ValueError):
-            since = 0.0
+        if coin in exchange_open:
+            stale = [
+                item
+                for item in leftover
+                if not _network_ok(item, network)
+                or not _account_ok(item, account)
+                or not _entry_matches(item["row"], pos.entry, pos.side)
+            ]
+            if stale:
+                ignored.append((coin, len(stale), "stale_open"))
+            continue
+        chosen, stale = _choose_open(leftover, pos, network=network, account=account)
+        if stale:
+            ignored.append((coin, len(stale), "stale_open"))
+        if chosen is not None:
+            row = chosen["row"]
+            since = chosen["ts"]
+            side = row.get("side") if isinstance(row.get("side"), str) else pos.side
+            entry = _as_float(row.get("price")) or pos.entry
+            stop = _as_float(row.get("stop"))
+            tp = _as_float(row.get("tp"))
+            size = pos.size
+        else:
+            # Adopted, then flat, and the journal open does not match.
+            # Still one close for the position we are holding. The fill
+            # is consumed so it cannot be spent on a stale open later.
+            since = float(pos.opened_at)
+            side = pos.side
+            entry = pos.entry
+            stop = pos.stop if pos.stop > 0 else None
+            tp = pos.take_profit if pos.take_profit > 0 else None
+            size = pos.size
+            if session_started_at and since + 1e-9 < float(session_started_at):
+                since = float(session_started_at)
         plan = plan_close_for_open(
             coin=coin,
-            side=row.get("side") if isinstance(row.get("side"), str) else None,
-            size=_as_float(row.get("size")) or 0.0,
-            entry=_as_float(row.get("price")) or 0.0,
-            stop=_as_float(row.get("stop")),
-            tp=_as_float(row.get("tp")),
+            side=side,
+            size=size,
+            entry=entry,
+            stop=stop,
+            tp=tp,
             since_ts=since,
             fills=list(snapshot.fills),
+            used_ids=used,
         )
         if plan is None:
             continue
         plans.append(plan)
-        seen.add(coin)
-    for pos in book_positions:
-        coin = canon_coin(pos.coin)
-        if coin in exchange_open or coin in seen:
+        used.update(plan.fill_ids)
+    return ReconcileResult(closes=tuple(plans), ignored=tuple(ignored))
+
+
+def _choose_open(
+    leftover: list[dict],
+    pos: BookView,
+    *,
+    network: str,
+    account: str,
+) -> tuple[dict | None, list[dict]]:
+    """The newest open that belongs to this adopted position. The rest are stale.
+
+    Eligible means: this network, this account, and the same side and
+    entry as the position we adopted. Anything older than that open, or
+    from another network, is not adoptable state.
+    """
+    stale: list[dict] = []
+    candidates: list[dict] = []
+    for item in leftover:
+        if not _network_ok(item, network) or not _account_ok(item, account):
+            stale.append(item)
             continue
-        plan = plan_close_for_open(
-            coin=coin,
-            side=pos.side,
-            size=pos.size,
-            entry=pos.entry,
-            stop=pos.stop if pos.stop > 0 else None,
-            tp=pos.take_profit if pos.take_profit > 0 else None,
-            since_ts=pos.opened_at,
-            fills=list(snapshot.fills),
-        )
-        if plan is None:
+        if not _entry_matches(item["row"], pos.entry, pos.side):
+            stale.append(item)
             continue
-        plans.append(plan)
-        seen.add(coin)
-    return plans
+        candidates.append(item)
+    if not candidates:
+        return None, stale
+    chosen = max(candidates, key=lambda item: (item["ts"], item["index"]))
+    for item in candidates:
+        if item is not chosen:
+            stale.append(item)
+    return chosen, stale
 
 
 def position_coins_label(positions: list[PerpPosition] | tuple[PerpPosition, ...]) -> str:

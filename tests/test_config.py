@@ -75,6 +75,24 @@ def test_parse_symbols_default_when_unset(monkeypatch):
     assert _parse_symbols() == ("BTC", "SOL", "XRP")
 
 
+def test_load_settings_ignores_a_local_dotenv(monkeypatch, tmp_path):
+    """A laptop .env with RISK_PER_TRADE=0.02 and a short SYMBOLS list stays out."""
+    (tmp_path / ".env").write_text(
+        "RISK_PER_TRADE=0.02\nSYMBOLS=BTC\nENTRY_MODE=both\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HL_BOT_SKIP_DOTENV", "1")
+    monkeypatch.delenv("RISK_PER_TRADE", raising=False)
+    monkeypatch.delenv("SYMBOLS", raising=False)
+    monkeypatch.delenv("SYMBOL", raising=False)
+    monkeypatch.delenv("ENTRY_MODE", raising=False)
+    settings = load_settings()
+    assert settings.entry_mode == "both"
+    assert settings.risk_per_trade == pytest.approx(0.005)
+    assert settings.symbols == ("BTC", "SOL", "XRP")
+
+
 def test_load_settings_symbols(monkeypatch, tmp_path):
     monkeypatch.setenv("SYMBOLS", "BTC,SOL")
     monkeypatch.delenv("SYMBOL", raising=False)

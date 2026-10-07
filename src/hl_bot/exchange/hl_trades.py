@@ -170,6 +170,7 @@ class UserFill:
         start_position: float | None = None,
         tid: object | None = None,
         fee: float | None = None,
+        hash: str | None = None,
     ):
         self.coin = canon_coin(coin)
         self.oid = oid
@@ -185,6 +186,8 @@ class UserFill:
         self.start_position = start_position
         self.tid = tid
         self.fee = fee
+        # Exchange fill hash. A tid is preferred; hash is the fallback id.
+        self.hash = hash or None
 
 
 def parse_user_fill(raw: dict) -> UserFill | None:
@@ -215,6 +218,7 @@ def parse_user_fill(raw: dict) -> UserFill | None:
         start_position=_as_float(raw.get("startPosition")),
         tid=raw.get("tid"),
         fee=_as_float(raw.get("fee")),
+        hash=str(raw.get("hash")).strip() if raw.get("hash") else None,
     )
 
 
