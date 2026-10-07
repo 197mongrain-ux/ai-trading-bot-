@@ -15,6 +15,7 @@ from hl_bot.strategy.model_b.tape import (
     MIN_PRINTS,
     density_min_prints,
 )
+from hl_bot.strategy.model_b.universe import canon_coin
 
 load_dotenv()
 
@@ -50,12 +51,12 @@ def _parse_symbols() -> tuple[str, ...]:
     """Parse SYMBOLS (comma-separated) with SYMBOL fallback; default BTC,SOL,XRP."""
     symbols_raw = os.getenv("SYMBOLS")
     if symbols_raw is not None and symbols_raw.strip():
-        parsed = tuple(s.strip().upper() for s in symbols_raw.split(",") if s.strip())
+        parsed = tuple(canon_coin(s) for s in symbols_raw.split(",") if canon_coin(s))
         if parsed:
             return parsed
     symbol_raw = os.getenv("SYMBOL")
     if symbol_raw is not None and symbol_raw.strip():
-        return (symbol_raw.strip().upper(),)
+        return (canon_coin(symbol_raw),)
     return ("BTC", "SOL", "XRP")
 
 

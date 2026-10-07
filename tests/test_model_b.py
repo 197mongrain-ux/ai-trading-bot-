@@ -39,6 +39,7 @@ from hl_bot.execution.model_b_loop import (
     btc_is_sole_close,
     format_model_b_fail,
     is_close_setup,
+    model_b_hunt_coins,
     run_model_b,
 )
 from hl_bot.journal import TradeJournal
@@ -99,7 +100,9 @@ from hl_bot.strategy.model_b.thesis import ThesisBook, WorkingOrder
 from hl_bot.strategy.model_b.types import AloIntent, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import (
     AFTER_HOURS_COINS,
+    DEFAULT_HUNT_COINS,
     NY_COINS,
+    perp_dexs_for,
     session_coins,
 )
 from hl_bot.strategy.vwap import VwapTrendScalp
@@ -272,20 +275,47 @@ def _pass_case(**kw):
 # --- universe ---------------------------------------------------------------
 
 
+_EXPANDED = (
+    "BTC",
+    "ETH",
+    "SOL",
+    "NEAR",
+    "PUMP",
+    "LIT",
+    "AAVE",
+    "ONDO",
+    "WLD",
+    "TAO",
+    "xyz:GOLD",
+    "xyz:SP500",
+    "xyz:XYZ100",
+)
+
+
 def test_ny_session_universe_and_after_hours():
-    assert session_coins(datetime(2026, 10, 5, 9, 0, tzinfo=NY)) == NY_COINS
-    assert session_coins(datetime(2026, 10, 5, 15, 59, tzinfo=NY)) == NY_COINS
-    assert "TAO" in session_coins(datetime(2026, 10, 5, 9, 0, tzinfo=NY))
-    assert session_coins(datetime(2026, 10, 5, 16, 0, tzinfo=NY)) == AFTER_HOURS_COINS
-    assert session_coins(datetime(2026, 10, 5, 8, 59, tzinfo=NY)) == AFTER_HOURS_COINS
-    # Weekend uses the same clock. Saturday morning is still the NY list.
-    assert "TAO" in session_coins(datetime(2026, 10, 10, 10, 0, tzinfo=NY))
-    assert NY_COINS == (
-        "BTC", "ETH", "NEAR", "PUMP", "SOL", "LIT", "AAVE", "ONDO", "WLD", "TAO",
-    )
+    morning = datetime(2026, 10, 5, 9, 0, tzinfo=NY)
+    late = datetime(2026, 10, 5, 15, 59, tzinfo=NY)
+    close = datetime(2026, 10, 5, 16, 0, tzinfo=NY)
+    pre = datetime(2026, 10, 5, 8, 59, tzinfo=NY)
+    weekend = datetime(2026, 10, 10, 10, 0, tzinfo=NY)
+    assert session_coins(morning) == NY_COINS == AFTER_HOURS_COINS == DEFAULT_HUNT_COINS
+    assert session_coins(late) == _EXPANDED
+    assert session_coins(close) == _EXPANDED
+    assert session_coins(pre) == _EXPANDED
+    # Weekend uses the same list. Saturday morning still includes TAO and xyz.
+    assert session_coins(weekend) == _EXPANDED
+    assert _EXPANDED[:3] == ("BTC", "ETH", "SOL")
+    assert "xyz:XYZ100" in _EXPANDED
+    assert "xyz:SP500" in _EXPANDED
 
 
-def test_tao_after_hours_is_out_of_session():
+def test_session_coins_follows_explicit_symbols():
+    now = datetime(2026, 10, 5, 16, 30, tzinfo=NY)
+    assert session_coins(now, symbols=("eth", "XYZ:gold", "btc")) == ("ETH", "xyz:GOLD", "BTC")
+    assert session_coins(now, symbols=("xyz:sp500",)) == ("xyz:SP500",)
+
+
+def test_tao_after_hours_stays_in_the_hunt():
     now = datetime(2026, 10, 5, 16, 30, tzinfo=NY).timestamp()
     decision = _decide(
         _long_prints(now),
@@ -294,8 +324,163 @@ def test_tao_after_hours_is_out_of_session():
         now=now,
         coin="TAO",
     )
-    assert decision.fail_reason == "OUT_OF_SESSION"
-    assert decision.armed is False
+    assert decision.coin == "TAO"
+    assert decision.fail_reason != "OUT_OF_SESSION"
+    assert "TAO" in session_coins(now)
+
+
+def test_coin_outside_universe_is_out_of_session():
+    for stamp in (
+        datetime(2026, 10, 5, 10, 0, tzinfo=NY),
+        datetime(2026, 10, 5, 16, 30, tzinfo=NY),
+    ):
+        decision = _decide(
+            _long_prints(stamp.timestamp()),
+            _bars(stamp.timestamp()),
+            [Pool("PDH", 130, False)],
+            now=stamp.timestamp(),
+            coin="XRP",
+        )
+        assert decision.fail_reason == "OUT_OF_SESSION"
+        assert decision.armed is False
+
+
+def test_xyz_name_is_in_session_with_lowercase_dex():
+    now = datetime(2026, 10, 5, 20, 0, tzinfo=NY).timestamp()
+    decision = _decide(
+        _long_prints(now),
+        _bars(now),
+        [Pool("PDH", 130, False)],
+        now=now,
+        coin="XYZ:gold",
+    )
+    assert decision.coin == "xyz:GOLD"
+    assert decision.fail_reason != "OUT_OF_SESSION"
+
+
+def test_perp_dexs_include_xyz_and_keep_the_original_dex():
+    assert perp_dexs_for(("BTC", "ETH", "SOL")) is None
+    assert perp_dexs_for(("BTC", "XYZ:GOLD", "xyz:SP500")) == ["", "xyz"]
+
+
+def test_model_b_hunt_coins_uses_env_symbols(monkeypatch):
+    monkeypatch.delenv("SYMBOLS", raising=False)
+    monkeypatch.delenv("SYMBOL", raising=False)
+    bare = Settings(
+        entry_mode="model_b",
+        risk_per_trade=0.02,
+        symbols=("BTC", "SOL", "XRP"),
+    )
+    assert model_b_hunt_coins(bare) == DEFAULT_HUNT_COINS
+    monkeypatch.setenv("SYMBOLS", "btc,XYZ:gold")
+    configured = Settings(
+        entry_mode="model_b",
+        risk_per_trade=0.02,
+        symbols=("BTC", "XYZ:GOLD"),
+    )
+    assert model_b_hunt_coins(configured) == ("BTC", "xyz:GOLD")
+    assert model_b_hunt_coins(configured, coins=("ETH",)) == ("ETH",)
+    monkeypatch.delenv("SYMBOLS", raising=False)
+    monkeypatch.setenv("SYMBOL", "xyz:xyz100")
+    single = Settings(entry_mode="model_b", risk_per_trade=0.02, symbols=("xyz:XYZ100",))
+    assert model_b_hunt_coins(single) == ("xyz:XYZ100",)
+
+
+def test_trade_feed_subscribes_xyz_with_lowercase_dex():
+    feed = HyperliquidTradeFeed(network="mainnet", coins=("BTC", "XYZ:gold", "xyz:SP500"))
+    assert feed.coins == ("BTC", "xyz:GOLD", "xyz:SP500")
+    names = [
+        p["subscription"]["coin"]
+        for p in feed.resubscribe_payloads()
+        if p.get("subscription", {}).get("type") == "trades"
+    ]
+    assert names == ["BTC", "xyz:GOLD", "xyz:SP500"]
+    stored = feed.ingest(
+        {
+            "channel": "trades",
+            "data": [
+                {
+                    "coin": "xyz:GOLD",
+                    "px": "4100",
+                    "sz": "0.1",
+                    "side": "B",
+                    "time": 1_700_000_000_000,
+                    "tid": 1,
+                }
+            ],
+        }
+    )
+    assert stored and stored[0].coin == "xyz:GOLD"
+    assert len(feed.prints("XYZ:gold")) == 1
+
+
+def test_model_b_feed_subscribes_default_or_env_symbols(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    class CaptureFeed:
+        def __init__(self, network="mainnet", coins=(), user=None, maxlen=5000):
+            captured["coins"] = tuple(coins)
+
+        def prints(self, coin):
+            return []
+
+        def bbo(self, coin):
+            return (None, None)
+
+        def take_user_fills(self):
+            return []
+
+    monkeypatch.setattr("hl_bot.execution.model_b_loop.HyperliquidTradeFeed", CaptureFeed)
+
+    def _no_network(*_a, **_k):
+        raise AssertionError("candle network")
+
+    monkeypatch.setattr("hl_bot.exchange.info_client._post_candle_snapshot", _no_network)
+    monkeypatch.delenv("SYMBOLS", raising=False)
+    monkeypatch.delenv("SYMBOL", raising=False)
+    info = InfoClient()
+    info.inject_bars([], coin=None)
+
+    def _run(journal: str, symbols=("BTC", "SOL", "XRP"), coins=None):
+        run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                journal_path=str(tmp_path / journal),
+                loop_interval_sec=0,
+                symbols=symbols,
+            ),
+            max_iterations=1,
+            info=info,
+            sleep_fn=lambda *_: None,
+            now_fn=_now,
+            connect_feed=False,
+            coins=coins,
+        )
+
+    _run("default.jsonl")
+    assert captured["coins"] == _EXPANDED
+
+    monkeypatch.setenv("SYMBOLS", "BTC,XYZ:gold,xyz:SP500")
+    _run("env.jsonl", symbols=("BTC", "XYZ:GOLD", "xyz:SP500"))
+    assert captured["coins"] == ("BTC", "xyz:GOLD", "xyz:SP500")
+
+    _run("override.jsonl", coins=("ETH",))
+    assert captured["coins"] == ("ETH",)
+
+
+def test_candle_snapshot_keeps_xyz_dex_lowercase(monkeypatch):
+    calls: list[str] = []
+
+    def fake_post(base_url, coin, interval, start_ms, end_ms, timeout=15.0):
+        calls.append(coin)
+        return 200, []
+
+    monkeypatch.setattr("hl_bot.exchange.info_client._post_candle_snapshot", fake_post)
+    client = InfoClient(base_url="https://example.invalid")
+    client.get_candles("XYZ:gold", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    client.get_candles("xyz:GOLD", "1m", start_ms=1, end_ms=2_000_000_000_000)
+    assert calls == ["xyz:GOLD"]
 
 
 # --- bias -------------------------------------------------------------------
@@ -2112,6 +2297,8 @@ def test_trade_feed_reconnect_keeps_buffer_and_resubscribes():
     must still be there.
     """
     assert normalize_coin("btc-perp") == "BTC"
+    assert normalize_coin("XYZ:gold") == "xyz:GOLD"
+    assert normalize_coin("xyz:XYZ100") == "xyz:XYZ100"
     assert app_ping() == {"method": "ping"}
 
     feed = HyperliquidTradeFeed(network="testnet", coins=("BTC", "ETH"), user="0xabc")

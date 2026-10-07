@@ -20,6 +20,7 @@ class LiveExchange:
         private_key: str,
         account_address: str | None = None,
         base_url: str = "https://api.hyperliquid.xyz",
+        perp_dexs: list[str] | None = None,
     ):
         if not private_key:
             raise ValueError("LiveExchange requires HL_PRIVATE_KEY")
@@ -29,10 +30,18 @@ class LiveExchange:
 
         self._wallet = Account.from_key(private_key)
         self.account_address = account_address or self._wallet.address
+        # ``perp_dexs`` includes "" (the original dex) plus builder dexes
+        # such as ``xyz`` so ``xyz:GOLD`` resolves to an asset id. Omitting
+        # it leaves BTC/ETH/SOL on the original dex only.
+        exchange_kwargs: dict[str, Any] = {
+            "account_address": self.account_address if account_address else None,
+        }
+        if perp_dexs:
+            exchange_kwargs["perp_dexs"] = list(perp_dexs)
         self._exchange: Any = Exchange(
             self._wallet,
             base_url,
-            account_address=self.account_address if account_address else None,
+            **exchange_kwargs,
         )
         logger.warning(
             "LIVE Exchange initialized for %s — real orders will be sent",

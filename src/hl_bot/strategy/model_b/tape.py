@@ -25,6 +25,7 @@ import math
 from dataclasses import dataclass
 
 from hl_bot.strategy.model_b.types import TradePrint
+from hl_bot.strategy.model_b.universe import canon_coin
 
 WINDOW_SEC = 90.0
 # Mainnet floor. A 2026-10-05 NY-session sample on
@@ -103,7 +104,7 @@ def window_prints(
     now: float,
     window_sec: float = WINDOW_SEC,
 ) -> list[TradePrint]:
-    coin = coin.upper()
+    coin = canon_coin(coin)
     start = float(now) - window_sec
     selected = [
         p

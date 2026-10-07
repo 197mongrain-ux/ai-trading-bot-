@@ -67,7 +67,7 @@ from hl_bot.strategy.model_b.tape import (
 )
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
-from hl_bot.strategy.model_b.universe import session_coins
+from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
 from hl_bot.strategy.model_b.vp_log import vp_error_fields, vp_log_fields
 from hl_bot.strategy.volume_profile import VP_AS_FILTER, VP_ENABLED, VP_ENTRIES
 
@@ -105,6 +105,7 @@ class ModelBEngine:
         alo_timeout_sec: float = 0.0,
         delta_flat_eps: float = DELTA_FLAT_EPS,
         delta_flat_usdc: float = DELTA_FLAT_USDC,
+        coins: tuple[str, ...] | list[str] | None = None,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -132,6 +133,8 @@ class ModelBEngine:
         self.delta_flat_eps = float(delta_flat_eps)
         # USDC notional. Divided by the mid, then compared with the coin floor.
         self.delta_flat_usdc = float(delta_flat_usdc)
+        # Same list in NY hours and after hours. ``None`` is the default universe.
+        self.coins = resolve_hunt_coins(coins)
 
     def evaluate(
         self,
@@ -158,7 +161,7 @@ class ModelBEngine:
         Paper tests pass that balance in. Live passes the spot read, not
         perp account value.
         """
-        coin_u = coin.upper()
+        coin_u = canon_coin(coin)
         window = window_prints(prints, coin=coin_u, now=now)
         logged_score = (
             log_only_score(len(window))
@@ -435,7 +438,7 @@ class ModelBEngine:
                 **fields,
             )
 
-        if coin_u not in session_coins(now):
+        if coin_u not in self.coins:
             return _done(OUT_OF_SESSION)
 
         # Fail closed before any delta / absorb math that would skip a print.

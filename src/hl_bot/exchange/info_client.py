@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from hl_bot.strategy.model_b.universe import canon_coin
+
 logger = logging.getLogger(__name__)
 
 # One fresh snapshot per coin per minute is enough for 1m swings and
@@ -270,7 +272,7 @@ class InfoClient:
         that coin instead of retrying. A coin that has never succeeded
         comes back empty so pool bias falls through to NONE.
         """
-        coin_key = coin.upper()
+        coin_key = canon_coin(coin)
         if coin_key in self._injected_bars:
             return list(self._injected_bars[coin_key])
         if "*" in self._injected_bars:
@@ -371,7 +373,7 @@ class InfoClient:
 
         If ``coin`` is None, bars apply to any symbol without a specific inject.
         """
-        key = coin.upper() if coin else "*"
+        key = canon_coin(coin) if coin else "*"
         self._injected_bars[key] = list(bars)
 
     def clear_injected_bars(self) -> None:
