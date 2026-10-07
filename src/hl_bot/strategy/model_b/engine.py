@@ -16,11 +16,12 @@ stop == fill, one-tick collision). Window and last-15s delta may sit
 inside a flat band; a clearly adverse delta still fails. The band is
 the larger of ``DELTA_FLAT_USDC`` / mid (default $100) and
 ``DELTA_FLAT_EPS`` (default 0.05 coins). TP is the nearest confirmed
-swing or untaken pool in the trade direction, even past 2R. With no
-such level the target is 1.5R of the stop just placed, the same
-distance the size uses. ``BAD_TP`` is only a target that is not
-strictly beyond the entry, and that fail logs the R distance and the
-pool R-multiple. A session volume profile
+swing or untaken pool in the trade direction that clears fees and at
+least 1R of the stop, even past 2R. A closer level is skipped. With
+no level past that floor the target is 1.5R of the stop just placed.
+``BAD_TP`` is that fallback when it still cannot clear the band, or a
+target that is not strictly beyond the entry. The fail logs the R
+distance and the pool R-multiple. A session volume profile
 (POC / VAH / VAL / LVN) is written on the decision for the journal.
 Those tags do not arm, block, or move the stop.
 """
@@ -36,6 +37,7 @@ from hl_bot.strategy.model_b.risk import (
     assert_policy,
     clamp_tp_r,
     collides_with_fill,
+    min_tp_distance,
     next_liquidity,
     place_stop,
     size_adjust_tag,
@@ -369,12 +371,16 @@ class ModelBEngine:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
 
-            # Nearest liquidity in front of the trade. Past 2R is still
-            # that level. No level: 1.5R of the stop the size just used.
-            target = next_liquidity(side, limit, tick, tp_levels)
-            logged_pool = target if target is not None else (
-                None if pool is None else pool.price
-            )
+            # Nearest liquidity that clears fees and 1R. A closer pool is
+            # skipped so the next real level can win, including past 2R.
+            # No level past that floor: 1.5R of the stop the size just used.
+            # That fallback fails closed when it still cannot clear the band.
+            floor = min_tp_distance(limit, stop)
+            target = next_liquidity(side, limit, tick, tp_levels, min_dist=floor)
+            nearest = next_liquidity(side, limit, tick, tp_levels)
+            logged_pool = target if target is not None else nearest
+            if logged_pool is None and pool is not None:
+                logged_pool = pool.price
             tp = arm_take_profit(
                 side,
                 limit,
@@ -382,6 +388,10 @@ class ModelBEngine:
                 target,
                 tp_r=self.tp_r,
             )
+            if tp is not None and target is None:
+                gap = (tp - limit) if side == "long" else (limit - tp)
+                if gap + 1e-12 < floor:
+                    tp = None
             if tp is None:
                 detail = tp_fail_detail(
                     side,

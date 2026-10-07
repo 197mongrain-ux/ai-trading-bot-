@@ -20,10 +20,10 @@
   zero is the same fail-closed.
 - 20× only. 40× is rejected.
 - TP is the next liquidity in the trade direction (confirmed swing or
-  untaken pool). That price is the target inside 1R and past 2R. The
-  1.5R default, clamped to [1, 2], is only the fallback when no such
-  level exists. A far pool does not cancel the arm and is not pulled
-  back to 2R.
+  untaken pool) that clears the round-trip fee and at least 1R of the
+  stop. A closer pool is skipped. Past 2R is still that level. The
+  1.5R default, clamped to [1, 2], is the fallback when no level clears
+  the band. If that fallback cannot clear it either, the arm fails.
 - Heal keeps the wider stop. A tighter proposal does not overwrite it.
 - Soft-prop off. Strategy kill off. Flow is not an exit. No market fallback.
 """
@@ -235,26 +235,53 @@ def next_opposing_level(
     return best
 
 
+def min_tp_distance(entry: float, stop: float, *, min_r: float = TP_R_MIN) -> float:
+    """Closest target that still pays: at least ``min_r`` and the round-trip fee.
+
+    ``min_r`` defaults to 1. The fee is the maker entry plus the taker
+    exit on ``entry``. A pool inside the larger of those two is not a target.
+    """
+    dist = abs(float(entry) - float(stop))
+    fee = abs(float(entry)) * ROUND_TRIP_FEE_RATE
+    return max(float(min_r) * dist, fee)
+
+
 def next_liquidity(
     side: str,
     entry: float,
     tick: float,
     levels: Sequence[float] | None,
+    *,
+    stop: float | None = None,
+    min_dist: float | None = None,
 ) -> float | None:
-    """Nearest supportive level more than one tick past the entry.
+    """Nearest supportive level past the entry that clears the TP floor.
 
     Long wants the lowest level still above the fill. Short wants the
     highest level still below it. The caller passes confirmed swings in
     the trade direction and untaken pools on that side. A bar wick is
-    not a target.
+    not a target. One tick off the fill is noise.
+
+    ``min_dist`` (or ``stop``, which builds that floor from 1R and fees)
+    skips a pool that would not clear the band, so the next real level
+    can win. Without either, only the one-tick filter applies.
     """
     if side not in ("long", "short") or tick <= 0 or entry <= 0 or not levels:
         return None
+    if min_dist is not None:
+        floor = float(min_dist)
+    elif stop is not None and float(stop) > 0:
+        floor = min_tp_distance(entry, stop)
+    else:
+        floor = 0.0
     above = side == "long"
     best: float | None = None
     for raw in levels:
         px = _level(raw)
         if px is None or not _beyond_tick(px, entry, tick, above=above):
+            continue
+        gap = (px - float(entry)) if above else (float(entry) - px)
+        if floor > 0 and gap + 1e-12 < floor:
             continue
         if best is None or (px < best if above else px > best):
             best = px

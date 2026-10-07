@@ -68,16 +68,48 @@ def format_model_b_fail(decision) -> str:
 
 
 def _extract_oid(resp: object) -> object | None:
-    if isinstance(resp, dict):
-        if "oid" in resp:
-            return resp["oid"]
-        try:
-            statuses = resp["response"]["data"]["statuses"]  # type: ignore[index]
-            resting = statuses[0].get("resting") or {}
-            return resting.get("oid")
-        except Exception:
-            return None
+    if not isinstance(resp, dict):
+        return None
+    if resp.get("oid") is not None:
+        return resp["oid"]
+    try:
+        status = resp["response"]["data"]["statuses"][0]  # type: ignore[index]
+    except Exception:
+        return None
+    if not isinstance(status, dict):
+        return None
+    for key in ("resting", "filled"):
+        block = status.get(key) or {}
+        if isinstance(block, dict) and block.get("oid") is not None:
+            return block["oid"]
     return None
+
+
+def _order_error(resp: object) -> str | None:
+    """Exchange text when the Alo never rested. ``None`` when it did.
+
+    Hyperliquid reports a margin reject as ``status=ok`` with
+    ``statuses[0].error``, or as ``status=err``. A resting or filled oid
+    is a real order. An empty body with no oid is not.
+    """
+    if not isinstance(resp, dict):
+        return "empty response"
+    if str(resp.get("status") or "").lower() == "err":
+        body = resp.get("response")
+        return str(body) if body else "err"
+    try:
+        status = resp["response"]["data"]["statuses"][0]  # type: ignore[index]
+    except Exception:
+        return None if _extract_oid(resp) is not None else "no resting order"
+    if isinstance(status, dict) and status.get("error"):
+        return str(status["error"])
+    return None
+
+
+def _reject_reason(detail: str) -> str:
+    if "margin" in detail.lower():
+        return "MARGIN_REJECT"
+    return "SEND_FAIL"
 
 
 def run_model_b(
@@ -213,6 +245,18 @@ def run_model_b(
 
         now = float(clock())
 
+        def _release_margin(coin: str, reason: str, **extra) -> None:
+            """Journal that this coin's reserved margin is free now."""
+            logger.info("MODEL_B MARGIN %s release reason=%s", coin, reason)
+            journal.log(
+                "model_b_margin",
+                entry_mode="model_b",
+                coin=coin,
+                action="release",
+                reason=reason,
+                **extra,
+            )
+
         def _cancel_working(order, reason: str, **extra) -> None:
             summary["cancels"] += 1
             kept = book.position(order.coin) is not None
@@ -271,6 +315,7 @@ def run_model_b(
                     entry_mode="model_b",
                 )
                 summary["closes"] += 1
+                _release_margin(event.coin, reason or event.reason)
                 if event.remainder is not None:
                     _cancel_working(event.remainder, reason or event.reason, remainder=True)
                 if live is not None:
@@ -359,6 +404,7 @@ def run_model_b(
                         reason=applied.reason,
                         entry_mode="model_b",
                     )
+                    _release_margin(applied.coin, applied.reason)
                     if applied.remainder is not None:
                         _cancel_working(
                             applied.remainder, applied.reason, remainder=True
@@ -447,6 +493,7 @@ def run_model_b(
                         closed.exit,
                         closed.pnl,
                     )
+                    _release_margin(closed.coin, closed.reason)
                     if closed.remainder is not None and live is not None:
                         _cancel_working(closed.remainder, closed.reason, remainder=True)
 
@@ -768,6 +815,8 @@ def run_model_b(
 
             oid = None
             if live is not None:
+                rejected: str | None = None
+                detail = ""
                 try:
                     resp = live.place_alo(
                         intent.coin,
@@ -776,14 +825,50 @@ def run_model_b(
                         intent.limit_px,
                         leverage=20,
                     )
-                    oid = _extract_oid(resp)
-                except Exception:
+                except Exception as exc:
                     logger.exception("LIVE Alo failed for %s", coin)
+                    detail = str(exc)
+                    rejected = _reject_reason(detail)
+                else:
+                    detail = _order_error(resp) or ""
+                    oid = _extract_oid(resp)
+                    if detail or oid is None:
+                        detail = detail or "no resting order"
+                        rejected = _reject_reason(detail)
+                        logger.info(
+                            "MODEL_B %s %s detail=%s — ticket dropped",
+                            rejected,
+                            coin,
+                            detail,
+                        )
+                if rejected is not None:
+                    # The order never rested. Do not post it into the book:
+                    # a phantom ticket would reserve margin until the thesis
+                    # went stale and block the next coin.
                     summary["fails"] += 1
                     journal.log(
                         "model_b_fail",
                         entry_mode="model_b",
-                        **{**decision.to_log(), "fail_reason": "SEND_FAIL", "armed": False},
+                        **{
+                            **decision.to_log(),
+                            "fail_reason": rejected,
+                            "armed": False,
+                            "detail": detail,
+                        },
+                    )
+                    logger.info(
+                        "MODEL_B MARGIN %s drop reason=%s detail=%s",
+                        coin,
+                        rejected,
+                        detail,
+                    )
+                    journal.log(
+                        "model_b_margin",
+                        entry_mode="model_b",
+                        coin=coin,
+                        action="drop",
+                        reason=rejected,
+                        detail=detail,
                     )
                     continue
             book.post(intent, now, oid=oid)

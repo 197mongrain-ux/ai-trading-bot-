@@ -383,16 +383,22 @@ class ThesisBook:
 
         ``crossed is False`` is a maker Alo fill. The first drip opens the
         position at that size and leaves any unfilled remainder working.
-        Later drips on the same order grow the position. ``crossed is True``
+        Later drips on the same order grow the position.         ``crossed is True``
         while a position is open is the resting stop/TP bracket firing — it
-        closes, it does not add. A taker fill with no position is ignored
-        (no market entry). Unknown ``crossed`` is ignored.
+        closes, it does not add. A print between the stop and the target
+        still flats the book: the pending remainder is dropped with the
+        position, so its margin does not wait for the thesis to go stale.
+        A taker fill with no position is ignored (no market entry).
+        Unknown ``crossed`` is ignored.
         """
         st = self._coins.get(coin.upper())
         if crossed is True:
             if st is None or st.position is None:
                 return None
-            return self.try_exit(coin, price)
+            closed = self.try_exit(coin, price)
+            if closed is not None:
+                return closed
+            return self.force_flat(coin, price)
         if crossed is not False:
             return None
         if st is None or st.working is None:
@@ -427,6 +433,21 @@ class ThesisBook:
         if reason is None:
             return None
         exit_px = pos.stop if reason == "stop" else pos.take_profit
+        return self._close_open(st, pos, exit_px, reason)
+
+    def force_flat(self, coin: str, price: float, *, reason: str = "flat") -> CloseEvent | None:
+        """Clear an open position and its pending remainder immediately.
+
+        A bracket fill can print between the stop and the target. The
+        exchange is flat either way. The resting Alo must not keep
+        reserving margin until the thesis goes stale.
+        """
+        st = self._coins.get(coin.upper())
+        if st is None or st.position is None or price <= 0:
+            return None
+        return self._close_open(st, st.position, float(price), reason)
+
+    def _close_open(self, st: _CoinState, pos: OpenPosition, exit_px: float, reason: str) -> CloseEvent:
         if pos.side == "long":
             pnl = (exit_px - pos.entry) * pos.size
         else:

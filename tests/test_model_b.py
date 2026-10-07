@@ -35,6 +35,7 @@ from hl_bot.exchange.info_client import (
 )
 from hl_bot.execution.loop import run_bot
 from hl_bot.execution.model_b_loop import (
+    _margin_in_use,
     btc_is_sole_close,
     format_model_b_fail,
     is_close_setup,
@@ -65,6 +66,7 @@ from hl_bot.strategy.model_b.risk import (
     initial_margin,
     leaves_btc_headroom,
     locked_take_profit,
+    min_tp_distance,
     next_liquidity,
     non_btc_margin_cap,
     place_stop,
@@ -776,7 +778,11 @@ def test_flat_delta_save_is_logged(tmp_path, caplog):
 
 
 def test_bad_tp_logs_r_to_pool_and_does_not_change_the_band(monkeypatch):
-    """A pool inside 1R is still a valid TP. A far pool is not a fail."""
+    """Fail labels stay put. The raw helper still returns a caller-supplied pool.
+
+    The hunt itself skips a pool inside 1R or inside the fee. That filter
+    is ``next_liquidity``, not this label helper.
+    """
     close = tp_fail_detail("long", 100.0, 99.0, 100.4, 100.0)
     assert close["why"] == "pool_too_close"
     assert close["r_distance"] == pytest.approx(1.0)
@@ -1184,6 +1190,20 @@ def test_tp_is_the_liquidity_level_and_r_is_only_the_fallback():
     assert next_liquidity("short", 85658.0, 1.0, [85500.0, 85640.0]) == pytest.approx(85640)
     # One tick off the fill is noise.
     assert next_liquidity("long", 100.0, 0.01, [100.01, 110.0]) == pytest.approx(110)
+    # 1R of a 180-point stop skips both of those prints.
+    assert next_liquidity(
+        "short", 85658.0, 1.0, [85500.0, 85640.0], stop=85838.0
+    ) is None
+    # Oct 6: 85814 is ~0.03R of a 147-point stop. PDL 85273 clears 1R.
+    assert min_tp_distance(85818.0, 85965.0) == pytest.approx(147.0)
+    assert next_liquidity(
+        "short", 85818.0, 1.0, [85814.0, 85273.0], stop=85965.0
+    ) == pytest.approx(85273.0)
+    # Fee can be the floor when 1R is shorter than the round trip.
+    assert min_tp_distance(100.0, 100.05) == pytest.approx(100.0 * 0.0006)
+    assert next_liquidity(
+        "long", 100.0, 0.01, [100.055, 100.2], stop=100.05
+    ) == pytest.approx(100.2)
 
 
 def test_size_uses_risk_per_trade_and_rejects_40x():
@@ -1562,11 +1582,11 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
 
 
 def test_btc_short_stops_past_opposing_liquidity_and_targets_the_pool():
-    """Oct 6 BTC short: Alo 85658, 18-point buffer stop, TP capped at 85622.
+    """Oct 6 BTC short: Alo 85658, stop past 85820, not the old 18-point buffer.
 
-    An older high at 85820 is outside wick room and outside the last three
-    bars. The stop clears that high. PDL 85500 is the target, not 2R of
-    the old 18-point stop. Size is 2% of spot USDC over the new distance.
+    PDL 85500 is inside 1R of the 180-point stop, so it is skipped. The
+    next pool that clears 1R (85273) is the target, not 2R of the old
+    18-point stop. Size is 2% of spot USDC over the new distance.
     """
     now = _now()
     entry = 85658.0
@@ -1604,7 +1624,7 @@ def test_btc_short_stops_past_opposing_liquidity_and_targets_the_pool():
     decision = _decide(
         prints,
         bars,
-        [Pool("PDL", 85500.0, taken=False)],
+        [Pool("PDL", 85500.0, taken=False), Pool("PDL", 85273.0, taken=False)],
         coin="BTC",
         bid=last - 1.0,
         ask=last + 1.0,
@@ -1620,9 +1640,10 @@ def test_btc_short_stops_past_opposing_liquidity_and_targets_the_pool():
     assert intent.stop == pytest.approx(85838)
     assert intent.stop > 85820
     assert intent.stop != pytest.approx(85676)
-    assert intent.take_profit == pytest.approx(85500)
+    assert intent.take_profit == pytest.approx(85273)
+    assert intent.take_profit != pytest.approx(85500)
     assert intent.take_profit != pytest.approx(85622)
-    assert intent.pool_px == pytest.approx(85500)
+    assert intent.pool_px == pytest.approx(85273)
     dist = intent.stop - intent.limit_px
     assert intent.size == pytest.approx(
         math.floor((equity * 0.02) / dist * 1_000_000) / 1_000_000
@@ -1631,6 +1652,38 @@ def test_btc_short_stops_past_opposing_liquidity_and_targets_the_pool():
     sized, dollar = size_from_stop(equity, intent.limit_px, intent.stop, risk_pct=0.02)
     assert intent.size == pytest.approx(sized)
     assert dollar == pytest.approx(100.0)
+
+    # 85500 alone is inside 1R, so the arm falls back to 1.5R of the stop.
+    near_only = _decide(
+        prints,
+        bars,
+        [Pool("PDL", 85500.0, taken=False)],
+        coin="BTC",
+        bid=last - 1.0,
+        ask=last + 1.0,
+        tick=tick,
+        equity=equity,
+    )
+    assert near_only.armed is True
+    near = near_only.intent
+    assert near is not None
+    assert near.pool_px is None
+    near_dist = near.stop - near.limit_px
+    assert near.take_profit == pytest.approx(near.limit_px - 1.5 * near_dist)
+    assert near.take_profit != pytest.approx(85500)
+
+
+def test_fallback_tp_fails_closed_when_it_cannot_clear_the_band(monkeypatch):
+    """1.5R that still sits inside the fee / min-R floor is BAD_TP."""
+
+    monkeypatch.setattr(
+        "hl_bot.strategy.model_b.engine.min_tp_distance",
+        lambda entry, stop, min_r=1.0: 1e9,
+    )
+    failed = _pass_case()
+    assert failed.armed is False
+    assert failed.intent is None
+    assert failed.fail_reason == "BAD_TP"
 
 
 def test_drip_keeps_liquidity_tp_instead_of_writing_2r_back():
@@ -1773,17 +1826,18 @@ def test_drip_bracket_keeps_pool_and_an_amend_error_does_not_stop_the_hunt(tmp_p
         now_fn=lambda: now,
         connect_feed=False,
         coins=("BTC",),
-        pools_for=lambda *a, **k: [Pool("PDL", 85500.0, False)],
+        pools_for=lambda *a, **k: [Pool("PDL", 85273.0, False)],
         tick_for=lambda coin: 1.0,
     )
     assert summary["halted"] is False
     assert summary["arms"] == 1
     assert summary["opens"] == 1
-    assert fake.tps == [pytest.approx(85500.0), pytest.approx(85500.0)]
+    assert fake.tps == [pytest.approx(85273.0), pytest.approx(85273.0)]
     assert 85622.0 not in fake.tps
+    assert 85500.0 not in fake.tps
     rows = TradeJournal(tmp_path / "drip-tp.jsonl").read_all()
     opened = [r for r in rows if r["event"] == "open"]
-    assert opened and opened[0]["tp"] == pytest.approx(85500.0)
+    assert opened and opened[0]["tp"] == pytest.approx(85273.0)
 
 
 def test_stop_equal_to_entry_fails_closed(monkeypatch):
@@ -1889,6 +1943,69 @@ def test_no_second_alo_no_average_down_no_market_and_stop_consumes_thesis():
     closed = book.try_exit("BTC", intent.stop)
     assert closed is not None and closed.reason == "stop"
     assert book.block_reason("BTC", intent.swing_id) == "THESIS_DONE"
+
+
+def test_close_releases_pending_margin_without_waiting_for_thesis_stale():
+    """A flat, a stop, and a TP each drop the position and the resting remainder.
+
+    The remainder used to stay until thesis_stale. Margin for the next
+    coin has to be free on the close itself.
+    """
+    now = _now()
+    decision = _decide(_long_prints(now), _bars(now), [Pool("PDH", 130, False)])
+    intent = decision.intent
+    assert intent is not None
+    assert intent.stop < intent.limit_px < intent.take_profit
+
+    book = ThesisBook()
+    book.post(intent, now, oid=7)
+    opened = book.apply_user_fill(
+        coin="BTC",
+        oid=7,
+        price=intent.limit_px,
+        ts=now + 1,
+        crossed=False,
+        size=intent.size * 0.4,
+    )
+    assert opened is not None
+    assert book.working("BTC") is not None
+    assert _margin_in_use(book) > 0
+    # Between stop and TP. try_exit does not see this as a close.
+    assert book.try_exit("BTC", intent.limit_px) is None
+    closed = book.apply_user_fill(
+        coin="BTC",
+        oid=99,
+        price=intent.limit_px,
+        ts=now + 2,
+        crossed=True,
+        size=opened.size,
+    )
+    assert closed is not None
+    assert closed.reason == "flat"
+    assert closed.remainder is not None
+    assert book.position("BTC") is None
+    assert book.working("BTC") is None
+    assert book.cancel_if_stale("BTC", _long_prints(now)) == []
+    assert _margin_in_use(book) == 0
+    assert ticket_fits(5000.0, _margin_in_use(book), intent.size, intent.limit_px)
+
+    for price, reason in ((intent.stop, "stop"), (intent.take_profit, "tp")):
+        fresh = ThesisBook()
+        fresh.post(intent, now, oid=7)
+        fresh.apply_user_fill(
+            coin="BTC",
+            oid=7,
+            price=intent.limit_px,
+            ts=now + 1,
+            crossed=False,
+            size=intent.size * 0.4,
+        )
+        hit = fresh.try_exit("BTC", price)
+        assert hit is not None and hit.reason == reason
+        assert hit.remainder is not None
+        assert fresh.position("BTC") is None
+        assert fresh.working("BTC") is None
+        assert _margin_in_use(fresh) == 0
 
 
 def test_taker_user_fill_does_not_open_a_position():
@@ -2388,6 +2505,228 @@ def test_live_path_places_alo_not_market(tmp_path):
     assert fake.alos[0][0] == "BTC"
     assert fake.alos[0][1] is True
     assert fake.markets == []
+
+
+def _live_settings(tmp_path, name: str) -> Settings:
+    return Settings(
+        entry_mode="model_b",
+        risk_per_trade=0.02,
+        trading_mode="live",
+        i_understand_live_trading=True,
+        private_key="0x" + "ab" * 32,
+        network="testnet",
+        journal_path=str(tmp_path / name),
+        loop_interval_sec=0,
+    )
+
+
+def test_margin_reject_drops_the_ticket_and_does_not_block_the_next_coin(tmp_path):
+    """An insufficient-margin Alo is not a resting ticket.
+
+    BTC's reject must not sit in the book until thesis_stale. ETH in the
+    same pass still arms, and the next pass is another reject, not SECOND_ALO.
+    """
+    now = _now()
+    btc = _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0)
+    eth = _retag(
+        _long_prints(now, last_price=120.0, final_price=120.0, sweep_px=99.0),
+        "ETH",
+    )
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_bars(_bars(now), coin="ETH")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(
+        btc + eth,
+        bbo={"BTC": (102.0, 104.0), "ETH": (119.0, 121.0)},
+    )
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            self.alos.append(coin)
+            if coin == "BTC":
+                return {
+                    "status": "ok",
+                    "response": {
+                        "type": "order",
+                        "data": {
+                            "statuses": [
+                                {"error": "Insufficient margin to place order. asset=0"}
+                            ]
+                        },
+                    },
+                }
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 21}}]}}}
+
+        def cancel_order(self, coin, oid):
+            return None
+
+    summary = run_model_b(
+        _live_settings(tmp_path, "reject.jsonl"),
+        max_iterations=2,
+        info=info,
+        feed=feed,
+        exchange=FakeLive(),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC", "ETH"),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    rows = TradeJournal(tmp_path / "reject.jsonl").read_all()
+    arms = [r for r in rows if r["event"] == "model_b_arm"]
+    assert [r["coin"] for r in arms] == ["ETH"]
+    assert summary["arms"] == 1
+    rejects = [
+        r
+        for r in rows
+        if r["event"] == "model_b_fail" and r.get("fail_reason") == "MARGIN_REJECT"
+    ]
+    assert len(rejects) == 2
+    assert {r["coin"] for r in rejects} == {"BTC"}
+    assert all(r.get("armed") is False for r in rejects)
+    drops = [
+        r
+        for r in rows
+        if r["event"] == "model_b_margin" and r.get("action") == "drop"
+    ]
+    assert len(drops) == 2
+    assert all(r["reason"] == "MARGIN_REJECT" for r in drops)
+    assert not any(r.get("fail_reason") == "SECOND_ALO" and r.get("coin") == "BTC" for r in rows)
+    assert not any(r.get("reason") == "thesis_stale" for r in rows)
+
+
+def test_send_fail_without_an_oid_does_not_post(tmp_path):
+    """A response that never rests is SEND_FAIL, not a phantom working order."""
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            return {"status": "ok", "response": {"data": {"statuses": [{}]}}}
+
+    summary = run_model_b(
+        _live_settings(tmp_path, "send-fail.jsonl"),
+        max_iterations=1,
+        info=info,
+        feed=feed,
+        exchange=FakeLive(),
+        sleep_fn=lambda *_: None,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC",),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    assert summary["arms"] == 0
+    rows = TradeJournal(tmp_path / "send-fail.jsonl").read_all()
+    fails = [r for r in rows if r["event"] == "model_b_fail"]
+    assert len(fails) == 1
+    assert fails[0]["fail_reason"] == "SEND_FAIL"
+    assert fails[0]["coin"] == "BTC"
+    assert not any(r["event"] == "model_b_arm" for r in rows)
+
+
+def test_flat_close_frees_margin_for_the_other_coin(tmp_path):
+    """BTC's position and remainder drop on a between-band fill, then ETH arms.
+
+    Tight stops use more than half of 5000, so ETH cannot rest beside BTC.
+    The flat must free that margin in the same pass. thesis_stale is not
+    the release.
+    """
+    now = _now()
+    btc = _long_prints(now, last_price=103.0, final_price=103.0, sweep_px=99.0)
+    eth = _retag(
+        _long_prints(now, last_price=120.0, final_price=120.0, sweep_px=99.0),
+        "ETH",
+    )
+    info = InfoClient()
+    bars = _tight_bars(now)
+    info.inject_bars(bars, coin="BTC")
+    info.inject_bars(bars, coin="ETH")
+    info.inject_spot_usdc(5000.0)
+    feed = MemoryFeed(
+        btc + eth,
+        bbo={"BTC": (102.0, 104.0), "ETH": (119.0, 121.0)},
+    )
+
+    class FakeLive:
+        def __init__(self):
+            self.alos = []
+            self.cancels = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            self.alos.append((coin, limit_px, size))
+            return {
+                "response": {
+                    "data": {"statuses": [{"resting": {"oid": 11 if coin == "BTC" else 22}}]}
+                }
+            }
+
+        def cancel_order(self, coin, oid):
+            self.cancels.append((coin, oid))
+
+        def set_stop_loss(self, coin, is_buy, size, trigger_px):
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 31}}]}}}
+
+        def set_take_profit(self, coin, is_buy, size, trigger_px):
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 32}}]}}}
+
+    fake = FakeLive()
+    sleeps = {"n": 0}
+
+    def sleep_fn(_sec):
+        sleeps["n"] += 1
+        if sleeps["n"] == 1 and fake.alos:
+            px = fake.alos[0][1]
+            feed._fills.append(UserFill("BTC", 11, px, 0.01, now + 1, False))
+        elif sleeps["n"] == 2 and fake.alos:
+            px = fake.alos[0][1]
+            feed._fills.append(UserFill("BTC", 77, px, 0.01, now + 2, True))
+
+    summary = run_model_b(
+        _live_settings(tmp_path, "flat.jsonl"),
+        max_iterations=3,
+        info=info,
+        feed=feed,
+        exchange=fake,
+        sleep_fn=sleep_fn,
+        now_fn=lambda: now,
+        connect_feed=False,
+        coins=("BTC", "ETH"),
+        pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+        tick_for=lambda coin: 0.01,
+    )
+    rows = TradeJournal(tmp_path / "flat.jsonl").read_all()
+    closes = [r for r in rows if r["event"] == "close"]
+    assert len(closes) == 1
+    assert closes[0]["symbol"] == "BTC"
+    assert closes[0]["reason"] == "flat"
+    releases = [
+        r
+        for r in rows
+        if r["event"] == "model_b_margin" and r.get("action") == "release"
+    ]
+    assert len(releases) == 1
+    assert releases[0]["coin"] == "BTC"
+    assert releases[0]["reason"] == "flat"
+    cancels = [r for r in rows if r["event"] == "model_b_cancel" and r["coin"] == "BTC"]
+    assert len(cancels) == 1
+    assert cancels[0]["reason"] == "flat"
+    assert cancels[0]["remainder"] == "cancelled"
+    assert not any(r.get("reason") == "thesis_stale" for r in rows)
+    arms = [r["coin"] for r in rows if r["event"] == "model_b_arm"]
+    assert arms == ["BTC", "ETH"]
+    assert summary["arms"] == 2
+    assert summary["closes"] == 1
+    assert ("BTC", 11) in fake.cancels
 
 
 def test_spot_usdc_total_ignores_perp_account_value():
