@@ -12,8 +12,10 @@ limit is strictly closer to the market, in bps, and whose arm score
 is not strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on:
 resting score 9 is not cancelled for a closer score 4
 (``CLOSER_SKIP_LOWER_SCORE``). Equal scores still swap on closer bps.
-When BTC is the only close major, 60% of free-margin capacity stays
-available for BTC.
+``MODEL_B_CLOSE_MARGIN_RESERVE`` (default 0.60, ``0`` off) keeps that
+fraction of free-margin capacity for the preferred close coin: highest
+score among close setups, then the closer swing in bps. It is not
+hard-coded to BTC.
 
 Paper fills a resting Alo from a later aggressor print. Live posts
 ``tif=Alo`` and accepts a user fill only when ``crossed`` is false.
@@ -27,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Callable
 
 from hl_bot.config import Settings
@@ -44,17 +47,17 @@ from hl_bot.strategy.model_b.alo import (
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import (
-    BTC_FREE_MARGIN_RESERVE,
     assert_leverage,
     initial_margin,
-    leaves_btc_headroom,
-    non_btc_margin_cap,
+    leaves_reserve_headroom,
+    other_margin_cap,
     reserve_headroom,
     ticket_fits,
 )
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import (
     DEFAULT_HUNT_COINS,
+    canon_coin,
     perp_dexs_for,
     resolve_hunt_coins,
     session_coins,
@@ -257,6 +260,7 @@ def run_model_b(
         alo_timeout_sec=settings.model_b_alo_timeout_sec,
         delta_flat_usdc=settings.model_b_delta_flat_usdc,
         delta_flat_eps=settings.model_b_delta_flat_eps,
+        close_margin_reserve=settings.model_b_close_margin_reserve,
         soft_prop=False,
         strategy_kill=False,
         flow_exit=False,
@@ -275,14 +279,16 @@ def run_model_b(
         "halted": False,
     }
     iterations = 0
-    # True after a pass that held the BTC free-margin reserve.
-    btc_reserve_was = False
+    # Coin that owned the close-margin reserve on the previous pass.
+    reserve_coin: str | None = None
     logger.info(
-        "MODEL_B min_prints=%s network=%s coins=%s closer_score_guard=%s",
+        "MODEL_B min_prints=%s network=%s coins=%s closer_score_guard=%s "
+        "close_margin_reserve=%.2f",
         settings.model_b_min_prints,
         settings.network,
         ",".join(hunt_coins),
         "on" if settings.model_b_closer_score_guard else "off",
+        settings.model_b_close_margin_reserve,
     )
 
     while True:
@@ -603,42 +609,62 @@ def run_model_b(
                 }
             )
 
-        decisions = [item["decision"] for item in hunts]
-        reserve = btc_is_sole_close(decisions) if risk_base is not None else False
-        if reserve and not btc_reserve_was:
-            capacity = _btc_capacity(float(risk_base), book)
-            headroom = reserve_headroom(capacity)
-            logger.info(
-                "MODEL_B MARGIN BTC reserve engage fraction=%.2f capacity=%.4f reserve=%.4f",
-                BTC_FREE_MARGIN_RESERVE,
-                capacity,
-                headroom,
-            )
-            journal.log(
-                "model_b_margin",
-                entry_mode="model_b",
-                coin="BTC",
-                action="btc_reserve_engage",
-                fraction=BTC_FREE_MARGIN_RESERVE,
-                capacity=capacity,
-                reserve=headroom,
-            )
-        elif btc_reserve_was and not reserve:
-            logger.info("MODEL_B MARGIN BTC reserve release")
-            journal.log(
-                "model_b_margin",
-                entry_mode="model_b",
-                coin="BTC",
-                action="btc_reserve_release",
-            )
-        btc_reserve_was = reserve
-        if reserve and risk_base is not None:
-            capacity = _btc_capacity(float(risk_base), book)
-            cap = non_btc_margin_cap(capacity)
+        fraction = float(settings.model_b_close_margin_reserve)
+        preference = (
+            preferred_close(hunts)
+            if risk_base is not None and fraction > 0
+            else None
+        )
+        preference_coin = preference.coin if preference is not None else None
+        if preference_coin != reserve_coin:
+            if reserve_coin:
+                logger.info(
+                    "MODEL_B MARGIN CLOSE_MARGIN_RESERVE release coin=%s",
+                    reserve_coin,
+                )
+                journal.log(
+                    "model_b_margin",
+                    entry_mode="model_b",
+                    coin=reserve_coin,
+                    action="close_reserve_release",
+                )
+            if preference is not None and risk_base is not None:
+                capacity = _reserve_capacity(float(risk_base), book, preference.coin)
+                headroom = reserve_headroom(capacity, fraction)
+                bps_txt = (
+                    "na"
+                    if preference.distance_bps is None
+                    else f"{preference.distance_bps:.2f}"
+                )
+                logger.info(
+                    "MODEL_B MARGIN CLOSE_MARGIN_RESERVE engage coin=%s "
+                    "fraction=%.2f capacity=%.4f reserve=%.4f score=%s bps=%s",
+                    preference.coin,
+                    fraction,
+                    capacity,
+                    headroom,
+                    preference.score,
+                    bps_txt,
+                )
+                journal.log(
+                    "model_b_margin",
+                    entry_mode="model_b",
+                    coin=preference.coin,
+                    action="close_reserve_engage",
+                    fraction=fraction,
+                    capacity=capacity,
+                    reserve=headroom,
+                    score=preference.score,
+                    distance_bps=preference.distance_bps,
+                )
+        reserve_coin = preference_coin
+        if preference is not None and risk_base is not None:
+            capacity = _reserve_capacity(float(risk_base), book, preference.coin)
+            cap = other_margin_cap(capacity, fraction)
             crowded = [
                 order
                 for order in book.resting_orders()
-                if order.coin.upper() != "BTC"
+                if canon_coin(order.coin) != preference.coin
             ]
             crowded.sort(
                 key=lambda order: initial_margin(order.size, order.limit_px),
@@ -656,10 +682,11 @@ def run_model_b(
                 kept_margin -= initial_margin(released.size, released.limit_px)
                 _cancel_working(
                     released,
-                    "btc_margin_reserve",
-                    reserve=reserve_headroom(capacity),
+                    "close_margin_reserve",
+                    reserve=reserve_headroom(capacity, fraction),
                     capacity=capacity,
-                    fraction=BTC_FREE_MARGIN_RESERVE,
+                    fraction=fraction,
+                    preferred=preference.coin,
                 )
 
         for hunt in hunts:
@@ -701,46 +728,51 @@ def run_model_b(
             # and open positions. When the remainder cannot fund this
             # ticket, fall back to cancelling a strictly farther unfilled
             # Alo. A filled position is never cancelled.
-            if reserve and coin != "BTC":
-                capacity = _btc_capacity(float(risk_base), book)
+            if preference is not None and canon_coin(coin) != preference.coin:
+                capacity = _reserve_capacity(float(risk_base), book, preference.coin)
                 reserve_need = initial_margin(intent.size, intent.limit_px)
-                committed = _non_btc_resting_margin(book)
-                headroom = reserve_headroom(capacity)
-                free_for_btc = capacity - committed
-                if not leaves_btc_headroom(capacity, committed, reserve_need):
+                committed = _other_resting_margin(book, preference.coin)
+                headroom = reserve_headroom(capacity, fraction)
+                free_for_preferred = capacity - committed
+                if not leaves_reserve_headroom(
+                    capacity, committed, reserve_need, fraction
+                ):
                     summary["fails"] += 1
                     journal.log(
                         "model_b_fail",
                         entry_mode="model_b",
                         **{
                             **decision.to_log(),
-                            "fail_reason": "BTC_MARGIN_RESERVE",
+                            "fail_reason": "CLOSE_MARGIN_RESERVE",
                             "armed": False,
-                            "free_margin": free_for_btc,
+                            "free_margin": free_for_preferred,
                             "margin_need": reserve_need,
                             "reserve": headroom,
                             "capacity": capacity,
+                            "preferred": preference.coin,
                         },
                     )
                     journal.log(
                         "model_b_margin",
                         entry_mode="model_b",
                         coin=coin,
-                        action="btc_reserve_hold",
-                        free_margin=free_for_btc,
+                        action="close_reserve_hold",
+                        free_margin=free_for_preferred,
                         margin_need=reserve_need,
                         reserve=headroom,
                         capacity=capacity,
-                        fraction=BTC_FREE_MARGIN_RESERVE,
+                        fraction=fraction,
+                        preferred=preference.coin,
                     )
                     logger.info(
-                        "MODEL_B MARGIN %s btc_reserve_hold free=%.4f need=%.4f "
-                        "reserve=%.4f capacity=%.4f",
+                        "MODEL_B MARGIN %s CLOSE_MARGIN_RESERVE hold free=%.4f "
+                        "need=%.4f reserve=%.4f capacity=%.4f preferred=%s",
                         coin,
-                        free_for_btc,
+                        free_for_preferred,
                         reserve_need,
                         headroom,
                         capacity,
+                        preference.coin,
                     )
                     continue
 
@@ -1032,36 +1064,102 @@ def is_close_setup(decision) -> bool:
     return decision.fail_reason in _CLOSE_FAILS
 
 
-def btc_is_sole_close(decisions) -> bool:
-    """True when BTC is the only close major and some other major was judged.
+@dataclass(frozen=True)
+class ClosePreference:
+    """Close setup that owns the free-margin reserve for this pass."""
 
-    A BTC-only pass has nobody else to take the margin, so the reserve
-    stays off.
+    coin: str
+    score: int
+    distance_bps: float | None
+
+
+def close_distance_bps(decision, ref_px: float | None) -> float | None:
+    """Bps from the market to this close setup's swing. Smaller is closer.
+
+    Long uses ``ref - swing`` and short uses ``swing - ref``, the same
+    gap as ``distance_to_fill_bps``. Bias ``NONE`` has no side, so the
+    gap is the absolute distance. Already through the swing is 0.
     """
-    close = {d.coin for d in decisions if is_close_setup(d)}
-    others = {d.coin for d in decisions if d.coin != "BTC"}
-    return close == {"BTC"} and bool(others)
+    swing = getattr(decision, "swing", None)
+    if swing is None or ref_px is None or float(ref_px) <= 0 or float(swing) <= 0:
+        return None
+    side = getattr(decision, "bias", None)
+    if side in ("long", "short"):
+        return distance_to_fill_bps(side, float(swing), float(ref_px))
+    gap = abs(float(ref_px) - float(swing))
+    return gap / float(ref_px) * 10_000.0
 
 
-def _btc_capacity(equity: float, book: ThesisBook) -> float:
+def _bps_is_closer(left: float | None, right: float | None) -> bool:
+    """True when ``left`` is strictly closer than ``right``.
+
+    A known distance beats a missing one. Two missing distances tie.
+    """
+    if left is None or right is None:
+        return left is not None and right is None
+    return float(left) < float(right) - 1e-6
+
+
+def preferred_close(hunts) -> ClosePreference | None:
+    """The close coin that keeps the reserve, or None.
+
+    Close is a confirmed swing that did not post (see ``is_close_setup``).
+    Tie-break, in order:
+
+    1. Highest ``score`` among close setups.
+    2. Closer swing in bps (``close_distance_bps``: mid, else last).
+       A known distance beats a missing one.
+    3. Earlier coin in this pass's hunt order.
+
+    None when nothing is close, or when that coin is the only one judged.
+    A one-coin pass has nobody else who can spend the margin.
+    """
+    if len(hunts) < 2:
+        return None
+    best: ClosePreference | None = None
+    # Walk hunt order. A later coin replaces the leader only when its
+    # score is higher, or the scores tie and its swing is strictly closer.
+    # Equal score and equal (or both missing) distance keep the earlier coin.
+    for hunt in hunts:
+        decision = hunt["decision"]
+        if not is_close_setup(decision):
+            continue
+        ref = market_ref(hunt.get("bid"), hunt.get("ask"), hunt.get("last"))
+        bps = close_distance_bps(decision, ref)
+        score = int(getattr(decision, "score", 0) or 0)
+        candidate = ClosePreference(
+            coin=canon_coin(decision.coin),
+            score=score,
+            distance_bps=bps,
+        )
+        if best is None or score > best.score or (
+            score == best.score and _bps_is_closer(bps, best.distance_bps)
+        ):
+            best = candidate
+    return best
+
+
+def _reserve_capacity(equity: float, book: ThesisBook, coin: str) -> float:
     """Sizing balance minus margin this rule will not cancel.
 
-    Open positions stay. A resting BTC Alo stays. Non-BTC Alos are not
-    included; they are the orders the reserve may cancel.
+    Open positions stay. A resting Alo on ``coin`` stays. Every other
+    Alo is left out; those are the orders the reserve may cancel.
     """
+    preferred = canon_coin(coin)
     locked = 0.0
     for pos in book.open_positions():
         locked += initial_margin(pos.size, pos.entry)
     for order in book.working_orders():
-        if order.coin.upper() == "BTC":
+        if canon_coin(order.coin) == preferred:
             locked += initial_margin(order.size, order.limit_px)
     return float(equity) - locked
 
 
-def _non_btc_resting_margin(book: ThesisBook) -> float:
+def _other_resting_margin(book: ThesisBook, coin: str) -> float:
+    preferred = canon_coin(coin)
     used = 0.0
     for order in book.resting_orders():
-        if order.coin.upper() == "BTC":
+        if canon_coin(order.coin) == preferred:
             continue
         used += initial_margin(order.size, order.limit_px)
     return used

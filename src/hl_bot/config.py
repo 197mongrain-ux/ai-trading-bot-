@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from hl_bot.strategy.filters import parse_trade_hours
+from hl_bot.strategy.model_b.risk import CLOSE_MARGIN_RESERVE
 from hl_bot.strategy.model_b.tape import (
     DELTA_FLAT_EPS,
     DELTA_FLAT_USDC,
@@ -141,6 +142,10 @@ class Settings:
     # Equal scores still use the closer-bps swap. Off restores the old cancel.
     # Not an entry gate and not a size change.
     model_b_closer_score_guard: bool = True
+    # Fraction of free-margin capacity held for the preferred close coin
+    # (highest score among close setups, then closer swing in bps).
+    # 0 turns the reserve off. Not hard-coded to BTC.
+    model_b_close_margin_reserve: float = CLOSE_MARGIN_RESERVE
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -263,6 +268,11 @@ class Settings:
             raise ValueError(
                 f"MODEL_B_DELTA_FLAT_EPS={self.model_b_delta_flat_eps} must be >= 0."
             )
+        if not (0.0 <= self.model_b_close_margin_reserve <= 1.0):
+            raise ValueError(
+                f"MODEL_B_CLOSE_MARGIN_RESERVE={self.model_b_close_margin_reserve} "
+                "must be in [0, 1] (0 = off)."
+            )
         if self.ote_lookback_bars < 3:
             raise ValueError(
                 f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
@@ -381,6 +391,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_delta_flat_usdc=_float("MODEL_B_DELTA_FLAT_USDC", DELTA_FLAT_USDC),
         model_b_delta_flat_eps=_float("MODEL_B_DELTA_FLAT_EPS", DELTA_FLAT_EPS),
         model_b_closer_score_guard=_bool("MODEL_B_CLOSER_SCORE_GUARD", True),
+        model_b_close_margin_reserve=_float(
+            "MODEL_B_CLOSE_MARGIN_RESERVE", CLOSE_MARGIN_RESERVE
+        ),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
