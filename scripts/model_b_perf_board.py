@@ -50,6 +50,7 @@ DEFAULT_OUT_MD = ROOT / "reports" / "model_b_perf_board.md"
 DEFAULT_OUT_JSON = ROOT / "reports" / "model_b_perf_board.json"
 DEFAULT_OUT_HTML = ROOT / "reports" / "model_b_perf_board.html"
 DEFAULT_FLOWS_FILE = ROOT / "reports" / "model_b_deposits.json"
+DEFAULT_JOURNAL = ROOT / "logs" / "trades.jsonl"
 PUBLIC_PAGES_REPO = "197mongrain-ux/ai-trading-bot-"
 PUBLIC_PAGES_HTML_PATH = "docs/model-b/index.html"
 PUBLIC_PAGES_JSON_PATH = "docs/model-b/board.json"
@@ -310,6 +311,7 @@ def fetch_hl_mainnet(since_ts: float) -> dict[str, Any]:
         close_fees = float(c["fees"])
         close_ts = c["time_ms"] / 1000.0
         open_fees = 0.0
+        open_ts_min: float | None = None
         # Sum open fees for this coin in the 2h before close that aren't already used.
         for i, (ocoin, ots, ofee) in enumerate(open_fee_events):
             if i in used_opens:
@@ -319,6 +321,7 @@ def fetch_hl_mainnet(since_ts: float) -> dict[str, Any]:
             if ots <= close_ts and (close_ts - ots) <= 7200.0:
                 open_fees += ofee
                 used_opens.add(i)
+                open_ts_min = ots if open_ts_min is None else min(open_ts_min, ots)
         trade_fees = open_fees + close_fees
         trade_net = pnl - trade_fees
         if pnl > 1e-9:
@@ -340,6 +343,7 @@ def fetch_hl_mainnet(since_ts: float) -> dict[str, Any]:
                 "fills": c["fills"],
                 "sz": round(float(c["sz"]), 8),
                 "closed_ts": close_ts,
+                "open_ts": open_ts_min,
                 "result": result,
                 "source": "hl_fills",
             }
@@ -542,8 +546,134 @@ def build_daily(
     return rows
 
 
+def load_journal_opens(path: Path | None, since_ts: float) -> list[dict[str, Any]]:
+    """Model B `open` events (entry price + planned stop) from logs/trades.jsonl."""
+    out: list[dict[str, Any]] = []
+    if not path or not path.exists():
+        return out
+    try:
+        with path.open("rb") as fh:
+            for raw in fh:
+                if b'"event": "open"' not in raw and b'"event":"open"' not in raw:
+                    continue
+                try:
+                    e = json.loads(raw)
+                except Exception:
+                    continue
+                if e.get("event") != "open":
+                    continue
+                ts = _f(e.get("ts"))
+                if ts < since_ts - 3600:
+                    continue
+                px = _f(e.get("price"))
+                stop = _f(e.get("stop"))
+                if px <= 0 or stop <= 0:
+                    continue
+                out.append(
+                    {
+                        "symbol": str(e.get("symbol") or ""),
+                        "ts": ts,
+                        "price": px,
+                        "stop": stop,
+                        "size": _f(e.get("size")),
+                        "side": e.get("side"),
+                    }
+                )
+    except Exception:
+        return out
+    out.sort(key=lambda r: r["ts"])
+    return out
+
+
+def annotate_trades(
+    closed_trades: list[dict[str, Any]],
+    flows: list[dict[str, Any]],
+    starting_fund: float,
+    journal_opens: list[dict[str, Any]],
+) -> None:
+    """Per position: account equity at open, % of account (net / equity at open), R.
+
+    Equity at open = starting fund + cash flows before the open + net of every
+    trade closed before the open (realized; open uPnL elsewhere ignored).
+    R = net / planned risk, planned risk = |entry - journal stop| x closed size.
+    """
+    used: set[int] = set()
+    for t in closed_trades:
+        close_ts = float(t["closed_ts"])
+        open_ts = t.get("open_ts")
+        ots = float(open_ts) if open_ts else close_ts
+        eq = float(starting_fund)
+        for f in flows:
+            if int(f["time_ms"]) / 1000.0 < ots:
+                eq += _f(f.get("amount"))
+        for o in closed_trades:
+            if float(o["closed_ts"]) < ots:
+                eq += _f(o.get("net"))
+        net = _f(t.get("net"))
+        t["equity_at_open"] = round(eq, 6)
+        t["pct_of_account"] = round(net / eq * 100.0, 4) if eq > 0 else None
+        # Planned risk from the journal open nearest to the HL open fill.
+        best_i = None
+        best_d = None
+        for i, j in enumerate(journal_opens):
+            if i in used or j["symbol"] != t.get("symbol"):
+                continue
+            if j["ts"] < ots - 300 or j["ts"] > close_ts + 5:
+                continue
+            d = abs(j["ts"] - ots)
+            if best_d is None or d < best_d:
+                best_i, best_d = i, d
+        t["planned_risk"] = None
+        t["r_multiple"] = None
+        if best_i is not None:
+            used.add(best_i)
+            j = journal_opens[best_i]
+            sz = _f(t.get("sz")) or _f(j.get("size"))
+            risk = abs(j["price"] - j["stop"]) * sz
+            t["entry_px"] = j["price"]
+            t["planned_stop"] = j["stop"]
+            if risk > 0:
+                t["planned_risk"] = round(risk, 6)
+                t["r_multiple"] = round(net / risk, 3)
+
+
+def position_stats(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Avg % win / % loss (of account at open), win:loss ratio, expectancy; same in R."""
+    def _avg(xs: list[float]) -> float | None:
+        return sum(xs) / len(xs) if xs else None
+
+    pw = [float(t["pct_of_account"]) for t in trades if t.get("result") == "WIN" and t.get("pct_of_account") is not None]
+    pl = [float(t["pct_of_account"]) for t in trades if t.get("result") == "LOSS" and t.get("pct_of_account") is not None]
+    pall = [float(t["pct_of_account"]) for t in trades if t.get("pct_of_account") is not None]
+    rw = [float(t["r_multiple"]) for t in trades if t.get("result") == "WIN" and t.get("r_multiple") is not None]
+    rl = [float(t["r_multiple"]) for t in trades if t.get("result") == "LOSS" and t.get("r_multiple") is not None]
+    rall = [float(t["r_multiple"]) for t in trades if t.get("r_multiple") is not None]
+    aw, al, ex = _avg(pw), _avg(pl), _avg(pall)
+    raw_, ral, rex = _avg(rw), _avg(rl), _avg(rall)
+
+    def _r(v: float | None, n: int = 4) -> float | None:
+        return round(v, n) if v is not None else None
+
+    return {
+        "avg_win_pct": _r(aw),
+        "avg_loss_pct": _r(al),
+        "win_loss_ratio": _r(aw / abs(al), 3) if aw is not None and al not in (None, 0) else None,
+        "expectancy_pct": _r(ex),
+        "avg_win_r": _r(raw_, 3),
+        "avg_loss_r": _r(ral, 3),
+        "win_loss_ratio_r": _r(raw_ / abs(ral), 3) if raw_ is not None and ral not in (None, 0) else None,
+        "expectancy_r": _r(rex, 3),
+        "n_pct": len(pall),
+        "n_r": len(rall),
+    }
+
+
 def build_board(
-    *, since: datetime, starting_fund: float, flows_file: Path | None = DEFAULT_FLOWS_FILE
+    *,
+    since: datetime,
+    starting_fund: float,
+    flows_file: Path | None = DEFAULT_FLOWS_FILE,
+    journal: Path | None = DEFAULT_JOURNAL,
 ) -> dict[str, Any]:
     since_ts = since.timestamp()
     hl = fetch_hl_mainnet(since_ts)
@@ -615,9 +745,17 @@ def build_board(
     net_on_capital_pct = round(net / total_deposited * 100.0, 3) if total_deposited else None
     vs_pct = round(net / starting_fund * 100.0, 3) if starting_fund else None
 
-    daily = build_daily(
-        list(hl["closed_trades"]), list(hl.get("fills") or []), starting_fund, flows
-    )
+    closed = list(hl["closed_trades"])
+    annotate_trades(closed, flows, starting_fund, load_journal_opens(journal, since_ts))
+    pos_stats = position_stats(closed)
+    daily = build_daily(closed, list(hl.get("fills") or []), starting_fund, flows)
+    for d in daily:
+        day_trades = [
+            t
+            for t in closed
+            if datetime.fromtimestamp(float(t["closed_ts"]), tz=ET).strftime("%Y-%m-%d") == d["date"]
+        ]
+        d.update(position_stats(day_trades))
     growth = 1.0
     for d in daily:
         growth *= 1.0 + float(d.get("daily_pct") or 0.0) / 100.0
@@ -670,6 +808,7 @@ def build_board(
             "vs_starting_pct": vs_pct,
             "net_on_capital_pct": net_on_capital_pct,
             "twr_pct": twr_pct,
+            **pos_stats,
             "funding": round(funding, 6),
             "starting_fund": starting_fund,
             "deposits": deposits,
@@ -689,12 +828,13 @@ def build_board(
             "recon_residual": recon_residual,
         },
         "daily": daily,
-        "closed_trades": hl["closed_trades"],
+        "closed_trades": closed,
         "open_positions": hl["open_positions"],
         "notes": [
             "Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.",
             "Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.",
             "Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL − fees.",
+            "% of acct (per position) = net PnL after fees / account equity when that position opened (starting fund + deposits + realized net before the open). Avg win % / avg loss % average that over wins / losses; ratio = avg win ÷ |avg loss|; expectancy = mean % per closed trade. R = net / planned risk (|entry − journal stop| × size).",
             "Overall net = sum(closedPnl) − all fill fees in window (realized trades only).",
             "Deposits/withdrawals come from HL userNonFundingLedgerUpdates (fallback: reports/model_b_deposits.json). They are capital, never PnL.",
             "Daily % PnL is time-weighted: the day is split at each deposit/withdrawal and each slice's realized net is divided by equity at the slice start, then chained. % on capital = net / (start-of-day equity + that day's deposits).",
@@ -769,6 +909,27 @@ def render_md(board: dict[str, Any]) -> str:
     if s.get("funding") is not None:
         lines.append(f"| Funding | ${float(s['funding']):+.4f} |")
 
+    def _p2(v: Any) -> str:
+        return f"{float(v):+.2f}%" if v is not None else "—"
+
+    def _r2(v: Any) -> str:
+        return f"{float(v):+.2f}R" if v is not None else "—"
+
+    def _x(v: Any) -> str:
+        return f"{float(v):.2f}x" if v is not None else "—"
+
+    lines += [
+        "",
+        "## Per position (net after fees ÷ account equity at open)",
+        "",
+        "| Metric | % of account | R (net / planned risk) |",
+        "|---|---:|---:|",
+        f"| Avg win | {_p2(s.get('avg_win_pct'))} | {_r2(s.get('avg_win_r'))} |",
+        f"| Avg loss | {_p2(s.get('avg_loss_pct'))} | {_r2(s.get('avg_loss_r'))} |",
+        f"| Avg win ÷ avg loss | {_x(s.get('win_loss_ratio'))} | {_x(s.get('win_loss_ratio_r'))} |",
+        f"| Expectancy per trade | {_p2(s.get('expectancy_pct'))} | {_r2(s.get('expectancy_r'))} |",
+    ]
+
     lines += ["", "## Cash flows (deposits / withdrawals)", ""]
     cf = board.get("cash_flows") or []
     if not cf:
@@ -788,9 +949,9 @@ def render_md(board: dict[str, Any]) -> str:
         lines.append("_No closed days yet._")
     else:
         lines.append(
-            "| Date (ET) | Trades | W/L/BE | Win rate | Net $ | Daily % | % on capital | Deposits | Equity EOD |"
+            "| Date (ET) | Trades | W/L/BE | Win rate | Net $ | Daily % | % on capital | Avg win % | Avg loss % | Win:loss | Exp %/trade | Deposits | Equity EOD |"
         )
-        lines.append("|---|---:|---|---:|---:|---:|---:|---:|---:|")
+        lines.append("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for d in daily:
             wr_d = d.get("win_rate_pct")
             wr_ds = f"{wr_d:.1f}%" if wr_d is not None else "—"
@@ -801,6 +962,8 @@ def render_md(board: dict[str, Any]) -> str:
             lines.append(
                 f"| {d['date']} | {d['trades']} | {d['wins']}/{d['losses']}/{d['breakeven']} | "
                 f"{wr_ds} | ${float(d['net_pnl']):+.4f} | {pct_s} | {pc_s} | "
+                f"{_p2(d.get('avg_win_pct'))} | {_p2(d.get('avg_loss_pct'))} | {_x(d.get('win_loss_ratio'))} | "
+                f"{_p2(d.get('expectancy_pct'))} | "
                 f"${float(d.get('net_flows') or 0):+.2f} | ${float(d['equity_end']):.4f} |"
             )
 
@@ -808,12 +971,15 @@ def render_md(board: dict[str, Any]) -> str:
     if not board.get("closed_trades"):
         lines.append("_None in window._")
     else:
-        lines.append("| When (ET) | Symbol | Result | PnL | Fees | Net |")
-        lines.append("|---|---|---|---:|---:|---:|")
+        lines.append("| When (ET) | Symbol | Result | PnL | Fees | Net | Acct @ open | % of acct | R |")
+        lines.append("|---|---|---|---:|---:|---:|---:|---:|---:|")
         for t in board["closed_trades"]:
+            eq = t.get("equity_at_open")
             lines.append(
                 f"| {_fmt_et(_f(t.get('closed_ts')) or None)} | {t.get('symbol')} | {t.get('result')} | "
-                f"${_f(t.get('pnl')):+.4f} | ${_f(t.get('fees')):.4f} | ${_f(t.get('net')):+.4f} |"
+                f"${_f(t.get('pnl')):+.4f} | ${_f(t.get('fees')):.4f} | ${_f(t.get('net')):+.4f} | "
+                f"{'$%.2f' % float(eq) if eq is not None else '—'} | {_p2(t.get('pct_of_account'))} | "
+                f"{_r2(t.get('r_multiple'))} |"
             )
 
     lines += ["", "## Open positions", ""]
@@ -902,6 +1068,11 @@ td.num,th.num{text-align:right}
 <div class="wrap">
   <div class="cards" id="cards"></div>
   <div class="panel">
+    <h2>Per position · % of account at open &amp; R</h2>
+    <div style="overflow-x:auto"><table id="pos"></table></div>
+    <div class="muted" style="padding:.5rem .85rem;font-size:11px">% per position = net PnL after fees ÷ account equity when the position opened (deposits handled). R = net ÷ planned risk (|entry − stop| × size). Expectancy = mean % (or R) per closed trade.</div>
+  </div>
+  <div class="panel">
     <h2>Daily · % PnL &amp; win rate</h2>
     <div style="overflow-x:auto"><table id="daily"></table></div>
   </div>
@@ -935,6 +1106,9 @@ document.getElementById("sub").textContent =
 document.getElementById("gen").textContent = `generated ${BOARD.generated_et||""}`;
 const wr = s.win_rate_pct;
 const pctS = (v) => v==null ? "—" : `${Number(v)>0?"+":""}${v}%`;
+const p2 = (v) => v==null ? "—" : `${Number(v)>0?"+":Number(v)<0?"-":""}${Math.abs(Number(v)).toFixed(2)}%`;
+const r2 = (v) => v==null ? "—" : `${Number(v)>0?"+":Number(v)<0?"-":""}${Math.abs(Number(v)).toFixed(2)}R`;
+const x2 = (v) => v==null ? "—" : `${Number(v).toFixed(2)}x`;
 const nFlows = (BOARD.cash_flows||[]).length;
 const cards = [
   {lbl:"Starting fund", val:fmtUsd(BOARD.starting_fund).replace(/(\.\d{2})\d+/,"$1"), c:"", sub:"at mainnet flip"},
@@ -946,6 +1120,10 @@ const cards = [
    sub: `${s.wins||0}W / ${s.losses||0}L / ${s.breakeven||0}BE · n=${s.trades||0}`},
   {lbl:"Net PnL", val:fmtUsd(s.net_pnl,true), c:cls(s.net_pnl),
    sub: `${pctS(s.twr_pct)} time-weighted · ${pctS(s.net_on_capital_pct)} on capital`},
+  {lbl:"Avg win %", val:p2(s.avg_win_pct), c:"pos", sub:`per winning position · ${r2(s.avg_win_r)}`},
+  {lbl:"Avg loss %", val:p2(s.avg_loss_pct), c:"neg", sub:`per losing position · ${r2(s.avg_loss_r)}`},
+  {lbl:"Win ÷ loss", val:x2(s.win_loss_ratio), c:"", sub:`avg win / |avg loss| · R ${x2(s.win_loss_ratio_r)}`},
+  {lbl:"Expectancy", val:p2(s.expectancy_pct), c:cls(s.expectancy_pct), sub:`per trade · ${r2(s.expectancy_r)}`},
   {lbl:"Unrealized", val:fmtUsd(s.unrealized_pnl,true), c:cls(s.unrealized_pnl),
    sub: s.spot_hold!=null ? `open perps · hold $${Number(s.spot_hold).toFixed(2)}` : "open perps"},
 ];
@@ -953,8 +1131,16 @@ document.getElementById("cards").innerHTML = cards.map(c =>
   `<div class="card"><div class="lbl">${c.lbl}</div><div class="val mono ${c.c}">${c.val}</div><div class="sub">${c.sub}</div></div>`
 ).join("");
 
+document.getElementById("pos").innerHTML =
+  `<tr><th>Metric</th><th class="num">% of account at open</th><th class="num">R (net / planned risk)</th></tr>` +
+  [["Avg win", p2(s.avg_win_pct), r2(s.avg_win_r), "pos"],
+   ["Avg loss", p2(s.avg_loss_pct), r2(s.avg_loss_r), "neg"],
+   ["Avg win ÷ avg loss", x2(s.win_loss_ratio), x2(s.win_loss_ratio_r), ""],
+   ["Expectancy per trade", p2(s.expectancy_pct), r2(s.expectancy_r), cls(s.expectancy_pct)]]
+  .map(r => `<tr><td>${r[0]}</td><td class="num ${r[3]}">${r[1]}</td><td class="num ${r[3]}">${r[2]}</td></tr>`).join("");
+
 const daily = BOARD.daily || [];
-const dHead = `<tr><th>Date (ET)</th><th class="num">Trades</th><th>W/L/BE</th><th class="num">Win rate</th><th class="num">Net $</th><th class="num">Daily %</th><th class="num">% on capital</th><th class="num">Deposits</th><th class="num">Equity EOD</th></tr>`;
+const dHead = `<tr><th>Date (ET)</th><th class="num">Trades</th><th>W/L/BE</th><th class="num">Win rate</th><th class="num">Net $</th><th class="num">Daily %</th><th class="num">% on capital</th><th class="num">Avg win %</th><th class="num">Avg loss %</th><th class="num">Win:loss</th><th class="num">Exp %/trade</th><th class="num">Deposits</th><th class="num">Equity EOD</th></tr>`;
 const dBody = daily.length ? daily.map(d => {
   const wr = d.win_rate_pct!=null ? `${d.win_rate_pct}%` : "—";
   const pct = d.daily_pct!=null ? `${d.daily_pct>0?"+":""}${d.daily_pct}%` : "—";
@@ -966,10 +1152,14 @@ const dBody = daily.length ? daily.map(d => {
     <td class="num ${cls(d.net_pnl)}">${fmtUsd(d.net_pnl,true)}</td>
     <td class="num ${cls(d.daily_pct)}">${pct}</td>
     <td class="num ${cls(d.daily_pct_on_capital)}">${pctS(d.daily_pct_on_capital)}</td>
+    <td class="num pos">${p2(d.avg_win_pct)}</td>
+    <td class="num neg">${p2(d.avg_loss_pct)}</td>
+    <td class="num">${x2(d.win_loss_ratio)}</td>
+    <td class="num ${cls(d.expectancy_pct)}">${p2(d.expectancy_pct)}</td>
     <td class="num">${d.net_flows ? fmtUsd(d.net_flows,true) : "—"}</td>
     <td class="num">${fmtUsd(d.equity_end)}</td>
   </tr>`;
-}).join("") : `<tr><td colspan="9" class="muted">No closed days yet.</td></tr>`;
+}).join("") : `<tr><td colspan="13" class="muted">No closed days yet.</td></tr>`;
 document.getElementById("daily").innerHTML = dHead + dBody;
 
 const flows = BOARD.cash_flows || [];
@@ -981,7 +1171,7 @@ const fBody = flows.length ? flows.map(f => {
 document.getElementById("flows").innerHTML = fHead + fBody;
 
 const trades = BOARD.closed_trades || [];
-const tHead = `<tr><th>When (ET)</th><th>Symbol</th><th>Result</th><th class="num">PnL</th><th class="num">Fees</th><th class="num">Net</th></tr>`;
+const tHead = `<tr><th>When (ET)</th><th>Symbol</th><th>Result</th><th class="num">PnL</th><th class="num">Fees</th><th class="num">Net</th><th class="num">Acct @ open</th><th class="num">% of acct</th><th class="num">R</th></tr>`;
 const tBody = trades.length ? trades.map(t => {
   const when = t.closed_ts ? new Date(t.closed_ts*1000).toLocaleString("en-CA",{timeZone:"America/Toronto"}) : "—";
   return `<tr>
@@ -989,8 +1179,11 @@ const tBody = trades.length ? trades.map(t => {
     <td class="num ${cls(t.pnl)}">${fmtUsd(t.pnl,true)}</td>
     <td class="num">${fmtUsd(t.fees)}</td>
     <td class="num ${cls(t.net)}">${fmtUsd(t.net,true)}</td>
+    <td class="num">${t.equity_at_open!=null ? "$"+Number(t.equity_at_open).toFixed(2) : "—"}</td>
+    <td class="num ${cls(t.pct_of_account)}"><b>${p2(t.pct_of_account)}</b></td>
+    <td class="num ${cls(t.r_multiple)}">${r2(t.r_multiple)}</td>
   </tr>`;
-}).join("") : `<tr><td colspan="6" class="muted">None in window.</td></tr>`;
+}).join("") : `<tr><td colspan="9" class="muted">None in window.</td></tr>`;
 document.getElementById("trades").innerHTML = tHead + tBody;
 
 const opens = BOARD.open_positions || [];
@@ -1139,6 +1332,9 @@ def main() -> int:
         f"capital={s.get('total_deposited')} total={s.get('total_funds')} "
         f"total_pnl={s.get('total_pnl_usd')} ({s.get('total_pnl_pct')}%) "
         f"twr%={s.get('twr_pct')} on_capital%={s.get('net_on_capital_pct')} "
+        f"avg_win%={s.get('avg_win_pct')} avg_loss%={s.get('avg_loss_pct')} "
+        f"ratio={s.get('win_loss_ratio')} exp%={s.get('expectancy_pct')} "
+        f"avgR_w={s.get('avg_win_r')} avgR_l={s.get('avg_loss_r')} expR={s.get('expectancy_r')} "
         f"recon_residual={s.get('recon_residual')}"
     )
 
