@@ -305,6 +305,8 @@ def fetch_hl_mainnet(since_ts: float) -> dict[str, Any]:
     closed_trades: list[dict[str, Any]] = []
     wins = losses = be = 0
     used_opens: set[int] = set()
+    prev_close: dict[str, float] = {}
+    last_open_ts: dict[str, float] = {}
     for key in order:
         c = clusters[key]
         pnl = float(c["pnl"])
@@ -312,16 +314,22 @@ def fetch_hl_mainnet(since_ts: float) -> dict[str, Any]:
         close_ts = c["time_ms"] / 1000.0
         open_fees = 0.0
         open_ts_min: float | None = None
-        # Sum open fees for this coin in the 2h before close that aren't already used.
+        # Sum open fees for this coin since its previous close (any hold time).
         for i, (ocoin, ots, ofee) in enumerate(open_fee_events):
             if i in used_opens:
                 continue
             if ocoin != c["coin"]:
                 continue
-            if ots <= close_ts and (close_ts - ots) <= 7200.0:
+            if ots <= close_ts and ots > prev_close.get(c["coin"], float("-inf")):
                 open_fees += ofee
                 used_opens.add(i)
                 open_ts_min = ots if open_ts_min is None else min(open_ts_min, ots)
+        if open_ts_min is None:
+            # Partial close of a position whose open was matched by an earlier cluster.
+            open_ts_min = last_open_ts.get(c["coin"])
+        else:
+            last_open_ts[c["coin"]] = open_ts_min
+        prev_close[c["coin"]] = close_ts
         trade_fees = open_fees + close_fees
         trade_net = pnl - trade_fees
         if pnl > 1e-9:
