@@ -150,6 +150,7 @@ class ModelBEngine:
         tick: float,
         score: int | None = None,
         mark: float | None = None,
+        leverage: int = 20,
     ) -> Decision:
         """Decide an arm or a single fail reason.
 
@@ -160,6 +161,10 @@ class ModelBEngine:
         ``equity`` is the spot USDC balance the 2% risk is taken from.
         Paper tests pass that balance in. Live passes the spot read, not
         perp account value.
+
+        ``leverage`` is that coin's max, used only for the notional cap
+        and the margin on the intent. It does not move the stop or the
+        target. Unknown meta passes 20.
         """
         coin_u = canon_coin(coin)
         window = window_prints(prints, coin=coin_u, now=now)
@@ -363,12 +368,18 @@ class ModelBEngine:
                 return _done(BAD_STOP, **fields)
 
             try:
+                lev = int(leverage)
+            except (TypeError, ValueError):
+                lev = 20
+            if lev < 1:
+                lev = 20
+            try:
                 size, _dollar = size_from_stop(
                     equity,
                     limit,
                     stop,
                     risk_pct=self.risk_pct,
-                    leverage=20,
+                    leverage=lev,
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
@@ -422,7 +433,7 @@ class ModelBEngine:
                 swing_id=sid,
                 tif="Alo",
                 market_fallback=False,
-                leverage=20,
+                leverage=lev,
                 work_sec=self.alo_timeout_sec,
                 sweep_px=metrics.sweep_price,
                 tick=tick,

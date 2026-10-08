@@ -61,6 +61,9 @@ class WorkingOrder:
     tp_r: float = 1.5
     # Arm score, kept so a closer-ticker cancel can compare it. Not an entry gate.
     score: int | None = None
+    # Leverage set on the exchange before this Alo. Adopted entries stay
+    # at 20 so an old order is not counted as the coin's current max.
+    leverage: int = 20
     # Adopted from the exchange after a restart. No sweep, so the thesis
     # timer and stale-print path must not invent a cancel. A user fill is
     # recorded as an adopted position instead of a stop at 0.
@@ -87,8 +90,11 @@ class OpenPosition:
     # Exchange position this process did not open. Stop and TP are unknown,
     # so a public price must not stop it out. Closes come from fills.
     adopted: bool = False
-    # Exchange ``marginUsed`` when we have it. None uses notional / 20.
+    # Exchange ``marginUsed`` when we have it. None uses notional / leverage.
     margin_used: float | None = None
+    # Leverage this process set before the entry. Adopted positions keep
+    # the exchange margin figure and do not assume the coin max.
+    leverage: int = 20
 
 
 @dataclass
@@ -151,8 +157,12 @@ class ThesisBook:
     ) -> WorkingOrder:
         if intent.tif != "Alo" or intent.market_fallback:
             raise ValueError("Model B is post-only Alo; market fallback is off")
-        if int(intent.leverage) != 20:
-            raise ValueError("Model B is 20x only (40x off)")
+        try:
+            lev = int(intent.leverage)
+        except (TypeError, ValueError):
+            lev = 0
+        if lev < 1:
+            raise ValueError(f"leverage must be >= 1; got {intent.leverage}")
         reason = self.block_reason(intent.coin, intent.swing_id)
         if reason:
             raise ValueError(reason)
@@ -172,6 +182,7 @@ class ThesisBook:
             pool_px=intent.pool_px,
             tp_r=intent.tp_r,
             score=None if score is None else int(score),
+            leverage=lev,
         )
         self._state(intent.coin).working = order
         return order
@@ -433,6 +444,7 @@ class ThesisBook:
                 take_profit=tp,
                 swing_id=order.swing_id,
                 opened_at=ts,
+                leverage=int(getattr(order, "leverage", 20) or 20),
             )
             st.position = pos
         else:
@@ -485,6 +497,7 @@ class ThesisBook:
                 swing_id=order.swing_id,
                 opened_at=ts,
                 adopted=True,
+                leverage=int(getattr(order, "leverage", 20) or 20),
             )
             st.position = pos
         else:

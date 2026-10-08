@@ -32,6 +32,7 @@ from hl_bot.exchange.info_client import (
     CANDLE_BACKOFF_BASE_SEC,
     CANDLE_TTL_SEC,
     InfoClient,
+    parse_max_leverages,
     parse_spot_usdc_total,
 )
 from hl_bot.execution.loop import run_bot
@@ -90,6 +91,7 @@ from hl_bot.strategy.model_b.risk import (
     size_adjust_tag,
     size_from_stop,
     ticket_fits,
+    usable_leverage,
     soft_prop_allows,
     stop_beyond_extreme,
     stop_clears_fees,
@@ -220,6 +222,7 @@ def _decide(prints, bars, pools, **kw):
         equity=kw.pop("equity", 5000.0),
         tick=kw.pop("tick", 0.01),
         score=kw.pop("score", None),
+        leverage=kw.pop("leverage", 20),
     )
 
 
@@ -1410,7 +1413,7 @@ def test_tp_is_the_liquidity_level_and_r_is_only_the_fallback():
     ) == pytest.approx(100.2)
 
 
-def test_size_uses_risk_per_trade_and_rejects_40x():
+def test_size_uses_risk_per_trade_and_keeps_dollar_risk_at_40x():
     size, dollar = size_from_stop(5000, 99, 98, risk_pct=0.02)
     assert dollar == pytest.approx(100)
     assert size == pytest.approx(100)
@@ -1420,8 +1423,12 @@ def test_size_uses_risk_per_trade_and_rejects_40x():
     assert half == pytest.approx(50)
     assert RISK_PCT == pytest.approx(0.02)
     assert LEVERAGE == 20
-    with pytest.raises(ValueError, match="20x"):
-        size_from_stop(5000, 99, 98, risk_pct=0.02, leverage=40)
+    # 40× does not raise and does not increase this ticket: the 20× cap
+    # is not binding on a 99→98 stop.
+    wider, wider_dollar = size_from_stop(5000, 99, 98, risk_pct=0.02, leverage=40)
+    assert wider == pytest.approx(size)
+    assert wider_dollar == pytest.approx(dollar)
+    assert initial_margin(wider, 99, 40) == pytest.approx(initial_margin(size, 99, 20) / 2)
 
     sized = _pass_case(risk_pct=0.02)
     assert sized.intent is not None
@@ -1429,6 +1436,270 @@ def test_size_uses_risk_per_trade_and_rejects_40x():
     other = _pass_case(risk_pct=0.01)
     assert other.intent is not None
     assert other.intent.size == pytest.approx(48.543689)
+
+
+def test_leverage_does_not_move_entry_stop_tp_or_risk_dollars():
+    """Coin max changes margin only. The liquidity stop, the 1.67R target, and the 2% dollars stay put."""
+    now = _now()
+    prints = _long_prints(now)
+    bars = _bars(now)
+    pools = [Pool("PDH", 130.0, taken=False)]
+    at_20 = _decide(prints, bars, pools, now=now, leverage=20, tp_r=1.67)
+    at_40 = _decide(prints, bars, pools, now=now, leverage=40, tp_r=1.67)
+    assert at_20.armed and at_40.armed
+    assert at_20.intent is not None and at_40.intent is not None
+    before, after = at_20.intent, at_40.intent
+    assert after.limit_px == before.limit_px
+    assert after.stop == before.stop
+    assert after.take_profit == before.take_profit
+    risk_before = before.size * abs(before.limit_px - before.stop)
+    risk_after = after.size * abs(after.limit_px - after.stop)
+    assert risk_after == pytest.approx(risk_before)
+    assert after.size == pytest.approx(before.size)
+    assert before.leverage == 20
+    assert after.leverage == 40
+    assert initial_margin(after.size, after.limit_px, 40) == pytest.approx(
+        initial_margin(before.size, before.limit_px, 20) / 2
+    )
+    # The liquidity target is the pool, not a leverage-scaled price.
+    assert after.take_profit == pytest.approx(130.0)
+    assert after.stop != after.limit_px
+
+
+def test_margin_uses_coin_max_and_two_tickets_fit_on_a_293_book():
+    spot = 293.0
+    entry = 100_000.0
+    stop = entry * (1.0 - 0.002)
+    size_20, dollar_20 = size_from_stop(spot, entry, stop, risk_pct=0.02, leverage=20)
+    size_40, dollar_40 = size_from_stop(spot, entry, stop, risk_pct=0.02, leverage=40)
+    size_25, dollar_25 = size_from_stop(spot, entry, stop, risk_pct=0.02, leverage=25)
+    assert size_20 == pytest.approx(size_40) == pytest.approx(size_25)
+    assert dollar_20 == pytest.approx(spot * 0.02)
+    assert dollar_40 == pytest.approx(dollar_20)
+    assert dollar_25 == pytest.approx(dollar_20)
+    btc_20 = initial_margin(size_20, entry, 20)
+    btc_40 = initial_margin(size_40, entry, 40)
+    eth_25 = initial_margin(size_25, entry, 25)
+    sol_20 = initial_margin(size_20, entry, 20)
+    assert btc_20 == pytest.approx(146.50)
+    assert btc_40 == pytest.approx(73.25)
+    assert eth_25 == pytest.approx(117.20)
+    assert sol_20 == pytest.approx(146.50)
+    assert btc_40 == pytest.approx(btc_20 / 2)
+    # BTC at 40× then ETH at 25× both fit. Two 20× tickets of this stop
+    # sum to the whole book and the second still fits on the epsilon.
+    assert ticket_fits(spot, 0.0, size_40, entry, 40)
+    assert ticket_fits(spot, btc_40, size_25, entry, 25)
+    assert btc_40 + eth_25 < spot
+
+    tight = entry * (1.0 - 0.0017)
+    tight_20, _ = size_from_stop(spot, entry, tight, risk_pct=0.02, leverage=20)
+    tight_40, tight_dollar = size_from_stop(spot, entry, tight, risk_pct=0.02, leverage=40)
+    margin_tight_20 = initial_margin(tight_20, entry, 20)
+    margin_tight_40 = initial_margin(tight_40, entry, 40)
+    assert not ticket_fits(spot, margin_tight_20, tight_20, entry, 20)
+    assert ticket_fits(spot, margin_tight_40, tight_40, entry, 40)
+    assert tight_dollar <= spot * 0.02 + 1e-9
+
+
+def test_notional_cap_follows_coin_leverage_and_never_raises_risk():
+    spot = 293.0
+    entry = 100_000.0
+    # 0.08% is inside the old 20× ceiling (0.10%) and outside the 40× ceiling (0.05%).
+    stop = entry * (1.0 - 0.0008)
+    capped, capped_dollar = size_from_stop(spot, entry, stop, risk_pct=0.02, leverage=20)
+    full, full_dollar = size_from_stop(spot, entry, stop, risk_pct=0.02, leverage=40)
+    assert capped * entry == pytest.approx(spot * 20)
+    assert capped_dollar < spot * 0.02
+    assert full_dollar == pytest.approx(spot * 0.02)
+    assert full_dollar <= spot * 0.02 + 1e-9
+    assert capped_dollar < full_dollar
+    assert usable_leverage(40, cap=20) == 20
+    assert usable_leverage(40, cap=None) == 40
+    assert usable_leverage(None, cap=None) == 20
+    assert usable_leverage(10, cap=40) == 10
+    assert usable_leverage(25, cap=0) == 25
+
+
+def test_parse_max_leverages_from_meta_including_xyz():
+    default = {
+        "universe": [
+            {"name": "BTC", "szDecimals": 5, "maxLeverage": 40},
+            {"name": "ETH", "szDecimals": 4, "maxLeverage": 25},
+            {"name": "SOL", "szDecimals": 2, "maxLeverage": 20},
+        ]
+    }
+    xyz = {"universe": [{"name": "XYZ100", "szDecimals": 4, "maxLeverage": 20}]}
+    # The live xyz meta already prefixes the name. Do not prefix it again.
+    prefixed = {"universe": [{"name": "xyz:XYZ100", "szDecimals": 4, "maxLeverage": 30}]}
+    assert parse_max_leverages(default) == {"BTC": 40, "ETH": 25, "SOL": 20}
+    assert parse_max_leverages(xyz, dex="xyz") == {"xyz:XYZ100": 20}
+    assert parse_max_leverages(xyz, dex="XYZ") == {"xyz:XYZ100": 20}
+    assert parse_max_leverages(prefixed, dex="xyz") == {"xyz:XYZ100": 30}
+    assert parse_max_leverages(prefixed) == {"xyz:XYZ100": 30}
+    assert parse_max_leverages({"universe": []}) == {}
+    client = InfoClient()
+    client.inject_max_leverages(
+        {"BTC": 40, "ETH": 25, "SOL": 20, "xyz:XYZ100": 20}
+    )
+    loaded = client.max_leverages(("", "xyz"))
+    assert loaded["BTC"] == 40
+    assert loaded["ETH"] == 25
+    assert loaded["SOL"] == 20
+    assert loaded["xyz:XYZ100"] == 20
+
+
+def test_fetch_max_leverages_reads_meta_and_a_failed_dex_is_skipped(monkeypatch):
+    def fake_post(base, payload, timeout=15.0):
+        if payload.get("dex") == "xyz":
+            raise TimeoutError("xyz meta down")
+        return 200, {
+            "universe": [
+                {"name": "BTC", "maxLeverage": 40},
+                {"name": "ETH", "maxLeverage": 25},
+            ]
+        }
+
+    monkeypatch.setattr("hl_bot.exchange.info_client._post_info", fake_post)
+    client = InfoClient()
+    loaded = client._fetch_max_leverages(("", "xyz"))
+    assert loaded == {"BTC": 40, "ETH": 25}
+    again = client._fetch_max_leverages(("",))
+    assert again["BTC"] == 40
+
+
+def test_place_alo_sets_cross_leverage_before_the_order_and_fails_closed():
+    from hl_bot.exchange.live_exchange import LiveExchange
+
+    calls: list = []
+
+    class Exchange:
+        def update_leverage(self, lev, coin, is_cross=False):
+            calls.append(("lev", lev, coin, is_cross))
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            calls.append(("order", args[0], kwargs))
+            return {"status": "ok"}
+
+    live = LiveExchange.__new__(LiveExchange)
+    live._exchange = Exchange()
+    live.place_alo("BTC", True, 0.01, 100000.0, leverage=40)
+    assert calls[0] == ("lev", 40, "BTC", True)
+    assert calls[1][0] == "order"
+    assert calls[0][0] == "lev"
+
+    calls.clear()
+
+    class Rejected:
+        def update_leverage(self, lev, coin, is_cross=False):
+            calls.append("lev")
+            return {"status": "err", "response": "rejected"}
+
+        def order(self, *args, **kwargs):
+            calls.append("order")
+
+    live._exchange = Rejected()
+    with pytest.raises(RuntimeError, match="update_leverage"):
+        live.place_alo("BTC", True, 0.01, 100000.0, leverage=40)
+    assert calls == ["lev"]
+
+    calls.clear()
+
+    class Boom:
+        def update_leverage(self, *args, **kwargs):
+            calls.append("lev")
+            raise RuntimeError("socket")
+
+        def order(self, *args, **kwargs):
+            calls.append("order")
+
+    live._exchange = Boom()
+    with pytest.raises(RuntimeError, match="socket"):
+        live.place_alo("ETH", True, 0.1, 3000.0, leverage=25)
+    assert calls == ["lev"]
+
+
+def test_live_arm_sets_injected_coin_max_before_entry(tmp_path, caplog):
+    now = _now()
+    info = InfoClient()
+    info.inject_bars(_bars(now), coin="BTC")
+    info.inject_spot_usdc(5000.0)
+    info.inject_max_leverages({"BTC": 40})
+    feed = MemoryFeed(_long_prints(now), bbo={"BTC": (103.0, 105.0)})
+
+    class FakeLive:
+        def __init__(self):
+            self.calls = []
+
+        def place_alo(self, coin, is_buy, size, limit_px, leverage=20):
+            self.calls.append(("alo", coin, leverage))
+            return {"response": {"data": {"statuses": [{"resting": {"oid": 11}}]}}}
+
+        def cancel_order(self, coin, oid):
+            return None
+
+        def market_close(self, *args, **kwargs):
+            raise AssertionError("market close")
+
+    fake = FakeLive()
+    with caplog.at_level(logging.INFO):
+        summary = run_model_b(
+            Settings(
+                entry_mode="model_b",
+                risk_per_trade=0.02,
+                trading_mode="live",
+                i_understand_live_trading=True,
+                private_key="0x" + "ab" * 32,
+                network="testnet",
+                journal_path=str(tmp_path / "lev.jsonl"),
+                loop_interval_sec=0,
+            ),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            exchange=fake,
+            sleep_fn=lambda *_: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC",),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    assert summary["arms"] == 1
+    assert fake.calls == [("alo", "BTC", 40)]
+    assert any("MODEL_B LEVERAGE BTC max=40 used=40 cap=coin" in rec.message for rec in caplog.records)
+
+
+def test_posted_leverage_is_copied_onto_the_fill_and_adopted_entries_stay_20():
+    now = _now()
+    book = ThesisBook()
+    intent = AloIntent(
+        coin="BTC",
+        side="long",
+        limit_px=100.0,
+        size=1.0,
+        stop=99.0,
+        take_profit=102.0,
+        swing_id="BTC:low:1",
+        sweep_px=99.5,
+        tick=0.1,
+        leverage=40,
+    )
+    book.post(intent, now, oid=3)
+    assert book.working("BTC").leverage == 40
+    opened = book.apply_user_fill(
+        coin="BTC", oid=3, price=100.0, ts=now + 1, crossed=False, size=1.0
+    )
+    assert opened is not None
+    assert opened.leverage == 40
+
+    other = ThesisBook()
+    adopted = other.adopt_entry(
+        coin="ETH", side="long", limit_px=3000.0, size=0.2, now=now, oid=9
+    )
+    assert adopted is not None
+    assert adopted.leverage == 20
 
 
 def test_heal_keeps_wider_stop_and_flow_does_not_exit():
@@ -2566,6 +2837,17 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
         load_settings()
     monkeypatch.delenv("MODEL_B_CLOSE_MARGIN_RESERVE")
     assert load_settings().model_b_close_margin_reserve == pytest.approx(0.60)
+    assert load_settings().model_b_max_leverage is None
+    monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "0")
+    assert load_settings().model_b_max_leverage is None
+    monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "")
+    assert load_settings().model_b_max_leverage is None
+    monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "25")
+    assert load_settings().model_b_max_leverage == 25
+    monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "51")
+    with pytest.raises(ValueError, match="MODEL_B_MAX_LEVERAGE"):
+        load_settings()
+    monkeypatch.delenv("MODEL_B_MAX_LEVERAGE")
 
     monkeypatch.delenv("RISK_PER_TRADE")
     assert load_settings().risk_per_trade == pytest.approx(0.02)
