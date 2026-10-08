@@ -2878,6 +2878,11 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
         Settings(entry_mode="model_b", leverage=10, risk_per_trade=0.02).validate()
     with pytest.raises(ValueError, match="RISK_PER_TRADE"):
         Settings(entry_mode="model_b", risk_per_trade=0.005).validate()
+    with pytest.raises(ValueError, match="RISK_PER_TRADE"):
+        Settings(entry_mode="model_b", risk_per_trade=0.025).validate()
+    Settings(entry_mode="model_b", risk_per_trade=0.02).validate()
+    Settings(entry_mode="model_b", risk_per_trade=0.015).validate()
+    Settings(entry_mode="model_b", risk_per_trade=0.01).validate()
     with pytest.raises(ValueError, match="MODEL_B_TP_R"):
         Settings(entry_mode="model_b", risk_per_trade=0.02, model_b_tp_r=2.5).validate()
     # Breakout/OTE mode keeps the scalp risk band.

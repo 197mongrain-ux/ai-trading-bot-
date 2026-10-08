@@ -12,9 +12,13 @@ the stop, so size, TP, and the 2% / 20x caps stay as they are. ``1``
 places the stop beyond that swing plus the buffer and sizes from the
 wider distance (still 2% and 20x). ``0`` does not look.
 
-"Nearest" is the closest confirmed 15m fractal on the stop side of the
-entry (lowest high above a short, highest low below a long). A swing
-the fill has already traded through is not an opposing level.
+"Nearest" is the closer of two stop-side prints that are still strictly
+beyond the entry: the confirmed 15m fractal, and the last closed 15m
+bar's high (short) or low (long). The Oct 8 SKHX short sat one tick
+under the 13:45 bar high at 1198.9. That high is not a width-2 fractal;
+the fractal above the fill was about 1234. Using only the fractal
+would park the stop ~3% away. A level the fill has already traded
+through is not an opposing level.
 """
 
 from __future__ import annotations
@@ -63,6 +67,37 @@ def opposing_swings(
     return out
 
 
+def last_closed_extreme(
+    bars: list[dict],
+    side: str,
+    entry: float,
+    now: float,
+    *,
+    tf: str = "15m",
+) -> tuple[float, float] | None:
+    """Last closed stop-side extreme that is still strictly beyond ``entry``.
+
+    Shorts use that bar's high, longs its low. ``None`` when the extreme
+    is on the entry side of the fill (the bar did not leave a stop-side
+    print to clear).
+    """
+    tf_sec = _TF_SEC.get(tf)
+    if tf_sec is None or side not in ("long", "short") or entry <= 0:
+        return None
+    candles = resample(bars, tf_sec, now)
+    if not candles:
+        return None
+    last = candles[-1]
+    price = float(last["h"] if side == "short" else last["l"])
+    if price <= 0:
+        return None
+    if side == "short" and price <= entry:
+        return None
+    if side == "long" and price >= entry:
+        return None
+    return price, float(last["t"])
+
+
 def nearest_opposing_swing(
     bars: list[dict],
     side: str,
@@ -87,6 +122,30 @@ def nearest_opposing_swing(
             if best is None or price > best[0]:
                 best = (price, ts)
     return best
+
+
+def _nearer_anchor(
+    bars: list[dict],
+    side: str,
+    entry: float,
+    now: float,
+    *,
+    tf: str = "15m",
+) -> tuple[float, float] | None:
+    """Closer of the 15m fractal and the last closed 15m extreme."""
+    cands = [
+        item
+        for item in (
+            nearest_opposing_swing(bars, side, entry, now, tf=tf),
+            last_closed_extreme(bars, side, entry, now, tf=tf),
+        )
+        if item is not None
+    ]
+    if not cands:
+        return None
+    if side == "short":
+        return min(cands, key=lambda item: item[0])
+    return max(cands, key=lambda item: item[0])
 
 
 def _snap_away(side: str, price: float, tick: float) -> float:
@@ -117,7 +176,7 @@ def check_htf_stop(
     ``None`` when there is no opposing swing.
     """
     buf = stop_buffer(entry, tick, atr) if entry > 0 and tick > 0 else 0.0
-    found = nearest_opposing_swing(bars, side, entry, now, tf=tf)
+    found = _nearer_anchor(bars, side, entry, now, tf=tf)
     if found is None or buf <= 0:
         swing = None if found is None else found[0]
         ts = None if found is None else found[1]

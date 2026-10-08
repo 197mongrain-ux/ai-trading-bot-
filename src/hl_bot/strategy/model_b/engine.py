@@ -110,6 +110,10 @@ from hl_bot.strategy.model_b.tp_select import (
 )
 from hl_bot.strategy.model_b.trend import AdxTrend, MacroRead, TfTrend, TrendRead, read_macro, read_trend
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
+from hl_bot.strategy.model_b.xyz_min_stop import (
+    RECOMMENDED_XYZ_MIN_STOP_BPS,
+    xyz_floor_stop,
+)
 
 
 def _bound_distance(maker_fee: float | None, taker_fee: float | None):
@@ -241,6 +245,8 @@ class ModelBEngine:
         stop_slip: str = "off",
         stop_slip_bps: str = "",
         htf_stop: str = "off",
+        xyz_min_stop: str = "off",
+        xyz_min_stop_bps: float = RECOMMENDED_XYZ_MIN_STOP_BPS,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -258,7 +264,7 @@ class ModelBEngine:
             raise ValueError("delta_flat_usdc must be >= 0")
         self.thesis = thesis or ThesisBook(work_sec=float(alo_timeout_sec))
         self.tp_r = clamp_tp_r(tp_r)
-        # From RISK_PER_TRADE. Model B settings validation requires 0.02.
+        # From RISK_PER_TRADE. Model B settings allow 1% to 2%. Default 0.02.
         self.risk_pct = float(risk_pct)
         # Mainnet default is 30. Testnet settings pass the density-scaled floor.
         self.min_prints = int(min_prints)
@@ -339,9 +345,18 @@ class ModelBEngine:
             raise ValueError("stop_slip must be off|on|shadow")
         if htf_mode not in ("off", "on", "shadow"):
             raise ValueError("htf_stop must be off|on|shadow")
+        xyz_mode = str(xyz_min_stop).strip().lower()
+        if xyz_mode not in ("off", "on", "shadow"):
+            raise ValueError("xyz_min_stop must be off|on|shadow")
+        if float(xyz_min_stop_bps) < 0:
+            raise ValueError("xyz_min_stop_bps must be >= 0")
         self.stop_slip = slip_mode
         self.stop_slip_bps = str(stop_slip_bps or "")
         self.htf_stop = htf_mode
+        # Bare engine stays off. load_settings defaults the mode to shadow
+        # and the floor to 40 bps (the Oct 7-8 expectancy pick).
+        self.xyz_min_stop = xyz_mode
+        self.xyz_min_stop_bps = float(xyz_min_stop_bps)
         # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
         self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
 
@@ -814,6 +829,48 @@ class ModelBEngine:
                             htf.tf,
                             htf.beyond,
                             int(htf.under_swing),
+                        )
+            # xyz min-stop floor. Only loosens. The TP walk below uses the
+            # stop this leaves, so a wider stop that cannot pay 1.5R does
+            # not arm. Shadow logs and keeps the liquidity stop.
+            if self.xyz_min_stop != "off":
+                floored = xyz_floor_stop(
+                    side,
+                    limit,
+                    stop,
+                    tick,
+                    coin_u,
+                    self.xyz_min_stop_bps,
+                )
+                if floored is not None and floored > 0:
+                    if (
+                        self.xyz_min_stop == "on"
+                        and stop_is_valid(side, limit, floored)
+                        and not collides_with_fill(limit, floored, tick)
+                    ):
+                        logger.info(
+                            "MODEL_B XYZ_MIN_STOP %s %s mode=on bps=%.1f "
+                            "stop=%s was=%s",
+                            coin_u,
+                            side,
+                            self.xyz_min_stop_bps,
+                            floored,
+                            stop,
+                        )
+                        stop = floored
+                        if moved_tp_floor is not None:
+                            moved_tp_floor = max(
+                                _dist(limit, stop), self.tp_r * abs(limit - stop)
+                            )
+                    elif self.xyz_min_stop == "shadow":
+                        logger.info(
+                            "MODEL_B XYZ_MIN_STOP %s %s mode=shadow bps=%.1f "
+                            "stop=%s would=%s",
+                            coin_u,
+                            side,
+                            self.xyz_min_stop_bps,
+                            stop,
+                            floored,
                         )
             try:
                 lev = int(leverage)
