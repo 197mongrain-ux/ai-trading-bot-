@@ -16,13 +16,21 @@ Per open position, in this order:
    ``oversize_ratio`` x the ticket size, is cut back with a reduce-only IOC.
 3. Stop: a reduce-only stop must cover the full size. Missing or short ->
    place / resize it at the plan's stop (adopted with no plan: the price
-   that loses ``risk_pct`` of the account). Two tries; still rejected ->
-   NAKED_CLOSE (market close). Price already through the planned stop ->
-   NAKED_CLOSE.
+   that loses 2% of the account, fees included). A naked position is not
+   closed just for being naked:
+   - price already through the planned stop but not through the 2% level
+     -> NAKED_STOP_PLACED: a full-size stop at the 2% level instead;
+   - no plan (adopted / manual) -> NAKED_STOP_PLACED at the 2% level;
+   - price already through the 2% level -> NAKED_CLOSE (market close);
+   - the stop is rejected on this pass (two tries) -> the coin stays
+     unprotected (no new entries) and the next pass (~3s) tries again;
+     rejected again -> NAKED_CLOSE.
+   After a NAKED_STOP_PLACED the coin stays unprotected (UNPROTECTED_BOOK
+   blocks new entries) until a later snapshot shows the stop resting.
 4. TP: the plan's TP is placed / resized the same way (a TP failure is
    logged, not a close).
 
-Every NAKED_CLOSE / LOSS_KILL / OVERSIZE_CUT writes a ``MODEL_B ALERT``
+Every NAKED_STOP_PLACED / NAKED_CLOSE / LOSS_KILL / OVERSIZE_CUT writes a ``MODEL_B ALERT``
 line and a ``model_b_alert`` journal row for the desk ping. A kill also
 cancels that coin's resting entry so it cannot refill into a new naked
 position.
@@ -157,6 +165,12 @@ class PositionGuard:
         self._own: dict[str, set] = {}
         self._fallback: dict[tuple, float] = {}
         self._last_alert: dict[tuple, float] = {}
+        # (coin, side) -> clock time of a pass whose stop placement failed.
+        # The next pass retries once; a second failure market-closes.
+        self._stop_failed: dict[tuple, float] = {}
+        # (coin, side) -> trigger of a NAKED_STOP_PLACED stop not yet seen
+        # resting in a snapshot. The coin stays unprotected until it is.
+        self._naked_pending: dict[tuple, float] = {}
         self._plan_lock = threading.Lock()
         self._pass_lock = threading.Lock()
         self.unprotected: set[str] = set()
@@ -255,6 +269,10 @@ class PositionGuard:
         for key in list(self._open_account):
             if key not in open_keys:
                 self._open_account.pop(key, None)
+        for book in (self._stop_failed, self._naked_pending):
+            for key in list(book):
+                if key not in open_keys:
+                    book.pop(key, None)
         for coin in list(self._own):
             if coin in open_coins:
                 continue
@@ -400,6 +418,11 @@ class PositionGuard:
             except Exception:
                 pass
         return px
+
+    def _loss_at(self, pos: PerpPosition, stop: float) -> float:
+        """Realized loss in $ if the full position stops out at ``stop``."""
+        sign = 1.0 if pos.side == "long" else -1.0
+        return max(0.0, (pos.entry - stop) * sign * pos.size) + self._fees(pos, stop)
 
     def _fallback_stop(self, pos: PerpPosition, account: float | None) -> float:
         key = (pos.coin, pos.side, round(pos.entry, 10), round(pos.size, 10))
@@ -565,6 +588,7 @@ class PositionGuard:
         orders = snapshot.protection(coin)
         planned_stop = plan.stop if plan is not None and plan.stop > 0 else None
         stop = planned_stop if planned_stop is not None else self._fallback_stop(pos, account)
+        cap_px: float | None = None
         if hard_cap is not None and pos.size > 0:
             cap_px = self._cap_stop(pos, hard_cap)
             # A ticket sized exactly to the cap ties here; float noise must
@@ -583,6 +607,15 @@ class PositionGuard:
                 or (pos.side == "long" and o.trigger_px >= cap_px * (1 - 1e-9))
                 or (pos.side == "short" and o.trigger_px <= cap_px * (1 + 1e-9))
             ]
+        def _past(px: float) -> bool:
+            return (pos.side == "long" and mark <= px) or (pos.side == "short" and mark >= px)
+
+        naked_why: str | None = None
+        if planned_stop is not None and _past(stop) and cap_px is not None and not _past(cap_px):
+            # Price is past the planned stop but the 2% level is still ahead:
+            # protect at the 2% level instead of closing.
+            stop = cap_px
+            naked_why = "planned_stop_passed"
         # Our own stop looser than the target (a fallback placed before the
         # plan reached the guard, or an older plan) does not count either;
         # it is replaced at the target and then pulled.
@@ -606,17 +639,75 @@ class PositionGuard:
         covered_already = any(o.full_position for o in stops_now) or (
             sum(o.size for o in stops_now) + max(_SIZE_TOL, size * 1e-4) >= size
         )
-        through = (pos.side == "long" and mark <= stop) or (pos.side == "short" and mark >= stop)
-        if through and (planned_stop is not None or not covered_already):
+        key = (coin, pos.side)
+        if covered_already:
+            # A stop rests for the full size: anything NAKED_STOP_PLACED put
+            # there is now confirmed, and a past failure no longer counts.
+            self._naked_pending.pop(key, None)
+            self._stop_failed.pop(key, None)
+
+        naked = not stops_now
+        if _past(stop) and (planned_stop is not None or not covered_already):
+            # Past the 2% level (or the balance is unknown): the 2% absolute
+            # rule wins.
+            self._stop_failed.pop(key, None)
+            self._naked_pending.pop(key, None)
             return self._close(
-                "NAKED_CLOSE", pos, mark, snapshot, events, reason="past_stop", stop=stop
+                "NAKED_CLOSE",
+                pos,
+                mark,
+                snapshot,
+                events,
+                reason="past_stop",
+                stop=stop,
+                cap_stop=cap_px,
             ) and False
-        ok, _placed = self._cover("sl", pos, size, stop, orders)
+        if naked and naked_why is None and planned_stop is None:
+            naked_why = "no_plan"
+        ok, placed = self._cover("sl", pos, size, stop, orders)
         if not ok:
-            self._close(
-                "NAKED_CLOSE", pos, mark, snapshot, events, reason="stop_reject", stop=stop
+            if key in self._stop_failed:
+                # Second pass in a row that could not rest a stop: close.
+                self._stop_failed.pop(key, None)
+                self._naked_pending.pop(key, None)
+                self._close(
+                    "NAKED_CLOSE", pos, mark, snapshot, events, reason="stop_reject", stop=stop
+                )
+                return False
+            self._stop_failed[key] = float(self.clock())
+            logger.warning(
+                "MODEL_B GUARD STOP_RETRY %s %s size=%s stop=%s: stop not accepted; "
+                "entries blocked, retrying next pass, market close if it fails again",
+                coin,
+                pos.side,
+                size,
+                stop,
             )
             return False
+        if placed:
+            self._stop_failed.pop(key, None)
+        if placed and naked and naked_why is not None and cap_px is not None:
+            loss = self._loss_at(pos, stop)
+            base = self._open_account.get(key, account)
+            pct = (loss / base * 100.0) if base else float("nan")
+            self._alert(
+                "NAKED_STOP_PLACED",
+                coin,
+                events,
+                side=pos.side,
+                size=size,
+                stop=stop,
+                loss_at_stop="%.2f%%" % pct,
+                why=naked_why,
+            )
+            logger.warning(
+                "MODEL_B ALERT NAKED_STOP_PLACED coin=%s size=%s stop=%s loss_at_stop=%.2f%%",
+                coin,
+                size,
+                stop,
+                pct,
+            )
+            self._naked_pending[key] = stop
         for o in loose_own:
             try:
                 self.live.cancel_order(coin, o.oid)
@@ -640,6 +731,10 @@ class PositionGuard:
             # No plan and no balance: the stop above is a placeholder, so this
             # coin does not count as protected until the 2% cap is known.
             logger.warning("MODEL_B GUARD %s stop is a placeholder (balance unknown)", coin)
+            return False
+        if key in self._naked_pending:
+            # Placed by NAKED_STOP_PLACED but not yet seen resting: entries
+            # stay blocked (UNPROTECTED_BOOK) until a snapshot confirms it.
             return False
         return True
 
