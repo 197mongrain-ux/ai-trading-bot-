@@ -186,6 +186,34 @@ def _reject_reason(detail: str) -> str:
     return "SEND_FAIL"
 
 
+def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None = None) -> ModelBEngine:
+    """The hunt's engine from settings (shared by the loop and the replay tests)."""
+    if book is None:
+        book = ThesisBook(work_sec=settings.model_b_alo_timeout_sec)
+    return ModelBEngine(
+        thesis=book,
+        tp_r=settings.model_b_tp_r,
+        risk_pct=settings.risk_per_trade,
+        min_prints=settings.model_b_min_prints,
+        alo_timeout_sec=settings.model_b_alo_timeout_sec,
+        delta_flat_eps=settings.model_b_delta_flat_eps,
+        delta_flat_usdc=settings.model_b_delta_flat_usdc,
+        coins=hunt_coins,
+        max_notional_leverage=int(getattr(settings, "model_b_max_leverage", 20) or 20),
+        min_stop_bps=float(getattr(settings, "model_b_min_stop_bps", 15.0)),
+        structure_filter=bool(getattr(settings, "model_b_structure_filter", True)),
+        structure_shadow=getattr(settings, "model_b_structure_mode", "on") == "shadow",
+        counter_flow_filter=bool(getattr(settings, "model_b_counter_flow", True)),
+        counter_flow_sec=float(getattr(settings, "model_b_counter_flow_sec", 300.0)),
+        counter_flow_usdc=float(getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0)),
+        counter_flow_eps=float(getattr(settings, "model_b_counter_flow_eps", 0.0)),
+        counter_flow_flip=float(getattr(settings, "model_b_counter_flow_flip", 1.0)),
+        counter_flow_hold_sec=float(getattr(settings, "model_b_counter_flow_hold_sec", 30.0)),
+        min_sweep_bps=getattr(settings, "model_b_min_sweep_bps", "0.3"),
+        sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
+    )
+
+
 def run_model_b(
     settings: Settings,
     *,
@@ -250,27 +278,7 @@ def run_model_b(
             )
 
     book = ThesisBook(work_sec=settings.model_b_alo_timeout_sec)
-    engine = ModelBEngine(
-        thesis=book,
-        tp_r=settings.model_b_tp_r,
-        risk_pct=settings.risk_per_trade,
-        min_prints=settings.model_b_min_prints,
-        alo_timeout_sec=settings.model_b_alo_timeout_sec,
-        delta_flat_eps=settings.model_b_delta_flat_eps,
-        delta_flat_usdc=settings.model_b_delta_flat_usdc,
-        coins=hunt_coins,
-        max_notional_leverage=int(getattr(settings, "model_b_max_leverage", 20) or 20),
-        min_stop_bps=float(getattr(settings, "model_b_min_stop_bps", 15.0)),
-        structure_filter=bool(getattr(settings, "model_b_structure_filter", True)),
-        counter_flow_filter=bool(getattr(settings, "model_b_counter_flow", True)),
-        counter_flow_sec=float(getattr(settings, "model_b_counter_flow_sec", 300.0)),
-        counter_flow_usdc=float(getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0)),
-        counter_flow_eps=float(getattr(settings, "model_b_counter_flow_eps", 0.0)),
-        counter_flow_flip=float(getattr(settings, "model_b_counter_flow_flip", 1.0)),
-        counter_flow_hold_sec=float(getattr(settings, "model_b_counter_flow_hold_sec", 30.0)),
-        min_sweep_bps=getattr(settings, "model_b_min_sweep_bps", "0.3"),
-        sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
-    )
+    engine = build_model_b_engine(settings, hunt_coins, book)
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
     # reads spotClearinghouseState and does not use perp account value.
@@ -386,6 +394,19 @@ def run_model_b(
         )
         if max_iterations is None:
             guard.start(float(getattr(settings, "model_b_guard_sec", 3.0)))
+    logger.info(
+        "MODEL_B FILTERS structure=%s counter_flow=%s(usdc=%s sec=%s flip=%s hold=%ss) "
+        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s",
+        getattr(settings, "model_b_structure_mode", "on"),
+        "on" if getattr(settings, "model_b_counter_flow", True) else "off",
+        getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0),
+        getattr(settings, "model_b_counter_flow_sec", 300.0),
+        getattr(settings, "model_b_counter_flow_flip", 1.0),
+        getattr(settings, "model_b_counter_flow_hold_sec", 30.0),
+        getattr(settings, "model_b_min_stop_bps", 15.0),
+        getattr(settings, "model_b_min_sweep_bps", "0.3"),
+        int(bool(getattr(settings, "model_b_sweep_require_htf", False))),
+    )
     announced_adopts: set[str] = set()
     announced_stale: set[str] = set()
     used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
@@ -1550,7 +1571,8 @@ def run_model_b(
             logger.info(
                 "MODEL_B ARM %s %s alo=%s stop=%s tp=%s size=%s "
                 "bias=%s pool=%s swing=%s sweep=%s absorb=%s "
-                "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s delta_flat=%s",
+                "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s delta_flat=%s "
+                "structure=%s structure_shadow=%s flow=%s",
                 intent.coin,
                 intent.side,
                 intent.limit_px,
@@ -1569,6 +1591,9 @@ def run_model_b(
                 decision.vp_tag,
                 decision.size_adjust or "-",
                 decision.delta_flat or "-",
+                decision.structure or "-",
+                decision.structure_shadow or "-",
+                decision.counter_flow or "-",
             )
 
         equity_mark = equity

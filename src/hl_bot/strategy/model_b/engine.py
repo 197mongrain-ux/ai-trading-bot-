@@ -28,6 +28,8 @@ Those tags do not arm, block, or move the stop.
 
 from __future__ import annotations
 
+import logging
+
 import math
 
 from hl_bot.strategy.model_b.alo import alo_limit, market_ref
@@ -150,6 +152,8 @@ _FAIL_RANK = {
 }
 
 
+logger = logging.getLogger(__name__)
+
 class ModelBEngine:
     def __init__(
         self,
@@ -164,6 +168,7 @@ class ModelBEngine:
         max_notional_leverage: int = 20,
         min_stop_bps: float = 15.0,
         structure_filter: bool = True,
+        structure_shadow: bool = False,
         structure_timeframes: tuple[str, ...] | list[str] = DEFAULT_TIMEFRAMES,
         counter_flow_filter: bool = True,
         counter_flow_sec: float = LOOKBACK_SEC,
@@ -207,6 +212,8 @@ class ModelBEngine:
         self.max_notional_leverage = int(max_notional_leverage)
         self.min_stop_bps = float(min_stop_bps)
         self.structure_filter = bool(structure_filter)
+        # Shadow: compute and log, never block (data-collection mode).
+        self.structure_shadow = bool(structure_shadow) and not self.structure_filter
         self.structure_timeframes = tuple(structure_timeframes)
         self.counter_flow_filter = bool(counter_flow_filter)
         self.counter_flow_sec = float(counter_flow_sec)
@@ -284,6 +291,7 @@ class ModelBEngine:
             bad_tp_why: str | None = None,
             structure: str | None = None,
             counter_flow: str | None = None,
+            structure_shadow: str | None = None,
             sizing_dist: float | None = None,
         ) -> Decision:
             ctx_side = vp_ctx.get("side")
@@ -339,6 +347,7 @@ class ModelBEngine:
                 bad_tp_why=bad_tp_why,
                 structure=structure,
                 counter_flow=counter_flow,
+                structure_shadow=structure_shadow,
                 sizing_dist=sizing_dist,
             )
 
@@ -427,6 +436,14 @@ class ModelBEngine:
             fields["structure"] = structure_label(states)
             if self.structure_filter and structure_blocks(side, states):
                 return _done(STRUCTURE, **fields)
+            if self.structure_shadow and structure_blocks(side, states):
+                fields["structure_shadow"] = "would_block"
+                logger.info(
+                    "MODEL_B SHADOW %s reason=STRUCTURE would_block=1 side=%s structure=%s",
+                    coin_u,
+                    side,
+                    fields["structure"],
+                )
             if self.counter_flow_filter:
                 flow = counter_flow(
                     side,

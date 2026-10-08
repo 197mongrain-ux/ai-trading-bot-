@@ -29,6 +29,16 @@ def _dotenv_skipped() -> bool:
     }
 
 
+def _structure_mode() -> str:
+    """MODEL_B_STRUCTURE_FILTER: 1/on (gate), shadow (log only), 0/off."""
+    raw = (os.getenv("MODEL_B_STRUCTURE_FILTER") or "").strip().lower()
+    if not raw:
+        return "on"
+    if raw in {"shadow", "log", "log_only", "logonly"}:
+        return "shadow"
+    return "on" if raw in {"1", "true", "yes", "on"} else "off"
+
+
 def _bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -175,6 +185,8 @@ class Settings:
     # 15m/1h LH+LL, no short into HH+HL. COUNTER_FLOW: most adverse rolling
     # 90s delta over the last N seconds, band = max(USDC / mid, coin eps).
     model_b_structure_filter: bool = True
+    # on = gate, shadow = log MODEL_B SHADOW would_block=1 only, off = skip.
+    model_b_structure_mode: str = "on"
     model_b_counter_flow: bool = True
     model_b_counter_flow_sec: float = 300.0
     model_b_counter_flow_usdc: float = 1_000_000.0
@@ -466,7 +478,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ),
         model_b_max_leverage=_optional_int_unset("MODEL_B_MAX_LEVERAGE") or 20,
         model_b_min_stop_bps=_float("MODEL_B_MIN_STOP_BPS", 15.0),
-        model_b_structure_filter=_bool("MODEL_B_STRUCTURE_FILTER", True),
+        model_b_structure_filter=_structure_mode() == "on",
+        model_b_structure_mode=_structure_mode(),
         model_b_counter_flow=_bool("MODEL_B_COUNTER_FLOW", True),
         model_b_counter_flow_sec=_float("MODEL_B_COUNTER_FLOW_SEC", 300.0),
         model_b_counter_flow_usdc=_float("MODEL_B_COUNTER_FLOW_USDC", 1_000_000.0),

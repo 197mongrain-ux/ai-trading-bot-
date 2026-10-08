@@ -137,6 +137,8 @@ class Decision:
     # read. STRUCTURE / COUNTER_FLOW are gates; these are their log fields.
     structure: str | None = None
     counter_flow: str | None = None
+    # "would_block" when MODEL_B_STRUCTURE_FILTER=shadow would have blocked.
+    structure_shadow: str | None = None
     # Sizing brake read: notional cap leverage and the stop distance the
     # size was computed from (>= the real stop distance).
     sizing_dist: float | None = None
@@ -188,5 +190,6 @@ class Decision:
             "bad_tp_why": self.bad_tp_why,
             "structure": self.structure,
             "counter_flow": self.counter_flow,
+            "structure_shadow": self.structure_shadow,
             "sizing_dist": _num(self.sizing_dist),
         }
