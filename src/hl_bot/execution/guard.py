@@ -64,6 +64,12 @@ class Plan:
     intended_size: float
     planned_risk: float
     source: str = "ticket"
+    # Set only while both TPs are still working. After TP1 the plan's
+    # take_profit is the runner and these stay 0, so the guard covers the
+    # remainder at that one price and does not cancel the runner order.
+    tp1_size: float = 0.0
+    runner_tp: float = 0.0
+    runner_size: float = 0.0
 
 
 def _resp_error(resp: object) -> str | None:
@@ -474,9 +480,19 @@ class PositionGuard:
         size: float,
         trigger: float,
         orders: list[ProtectiveOrder],
+        *,
+        match_trigger: bool = False,
     ) -> tuple[bool, bool]:
-        """Make ``kind`` cover ``size``. Returns (covered, placed_now)."""
+        """Make ``kind`` cover ``size``. Returns (covered, placed_now).
+
+        ``match_trigger`` counts and cancels only orders at this price, so
+        topping up TP1 does not treat the runner as cover and does not
+        cancel it.
+        """
         mine = [o for o in orders if o.kind == kind and o.protects(pos.side)]
+        if match_trigger:
+            tol = max(abs(float(trigger)) * 1e-6, 1e-9)
+            mine = [o for o in mine if abs(float(o.trigger_px) - float(trigger)) <= tol]
         if any(o.full_position for o in mine):
             return True, False
         covered = sum(o.size for o in mine)
@@ -723,8 +739,20 @@ class PositionGuard:
                 logger.exception("MODEL_B GUARD loose stop cancel failed %s", coin)
 
         # 4. Take profit (plan only; a failure is not a close).
+        # A runner has two triggers. Each is covered on its own so a top-up
+        # at TP1 cannot cancel the runner or re-cover the full size there.
         if plan is not None and plan.take_profit > 0:
-            tp_ok, _ = self._cover("tp", pos, size, plan.take_profit, orders)
+            split = plan.tp1_size > 0 and plan.runner_size > 0 and plan.runner_tp > 0
+            if split:
+                ok1, _ = self._cover(
+                    "tp", pos, plan.tp1_size, plan.take_profit, orders, match_trigger=True
+                )
+                ok2, _ = self._cover(
+                    "tp", pos, plan.runner_size, plan.runner_tp, orders, match_trigger=True
+                )
+                tp_ok = ok1 and ok2
+            else:
+                tp_ok, _ = self._cover("tp", pos, size, plan.take_profit, orders)
             if not tp_ok:
                 logger.warning("MODEL_B GUARD TP could not be placed for %s", coin)
         if plan is None and hard_cap is None:
@@ -760,7 +788,20 @@ def plans_from_book(book) -> dict[str, Plan]:
         intended = float(getattr(pos, "intended_size", 0.0) or 0.0)
         planned = float(getattr(pos, "planned_risk", 0.0) or 0.0)
         if planned <= 0 and intended > 0:
-            planned = intended * abs(pos.entry - pos.stop)
+            # Arm risk, not the live stop: a breakeven trail must not
+            # shrink the loss-kill budget to zero.
+            basis = float(getattr(pos, "planned_stop", 0.0) or 0.0) or float(pos.stop)
+            planned = intended * abs(pos.entry - basis)
+        tp1 = float(getattr(pos, "tp1_size", 0.0) or 0.0)
+        run_sz = float(getattr(pos, "runner_size", 0.0) or 0.0)
+        run_px = float(getattr(pos, "runner_px", 0.0) or 0.0)
+        split = (
+            bool(getattr(pos, "runner_on", False))
+            and not bool(getattr(pos, "tp1_filled", False))
+            and tp1 > 0
+            and run_sz > 0
+            and run_px > 0
+        )
         plans[canon_coin(pos.coin)] = Plan(
             coin=canon_coin(pos.coin),
             side=pos.side,
@@ -769,5 +810,8 @@ def plans_from_book(book) -> dict[str, Plan]:
             intended_size=intended,
             planned_risk=planned,
             source="position",
+            tp1_size=tp1 if split else 0.0,
+            runner_tp=run_px if split else 0.0,
+            runner_size=run_sz if split else 0.0,
         )
     return plans

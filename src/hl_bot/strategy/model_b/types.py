@@ -78,6 +78,10 @@ class AloIntent:
     # Reused if the stop is widened on fill. Not a 2R cap.
     pool_px: float | None = None
     tp_r: float = 1.5
+    # Runner is shadow/off unless MODEL_B_TP_RUNNER=1. The arm TP stays
+    # take_profit either way; runner_px is the second target when set.
+    runner_px: float | None = None
+    runner_mode: str = "off"
 
 
 @dataclass

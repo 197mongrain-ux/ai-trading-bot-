@@ -568,6 +568,9 @@ def test_replay_2256_btc_arm_reproduces_with_old_settings():
         min_stop_bps=0.0,
         max_notional_leverage=40,
         min_sweep_bps=0.0,
+        # The 22:56 prices are the PR #14 pick, spent swings included.
+        tp_untaken_only="off",
+        tp_runner="off",
     )
     assert d.armed and d.intent is not None
     assert d.bias == "long"

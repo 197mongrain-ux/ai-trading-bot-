@@ -54,6 +54,10 @@ def _settings(tmp_path, **env):
         "MODEL_B_TP_MIN_POOL_R": 1.5,
         "MODEL_B_TP_MAX_POOL_R": 3.0,
         "MODEL_B_TP_FAR_SKIP_COUNTERTREND": 1,
+        # These cases lock the next-pool walk on the PR #14 level list.
+        # Untaken filtering is covered in test_model_b_tp_targeting.py.
+        "MODEL_B_TP_UNTAKEN_ONLY": 0,
+        "MODEL_B_TP_RUNNER": 0,
         **env,
     }
     path = tmp_path / "e.env"
@@ -110,7 +114,13 @@ def test_nearest_under_1_5r_walks_to_the_next_pool(label, tmp_path, caplog):
     assert (n.take_profit > o.take_profit) if o.side == "long" else (n.take_profit < o.take_profit)
     assert n.pool_px == pytest.approx(n.take_profit)  # locked at fill as before
     # Only the target moved: entry, stop, size, leverage are identical.
-    assert replace(n, take_profit=o.take_profit, pool_px=o.pool_px) == o
+    assert replace(
+        n,
+        take_profit=o.take_profit,
+        pool_px=o.pool_px,
+        runner_px=o.runner_px,
+        runner_mode=o.runner_mode,
+    ) == o
     msgs = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("MODEL_B TP_NEXT_POOL ") for m in msgs)
     assert any(m.startswith("MODEL_B TREND ") and "with_side=" in m for m in msgs)
@@ -129,7 +139,10 @@ def test_nearest_at_or_past_the_min_r_is_unchanged(tmp_path, caplog):
     with caplog.at_level(logging.INFO):
         same = _run(tmp_path, XYZ_LONG, MODEL_B_TP_MIN_POOL_R=1.0)
     assert same.intent == old.intent
-    assert not any("MODEL_B TP_" in r.getMessage() for r in caplog.records)
+    assert not any(
+        "MODEL_B TP_" in r.getMessage() and "TP_RUNNER" not in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_no_pool_at_min_r_keeps_nearest_and_logs_when_skip_is_off(tmp_path, caplog):
@@ -197,7 +210,9 @@ def test_knob_zero_is_the_old_tp_exactly(label, tmp_path, caplog):
     assert d.armed and d.intent.take_profit == pytest.approx(OLD_TP[label])
     assert d.trend is None and "trend" not in d.to_log()
     msgs = [r.getMessage() for r in caplog.records]
-    assert not any("MODEL_B TP_" in m or "MODEL_B TREND" in m for m in msgs)
+    assert not any(
+        ("MODEL_B TP_" in m and "TP_RUNNER" not in m) or "MODEL_B TREND" in m for m in msgs
+    )
 
 
 def test_widened_stop_keeps_its_1_67r_pool_floor_and_size_cap(tmp_path, caplog):
@@ -220,7 +235,10 @@ def test_widened_stop_keeps_its_1_67r_pool_floor_and_size_cap(tmp_path, caplog):
     assert abs(i.take_profit - i.limit_px) + 1e-9 >= 1.67 * abs(i.limit_px - i.stop)
     assert loss_at_stop(i.size, i.limit_px, i.stop, include_fees=True) <= EQUITY * HARD_MAX_LOSS_PCT + 1e-9
     assert i.size * i.limit_px <= 20 * EQUITY + 1e-6
-    assert not any("MODEL_B TP_" in r.getMessage() for r in caplog.records)
+    assert not any(
+        "MODEL_B TP_" in r.getMessage() and "TP_RUNNER" not in r.getMessage()
+        for r in caplog.records
+    )
 
 
 @pytest.mark.parametrize("label", list(OLD_TP))
