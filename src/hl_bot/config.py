@@ -223,6 +223,15 @@ class Settings:
     # each coin (same gates / SL / TP / sizing); the nearest draw pool is
     # only that side's TP target, not the bias. 0 = old pool-only bias.
     model_b_two_sided: bool = True
+    # TP: when the nearest liquidity target is under this R (same fee/R
+    # floor as the 1R pick), walk out to the next real pool at >= it. No
+    # such pool: keep the nearest and log MODEL_B TP_UNDER_1_5R. 0 = off.
+    model_b_tp_min_pool_r: float = 1.5
+    # A walked-to pool past this R is "too far" (no existing pool cap: the
+    # liquidity target was always kept past 2R). Too far, or no pool at the
+    # min R, and not with the 15m/1h trend -> skip (when the knob below is 1).
+    model_b_tp_max_pool_r: float = 3.0
+    model_b_tp_far_skip_countertrend: bool = True
     # Protection guard: cadence (s), loss kill at N x planned risk (2% of
     # spot when the plan is unknown), oversize cut above N x ticket size.
     model_b_guard_sec: float = 3.0
@@ -342,6 +351,14 @@ class Settings:
         if self.model_b_min_prints < 1:
             raise ValueError(
                 f"MODEL_B_MIN_PRINTS={self.model_b_min_prints} must be >= 1."
+            )
+        if not (0.0 <= self.model_b_tp_min_pool_r <= 10.0):
+            raise ValueError(
+                f"MODEL_B_TP_MIN_POOL_R={self.model_b_tp_min_pool_r} must be in [0, 10] (0 = off)."
+            )
+        if not (0.0 <= self.model_b_tp_max_pool_r <= 20.0):
+            raise ValueError(
+                f"MODEL_B_TP_MAX_POOL_R={self.model_b_tp_max_pool_r} must be in [0, 20] (0 = no limit)."
             )
         if self.model_b_alo_timeout_sec < 0:
             raise ValueError(
@@ -519,6 +536,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_min_sweep_bps=(os.getenv("MODEL_B_MIN_SWEEP_BPS") or "0.3").strip(),
         model_b_sweep_require_htf=_bool("MODEL_B_SWEEP_REQUIRE_HTF", False),
         model_b_two_sided=_bool("MODEL_B_TWO_SIDED", True),
+        model_b_tp_min_pool_r=_float("MODEL_B_TP_MIN_POOL_R", 1.5),
+        model_b_tp_max_pool_r=_float("MODEL_B_TP_MAX_POOL_R", 3.0),
+        model_b_tp_far_skip_countertrend=_bool("MODEL_B_TP_FAR_SKIP_COUNTERTREND", True),
         model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
         model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),

@@ -147,6 +147,9 @@ class Decision:
     # Both stay None / empty with the flag off, so the old log is unchanged.
     side: str | None = None
     other_sides: tuple = ()
+    # TP next-pool rule only (MODEL_B_TP_MIN_POOL_R > 0): the 15m/1h trend
+    # read on arms and on TP decisions. None (and not journaled) otherwise.
+    trend: str | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -197,6 +200,7 @@ class Decision:
             "counter_flow": self.counter_flow,
             "structure_shadow": self.structure_shadow,
             "sizing_dist": _num(self.sizing_dist),
+            **({"trend": self.trend} if self.trend is not None else {}),
             **(
                 {
                     "side": self.side,
