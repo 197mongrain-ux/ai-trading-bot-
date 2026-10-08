@@ -119,6 +119,13 @@ class LiveExchange:
     def round_size(self, coin: str, size: float) -> float:
         return self._round_size(coin, size)
 
+    def size_step(self, coin: str) -> float:
+        """One lot (10 ** -szDecimals), or 0 when the coin's step is unknown."""
+        dec = self._sz_decimals_for(coin)
+        if dec is None or int(dec) < 0:
+            return 0.0
+        return 10.0 ** (-int(dec))
+
     def market_open(self, coin: str, is_buy: bool, size: float, leverage: int = 20) -> Any:
         """Place a market-style order (IOC / aggressive limit via SDK helpers).
 

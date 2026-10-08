@@ -511,6 +511,72 @@ class PositionGuard:
             )
         return False
 
+    def _size_step(self, coin: str) -> float:
+        """One lot for ``coin``, or 0 when the exchange has not said."""
+        fn = getattr(self.live, "size_step", None)
+        if not callable(fn):
+            return 0.0
+        try:
+            step = float(fn(coin))
+        except Exception:
+            return 0.0
+        return step if step > 0 else 0.0
+
+    def _size_tol(self, size: float, coin: str) -> float:
+        """Shortfall that still counts as covered: one size step, else the old band."""
+        return max(_SIZE_TOL, abs(float(size)) * 1e-4, self._size_step(coin))
+
+    def _rounded_equal(self, coin: str, left: float, right: float) -> bool:
+        """True when both sizes floor onto the same szDecimals lot."""
+        rnd = getattr(self.live, "round_size", None)
+        if not callable(rnd):
+            return False
+        try:
+            return abs(float(rnd(coin, left)) - float(rnd(coin, right))) <= 1e-12
+        except Exception:
+            return False
+
+    def _enough(self, covered: float, wanted: float, coin: str) -> bool:
+        """True when resting size already matches ``wanted`` within one lot.
+
+        Nothing resting is not covered, even when ``wanted`` itself is one
+        lot. A shortfall of one szDecimals step (0.861 resting vs 0.8615
+        wanted at 3 decimals) is covered, so the guard does not replace it.
+        """
+        if wanted <= _SIZE_TOL:
+            return True
+        if covered <= _SIZE_TOL:
+            return False
+        if self._rounded_equal(coin, covered, wanted):
+            return True
+        return covered + self._size_tol(wanted, coin) >= wanted
+
+    def _over(self, covered: float, wanted: float, coin: str) -> bool:
+        """True when coverage is more than one size step above ``wanted``."""
+        if self._rounded_equal(coin, covered, wanted):
+            return False
+        return covered > wanted + self._size_tol(wanted, coin)
+
+    def _tp_room(
+        self,
+        orders: list[ProtectiveOrder],
+        pos: PerpPosition,
+        mine: list[ProtectiveOrder],
+        budget: float | None,
+    ) -> float | None:
+        """Size still available under ``budget`` after other reduce-only TPs."""
+        if budget is None:
+            return None
+        other = 0.0
+        mine_ids = {id(o) for o in mine}
+        for order in orders:
+            if order.kind != "tp" or not order.protects(pos.side) or id(order) in mine_ids:
+                continue
+            if order.full_position:
+                return 0.0
+            other += float(order.size)
+        return max(0.0, float(budget) - other)
+
     def _cover(
         self,
         kind: str,
@@ -520,25 +586,69 @@ class PositionGuard:
         orders: list[ProtectiveOrder],
         *,
         match_trigger: bool = False,
+        shrink_oversize: bool = False,
+        budget: float | None = None,
     ) -> tuple[bool, bool]:
         """Make ``kind`` cover ``size``. Returns (covered, placed_now).
 
         ``match_trigger`` counts and cancels only orders at this price, so
         topping up TP1 does not treat the runner as cover and does not
         cancel it.
+
+        ``shrink_oversize`` cancels a trigger that is more than one size
+        step above ``size`` before placing the wanted size. A guard pass
+        that rested a full-size TP before the runner split must not leave
+        that order in place: it would close the whole position. Cancel
+        happens before the replacement so resting reduce-only TP size
+        never exceeds ``budget`` (the position).
+
+        Coverage within one szDecimals step (or equal after ``round_size``)
+        is already covered. That is the 0.861 vs 0.8615 TP2 churn.
         """
         mine = [o for o in orders if o.kind == kind and o.protects(pos.side)]
         if match_trigger:
             tol = max(abs(float(trigger)) * 1e-6, 1e-9)
             mine = [o for o in mine if abs(float(o.trigger_px) - float(trigger)) <= tol]
+        covered = sum(float(o.size) for o in mine if not o.full_position)
         if any(o.full_position for o in mine):
+            if not shrink_oversize:
+                return True, False
+            covered = max(covered, float(pos.size))
+        if shrink_oversize and self._over(covered, size, pos.coin):
+            logger.info(
+                "MODEL_B GUARD TP %s %s resize trigger=%s from=%.8g to=%.8g",
+                pos.coin,
+                pos.side,
+                trigger,
+                covered,
+                size,
+            )
+            own = self._own.setdefault(pos.coin, set())
+            for order in list(mine):
+                try:
+                    self.live.cancel_order(pos.coin, order.oid)
+                except Exception:
+                    logger.exception("MODEL_B GUARD TP resize cancel failed %s", pos.coin)
+                    return False, False
+                own.discard(order.oid)
+                try:
+                    orders.remove(order)
+                except ValueError:
+                    pass
+            mine = []
+            covered = 0.0
+        if self._enough(covered, size, pos.coin):
             return True, False
-        covered = sum(o.size for o in mine)
-        if covered + max(_SIZE_TOL, size * 1e-4) >= size:
-            return True, False
-        own = self._own.get(pos.coin, set())
-        others = sum(o.size for o in mine if o.oid not in own)
+        own = self._own.setdefault(pos.coin, set())
+        others = sum(float(o.size) for o in mine if o.oid not in own and not o.full_position)
         need = max(0.0, size - others)
+        room = self._tp_room(orders, pos, mine, budget)
+        if room is not None:
+            need = min(need, room)
+        if need <= _SIZE_TOL:
+            # The other trigger already accounts for the whole position,
+            # or only dust remains. Do not place a zero-size order.
+            return True, False
         logger.info(
             "MODEL_B GUARD %s %s %s covered=%.8g size=%.8g placing=%.8g @ %s",
             "STOP" if kind == "sl" else "TP",
@@ -553,13 +663,24 @@ class PositionGuard:
         if placed is False:
             return False, False
         # Our older, now-undersized triggers go once the new one rests.
-        for o in mine:
-            if o.oid in own and o.oid != placed:
+        for order in mine:
+            if order.oid in own and order.oid != placed:
                 try:
-                    self.live.cancel_order(pos.coin, o.oid)
-                    own.discard(o.oid)
+                    self.live.cancel_order(pos.coin, order.oid)
+                    own.discard(order.oid)
                 except Exception:
                     logger.exception("MODEL_B GUARD old %s cancel failed %s", kind, pos.coin)
+                else:
+                    try:
+                        orders.remove(order)
+                    except ValueError:
+                        pass
+        if kind == "tp":
+            oid = placed if placed is not True else f"tp-{trigger}"
+            side = "buy" if pos.side == "short" else "sell"
+            orders.append(
+                ProtectiveOrder(pos.coin, oid, "tp", side, float(trigger), float(need))
+            )
         return True, True
 
     def _protect(self, pos: PerpPosition, snapshot, account, events) -> bool:
@@ -690,8 +811,8 @@ class PositionGuard:
             loose_ids = {o.oid for o in loose_own}
             orders = [o for o in orders if o.oid not in loose_ids]
         stops_now = [o for o in orders if o.kind == "sl" and o.protects(pos.side)]
-        covered_already = any(o.full_position for o in stops_now) or (
-            sum(o.size for o in stops_now) + max(_SIZE_TOL, size * 1e-4) >= size
+        covered_already = any(o.full_position for o in stops_now) or self._enough(
+            sum(o.size for o in stops_now), size, coin
         )
         key = (coin, pos.side)
         if covered_already:
@@ -782,15 +903,34 @@ class PositionGuard:
         if plan is not None and plan.take_profit > 0:
             split = plan.tp1_size > 0 and plan.runner_size > 0 and plan.runner_tp > 0
             if split:
+                # Each leg is capped by the position, and a full-size TP1
+                # placed before the runner split is cancelled down to tp1_size
+                # before TP2 is added. TP1 + TP2 stay equal to the position.
                 ok1, _ = self._cover(
-                    "tp", pos, plan.tp1_size, plan.take_profit, orders, match_trigger=True
+                    "tp",
+                    pos,
+                    plan.tp1_size,
+                    plan.take_profit,
+                    orders,
+                    match_trigger=True,
+                    shrink_oversize=True,
+                    budget=size,
                 )
                 ok2, _ = self._cover(
-                    "tp", pos, plan.runner_size, plan.runner_tp, orders, match_trigger=True
+                    "tp",
+                    pos,
+                    plan.runner_size,
+                    plan.runner_tp,
+                    orders,
+                    match_trigger=True,
+                    shrink_oversize=True,
+                    budget=size,
                 )
                 tp_ok = ok1 and ok2
             else:
-                tp_ok, _ = self._cover("tp", pos, size, plan.take_profit, orders)
+                tp_ok, _ = self._cover(
+                    "tp", pos, size, plan.take_profit, orders, budget=size
+                )
             if not tp_ok:
                 logger.warning("MODEL_B GUARD TP could not be placed for %s", coin)
         if plan is None and hard_cap is None:

@@ -575,6 +575,13 @@ def fee_per_unit(
     return abs(float(entry)) * maker + abs(float(stop)) * taker
 
 
+def slip_distance(entry: float, slip_bps: float = 0.0) -> float:
+    """Price distance for ``slip_bps`` of ``entry``. The stop price is not moved."""
+    if entry <= 0 or slip_bps <= 0:
+        return 0.0
+    return abs(float(entry)) * float(slip_bps) / 10_000.0
+
+
 def loss_at_stop(
     size: float,
     entry: float,
@@ -583,9 +590,14 @@ def loss_at_stop(
     include_fees: bool = True,
     maker_fee: float | None = None,
     taker_fee: float | None = None,
+    slip_bps: float = 0.0,
 ) -> float:
-    """Dollar loss if ``size`` is stopped out: price move, plus both fees when asked."""
-    per = abs(float(entry) - float(stop))
+    """Dollar loss if ``size`` is stopped out: price move, plus both fees when asked.
+
+    ``slip_bps`` adds the expected stop-market slip (a fraction of entry)
+    on top of the trigger distance. It does not change ``stop``.
+    """
+    per = abs(float(entry) - float(stop)) + slip_distance(entry, slip_bps)
     if include_fees:
         per += fee_per_unit(entry, stop, maker_fee=maker_fee, taker_fee=taker_fee)
     return max(0.0, float(size)) * per
@@ -602,6 +614,7 @@ def cap_size_to_loss(
     include_fees: bool = False,
     maker_fee: float | None = None,
     taker_fee: float | None = None,
+    slip_bps: float = 0.0,
 ) -> float:
     """Largest size <= ``size`` whose loss at the stop is <= the hard cap.
 
@@ -609,9 +622,11 @@ def cap_size_to_loss(
     to the coin's size step (never rounds up). 0 when nothing fits.
     ``include_fees`` counts the maker entry and taker exit fee in that
     loss (Oct 6 ETH: 2.00% on price was 2.56% after fees).
+    ``slip_bps`` counts expected stop-market slippage the same way. The
+    stop price is not moved.
     """
     pct = min(float(max_loss_pct), HARD_MAX_LOSS_PCT)
-    dist = abs(float(entry) - float(stop))
+    dist = abs(float(entry) - float(stop)) + slip_distance(entry, slip_bps)
     if size <= 0 or dist <= 0 or account <= 0 or pct <= 0:
         return 0.0
     if include_fees:
@@ -644,6 +659,7 @@ def size_from_stop(
     include_fees: bool = False,
     maker_fee: float | None = None,
     taker_fee: float | None = None,
+    slip_bps: float = 0.0,
 ) -> tuple[float, float]:
     """Return ``(size, dollar_risk)`` from stop distance and ``risk_pct``.
 
@@ -668,6 +684,11 @@ def size_from_stop(
     stop-out loses 2% + ~6 bps of notional (2.8% at 13x). The stop and
     target prices are not moved.
 
+    ``slip_bps`` (``MODEL_B_STOP_SLIP``) adds that many bps of ``entry``
+    to the distance the size is taken from, so the planned loss at the
+    trigger plus expected slippage plus fees stays inside ``risk_pct``.
+    The stop price is not moved. 0 leaves the size unchanged.
+
     ``dollar_risk`` is the loss if the real stop is hit at the returned size.
     """
     lev = _margin_leverage(leverage)
@@ -679,7 +700,8 @@ def size_from_stop(
     if dist <= 0:
         raise ValueError("stop distance is zero")
     floor_dist = float(entry) * max(0.0, float(min_stop_bps or 0.0)) / 10_000.0
-    sizing_dist = max(dist, floor_dist)
+    slip = slip_distance(entry, slip_bps)
+    sizing_dist = max(dist, floor_dist) + slip
     target = spot_usdc * float(risk_pct)
     fees = (
         fee_per_unit(entry, stop, maker_fee=maker_fee, taker_fee=taker_fee)
@@ -696,7 +718,7 @@ def size_from_stop(
         if brake >= 1:
             cap_lev = min(cap_lev, brake)
     max_notional = spot_usdc * cap_lev
-    trimmed = sizing_dist > dist or fees > 0
+    trimmed = sizing_dist > dist or fees > 0 or slip > 0
     if size * entry > max_notional:
         size = max_notional / entry
         trimmed = True

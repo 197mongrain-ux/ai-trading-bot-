@@ -296,6 +296,19 @@ class Settings:
     # Isolated-only assets (xyz:SMSN) set isolated margin instead of
     # failing the cross update. 0 always asks for cross.
     model_b_isolated_margin: bool = True
+    # Stop-market slip in the 2% size. shadow logs would_size and posts
+    # today's size. 1 shrinks size so trigger loss + slip + fees <= 2%.
+    # 0 does not look. The stop price is not moved. 20x cap unchanged.
+    model_b_stop_slip: str = "shadow"
+    # Empty: xyz 20 bps, everything else 5 bps. A number applies to every
+    # coin. A map is ``xyz:SKHX=15,xyz=20,default=5``. The live spread
+    # raises the allowance when it is wider than that floor.
+    model_b_stop_slip_bps: str = ""
+    # Liquidity stop vs the nearest 15m swing. shadow logs when the stop
+    # is not beyond that swing plus the usual buffer and does not move it.
+    # 1 places the stop beyond the swing and sizes from the wider distance.
+    # 0 does not look.
+    model_b_htf_stop: str = "shadow"
     model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -499,6 +512,23 @@ class Settings:
             raise ValueError(
                 f"MODEL_B_WEIGHT_BUDGET={self.model_b_weight_budget} must be > 0."
             )
+        if self.model_b_stop_slip not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_STOP_SLIP={self.model_b_stop_slip!r} must be 1|shadow|0."
+            )
+        if self.model_b_htf_stop not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_HTF_STOP={self.model_b_htf_stop!r} must be 1|shadow|0."
+            )
+        if self.model_b_stop_slip_bps.strip():
+            from hl_bot.strategy.model_b.stop_slip import _parse_spec
+
+            try:
+                _parse_spec("BTC", self.model_b_stop_slip_bps)
+            except ValueError as exc:
+                raise ValueError(
+                    f"MODEL_B_STOP_SLIP_BPS={self.model_b_stop_slip_bps!r} is invalid: {exc}"
+                ) from exc
         if self.ote_lookback_bars < 3:
             raise ValueError(
                 f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
@@ -659,6 +689,9 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_risk_cap=_tp_mode("MODEL_B_RISK_CAP", "shadow"),
         model_b_max_total_risk_pct=_float("MODEL_B_MAX_TOTAL_RISK_PCT", 6.0),
         model_b_isolated_margin=_bool("MODEL_B_ISOLATED_MARGIN", True),
+        model_b_stop_slip=_tp_mode("MODEL_B_STOP_SLIP", "shadow"),
+        model_b_stop_slip_bps=(os.getenv("MODEL_B_STOP_SLIP_BPS") or "").strip(),
+        model_b_htf_stop=_tp_mode("MODEL_B_HTF_STOP", "shadow"),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
