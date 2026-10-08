@@ -7,6 +7,7 @@ below pins the 20x notional cap and the 2% loss cap (fees included).
 from __future__ import annotations
 
 import logging
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -690,6 +691,132 @@ def test_missing_stop_is_replaced_at_full_size():
     stops = [e for e in live.events if e[0] == "stop"]
     assert stops and stops[0][2] == pytest.approx(2.0)
     assert stops[0][3] == pytest.approx(STOP)
+
+
+def _skhx_live(step=0.001):
+    """Exchange rounding from the Oct 8 xyz:SKHX print (szDecimals 3)."""
+    live = _SeqLive()
+    live.size_step = lambda coin: step
+
+    def round_size(coin, size):
+        factor = 1.0 / step
+        return math.floor(float(size) * factor + 1e-9) / factor
+
+    live.round_size = round_size
+    return live
+
+
+def test_guard_resizes_full_tp1_placed_before_the_runner_split():
+    """Guard-first ordering, xyz:SKHX short 14:12 ET Oct 8 2026.
+
+    Size 1.723 filled. The guard rested a full-size TP at 1193.0 before
+    the runner handler logged tp1_size=0.8615 and runner 1187.3. That
+    full TP1 would have closed the position. The next guard pass must
+    cancel it down to tp1_size, add TP2, and leave the full-size stop.
+    TP1 + TP2 equals the position and neither leg exceeds it.
+    """
+    size = 1.723
+    entry, stop, tp1, tp2 = 1196.7, 1198.8, 1193.0, 1187.3
+    half = 0.8615
+    book, held = _short_pos(size, entry, stop, tp1)
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-size,
+                entry=entry,
+                margin_used=10.0,
+                mark=entry,
+                unrealized_pnl=0.0,
+            ),
+        ),
+    )
+    live = _skhx_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard.run_once(snap, spot=1000.0)
+    stops = [e for e in live.events if e[0] == "stop"]
+    tps = [e for e in live.events if e[0] == "tp"]
+    assert len(stops) == 1 and stops[0][2] == pytest.approx(size)
+    assert stops[0][3] == pytest.approx(stop)
+    assert tps == [("tp", "ETH", size, tp1)]
+    stop_oid, tp_oid = 701, 702
+    held.runner_on = True
+    held.runner_px = tp2
+    held.tp1_size = half
+    held.runner_size = half
+    assert held.tp1_size + held.runner_size == pytest.approx(size)
+    snap2 = AccountSnapshot(
+        ok=True,
+        positions=snap.positions,
+        protective_orders=(
+            ProtectiveOrder("ETH", stop_oid, "sl", "buy", stop, size),
+            ProtectiveOrder("ETH", tp_oid, "tp", "buy", tp1, size),
+        ),
+    )
+    guard.set_plans(plans_from_book(book))
+    live.events.clear()
+    guard.run_once(snap2, spot=1000.0)
+    assert ("cancel", "ETH", stop_oid) not in live.events
+    assert ("cancel", "ETH", tp_oid) in live.events
+    assert not any(e[0] == "stop" for e in live.events)
+    new_tps = [e for e in live.events if e[0] == "tp"]
+    by_px = {e[3]: e[2] for e in new_tps}
+    assert set(by_px) == {tp1, tp2}
+    assert by_px[tp1] == pytest.approx(half)
+    assert by_px[tp2] == pytest.approx(half)
+    assert by_px[tp1] + by_px[tp2] == pytest.approx(size)
+    assert by_px[tp1] <= half + 1e-9
+    assert by_px[tp2] <= half + 1e-9
+    resting = by_px[tp1] + by_px[tp2]
+    assert resting <= size + 1e-9
+
+
+def test_guard_does_not_churn_a_tp_inside_one_size_step():
+    """0.861 resting covers a wanted 0.8615 at szDecimals 3.
+
+    The live guard logged covered=0.861 size=0.8615 and replaced TP2
+    every pass. After rounding to the coin's lot those sizes match, so
+    the guard must not place or cancel.
+    """
+    size = 1.723
+    half = 0.8615
+    resting = 0.861
+    entry, stop, tp1, tp2 = 1196.7, 1198.8, 1193.0, 1187.3
+    book, _held = _short_pos(
+        size,
+        entry,
+        stop,
+        tp1,
+        runner_on=True,
+        runner_px=tp2,
+        tp1_size=half,
+        runner_size=half,
+    )
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-size,
+                entry=entry,
+                margin_used=10.0,
+                mark=entry,
+                unrealized_pnl=0.0,
+            ),
+        ),
+        protective_orders=(
+            ProtectiveOrder("ETH", 1, "sl", "buy", stop, size),
+            ProtectiveOrder("ETH", 2, "tp", "buy", tp1, resting),
+            ProtectiveOrder("ETH", 3, "tp", "buy", tp2, resting),
+        ),
+    )
+    live = _skhx_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard._own["ETH"] = {1, 2, 3}
+    guard.run_once(snap, spot=1000.0)
+    guard.run_once(snap, spot=1000.0)
+    assert live.events == []
 
 
 # ---------------------------------------------------------------- restart

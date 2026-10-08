@@ -7,12 +7,12 @@ The default score is tape density (prints // 10, capped at 9) so a thick
 tape with no sweep still prints 9/9 and stays flat, while a valid 30-print
 reclaim prints 3/9 and can still arm. Pass ``score=`` into the engine to
 log an external Model 3 number instead — it is still not an arm gate, and
-it is not combined with a FLOW_OK pre-place check. Two readers use it.
-The closer-ticker cancel keeps a resting Alo whose score is strictly
-above the candidate; equal scores still follow the closer-bps swap.
-The close-margin reserve keeps its fraction for the highest-scoring
-resting Alo, then the closer limit in bps. An unarmed close setup
-does not hold it.
+it is not combined with a FLOW_OK pre-place check. Two readers use it
+when ``MODEL_B_QUALITY_RANK`` is 0 or shadow. When that flag is 1 they
+compare setup quality (``quality.py``) instead: highest quality gets
+margin first, keeps the closer-ticker slot, and owns the 60% reserve.
+Equal quality still follows the closer-bps swap. An unarmed close setup
+does not hold the reserve.
 """
 
 from __future__ import annotations

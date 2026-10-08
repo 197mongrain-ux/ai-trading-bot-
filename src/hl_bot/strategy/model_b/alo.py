@@ -110,3 +110,17 @@ def resting_score_blocks_closer_cancel(
     if resting_score is None or candidate_score is None:
         return False
     return int(resting_score) > int(candidate_score)
+
+
+def resting_quality_blocks_closer_cancel(
+    resting_quality: float | None,
+    candidate_quality: float | None,
+) -> bool:
+    """Keep the resting Alo when its setup quality is strictly higher.
+
+    Equal quality does not block: the closer-bps swap still stands.
+    A missing quality does not block either.
+    """
+    if resting_quality is None or candidate_quality is None:
+        return False
+    return float(resting_quality) > float(candidate_quality) + 1e-9

@@ -275,6 +275,40 @@ class Settings:
     # The 2% cap counts the maker entry + taker exit fee (size only; the
     # stop and TP prices are unchanged). 0 = price-only 2% (old sizing).
     model_b_cap_includes_fees: bool = True
+    # Rank armed candidates by setup quality before margin. The closer
+    # guard and the 60% reserve use the same number. shadow logs it and
+    # keeps today's order. 0 is the density score and SYMBOLS order.
+    model_b_quality_rank: str = "on"
+    # Per-coin maker/taker in the 2% size and the TP fee floor. 0 keeps
+    # the published 1.5/4.5 bps tier for every coin.
+    model_b_coin_fees: bool = True
+    # 1m candles: full backfill once (staggered), then a short tail merged
+    # into the cache. 0 refetches the whole window every TTL.
+    model_b_candle_incremental: bool = True
+    # Candle fetches wait when the last minute is already at this weight.
+    # Account and guard reads are not deferred. Under the 1,200/min cap.
+    model_b_weight_budget: float = 1000.0
+    # Total open risk (positions + resting tickets) and one name per
+    # correlated group. shadow logs would_block and still posts. 1 refuses
+    # the new ticket. 0 does not look.
+    model_b_risk_cap: str = "shadow"
+    model_b_max_total_risk_pct: float = 6.0
+    # Isolated-only assets (xyz:SMSN) set isolated margin instead of
+    # failing the cross update. 0 always asks for cross.
+    model_b_isolated_margin: bool = True
+    # Stop-market slip in the 2% size. shadow logs would_size and posts
+    # today's size. 1 shrinks size so trigger loss + slip + fees <= 2%.
+    # 0 does not look. The stop price is not moved. 20x cap unchanged.
+    model_b_stop_slip: str = "shadow"
+    # Empty: xyz 20 bps, everything else 5 bps. A number applies to every
+    # coin. A map is ``xyz:SKHX=15,xyz=20,default=5``. The live spread
+    # raises the allowance when it is wider than that floor.
+    model_b_stop_slip_bps: str = ""
+    # Liquidity stop vs the nearest 15m swing. shadow logs when the stop
+    # is not beyond that swing plus the usual buffer and does not move it.
+    # 1 places the stop beyond the swing and sizes from the wider distance.
+    # 0 does not look.
+    model_b_htf_stop: str = "shadow"
     model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -462,6 +496,39 @@ class Settings:
             raise ValueError(
                 f"MODEL_B_MIN_STOP_BPS={self.model_b_min_stop_bps} must be >= 0."
             )
+        if self.model_b_quality_rank not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_QUALITY_RANK={self.model_b_quality_rank!r} must be 1|shadow|0."
+            )
+        if self.model_b_risk_cap not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_RISK_CAP={self.model_b_risk_cap!r} must be 1|shadow|0."
+            )
+        if self.model_b_max_total_risk_pct < 0:
+            raise ValueError(
+                f"MODEL_B_MAX_TOTAL_RISK_PCT={self.model_b_max_total_risk_pct} must be >= 0."
+            )
+        if self.model_b_weight_budget <= 0:
+            raise ValueError(
+                f"MODEL_B_WEIGHT_BUDGET={self.model_b_weight_budget} must be > 0."
+            )
+        if self.model_b_stop_slip not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_STOP_SLIP={self.model_b_stop_slip!r} must be 1|shadow|0."
+            )
+        if self.model_b_htf_stop not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_HTF_STOP={self.model_b_htf_stop!r} must be 1|shadow|0."
+            )
+        if self.model_b_stop_slip_bps.strip():
+            from hl_bot.strategy.model_b.stop_slip import _parse_spec
+
+            try:
+                _parse_spec("BTC", self.model_b_stop_slip_bps)
+            except ValueError as exc:
+                raise ValueError(
+                    f"MODEL_B_STOP_SLIP_BPS={self.model_b_stop_slip_bps!r} is invalid: {exc}"
+                ) from exc
         if self.ote_lookback_bars < 3:
             raise ValueError(
                 f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
@@ -615,6 +682,16 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
         model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),
         model_b_cap_includes_fees=_bool("MODEL_B_CAP_INCLUDES_FEES", True),
+        model_b_quality_rank=_tp_mode("MODEL_B_QUALITY_RANK", "on"),
+        model_b_coin_fees=_bool("MODEL_B_COIN_FEES", True),
+        model_b_candle_incremental=_bool("MODEL_B_CANDLE_INCREMENTAL", True),
+        model_b_weight_budget=_float("MODEL_B_WEIGHT_BUDGET", 1000.0),
+        model_b_risk_cap=_tp_mode("MODEL_B_RISK_CAP", "shadow"),
+        model_b_max_total_risk_pct=_float("MODEL_B_MAX_TOTAL_RISK_PCT", 6.0),
+        model_b_isolated_margin=_bool("MODEL_B_ISOLATED_MARGIN", True),
+        model_b_stop_slip=_tp_mode("MODEL_B_STOP_SLIP", "shadow"),
+        model_b_stop_slip_bps=(os.getenv("MODEL_B_STOP_SLIP_BPS") or "").strip(),
+        model_b_htf_stop=_tp_mode("MODEL_B_HTF_STOP", "shadow"),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),

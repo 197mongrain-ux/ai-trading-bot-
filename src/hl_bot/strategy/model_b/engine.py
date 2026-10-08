@@ -44,6 +44,8 @@ from dataclasses import replace
 
 from hl_bot.strategy.model_b.alo import alo_limit, market_ref
 from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
+from hl_bot.strategy.model_b.htf_stop import check_htf_stop
+from hl_bot.strategy.model_b.stop_slip import resolve_stop_slip_bps
 from hl_bot.strategy.model_b.risk import (
     DEFAULT_TP_R,
     MODEL_B_RISK_PCT,
@@ -108,6 +110,25 @@ from hl_bot.strategy.model_b.tp_select import (
 )
 from hl_bot.strategy.model_b.trend import AdxTrend, MacroRead, TfTrend, TrendRead, read_macro, read_trend
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
+
+
+def _bound_distance(maker_fee: float | None, taker_fee: float | None):
+    """``min_tp_distance`` closed over this coin's fee rates.
+
+    Looking up ``min_tp_distance`` at call time keeps a test patch on
+    ``hl_bot.strategy.model_b.engine.min_tp_distance`` in force.
+    """
+
+    def _fn(entry, stop, *, min_r=1.0):
+        # Omit the fee kwargs when this coin is on the base tier so a test
+        # patch of min_tp_distance(entry, stop, min_r=) still matches.
+        if maker_fee is None and taker_fee is None:
+            return min_tp_distance(entry, stop, min_r=min_r)
+        return min_tp_distance(
+            entry, stop, min_r=min_r, maker_fee=maker_fee, taker_fee=taker_fee
+        )
+
+    return _fn
 from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
 from hl_bot.strategy.model_b.vp_log import vp_error_fields, vp_log_fields
 from hl_bot.strategy.volume_profile import VP_AS_FILTER, VP_ENABLED, VP_ENTRIES
@@ -217,6 +238,9 @@ class ModelBEngine:
         tp_runner: str = "shadow",
         tp_runner_frac: float = 0.5,
         tp_runner_max_r: float = 5.0,
+        stop_slip: str = "off",
+        stop_slip_bps: str = "",
+        htf_stop: str = "off",
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -307,6 +331,17 @@ class ModelBEngine:
         self.tp_runner = runner
         self.tp_runner_frac = float(tp_runner_frac)
         self.tp_runner_max_r = float(tp_runner_max_r)
+        # Bare engine stays off so existing arm tests keep today's size and
+        # stop. load_settings defaults both to shadow (log only).
+        slip_mode = str(stop_slip).strip().lower()
+        htf_mode = str(htf_stop).strip().lower()
+        if slip_mode not in ("off", "on", "shadow"):
+            raise ValueError("stop_slip must be off|on|shadow")
+        if htf_mode not in ("off", "on", "shadow"):
+            raise ValueError("htf_stop must be off|on|shadow")
+        self.stop_slip = slip_mode
+        self.stop_slip_bps = str(stop_slip_bps or "")
+        self.htf_stop = htf_mode
         # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
         self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
 
@@ -322,6 +357,8 @@ class ModelBEngine:
         last: float | None,
         *,
         coin: str = "",
+        maker_fee: float | None = None,
+        taker_fee: float | None = None,
     ) -> TpWalk:
         """Same TP walk the arm uses, from a fill price and the planned stop.
 
@@ -361,7 +398,7 @@ class ModelBEngine:
             far_skip=self.tp_far_skip_countertrend,
             moved_floor=None,
             trend_fn=_trend,
-            distance_fn=min_tp_distance,
+            distance_fn=_bound_distance(maker_fee, taker_fee),
         )
 
     def evaluate(
@@ -380,6 +417,8 @@ class ModelBEngine:
         mark: float | None = None,
         leverage: int = 20,
         htf_bars: list[dict] | None = None,
+        maker_fee: float | None = None,
+        taker_fee: float | None = None,
     ) -> Decision:
         """Decide an arm or a single fail reason.
 
@@ -396,6 +435,7 @@ class ModelBEngine:
         target. Unknown meta passes 20.
         """
         coin_u = canon_coin(coin)
+        _dist = _bound_distance(maker_fee, taker_fee)
         window = window_prints(prints, coin=coin_u, now=now)
         logged_score = (
             log_only_score(len(window))
@@ -673,6 +713,8 @@ class ModelBEngine:
                 or collides_with_fill(limit, stop, tick)
             ):
                 return _done(BAD_STOP, **fields)
+            # The min-stop walk below may widen ``stop`` again. The HTF
+            # check runs after that walk, once the stop price is final.
 
             # Min stop distance (MODEL_B_MIN_STOP_BPS). A liquidity stop
             # tighter than that (BTC 22:56 Oct 7: 23 pts / 2.8 bps) is moved
@@ -725,9 +767,54 @@ class ModelBEngine:
                     return _done(STOP_TOO_TIGHT, **fields)
                 stop = moved
                 moved_tp_floor = max(
-                    min_tp_distance(limit, stop), self.tp_r * abs(limit - stop)
+                    _dist(limit, stop), self.tp_r * abs(limit - stop)
                 )
 
+            if self.htf_stop != "off":
+                htf = check_htf_stop(
+                    side,
+                    limit,
+                    stop,
+                    bars,
+                    now,
+                    tick,
+                    atr14(bars, now=now),
+                )
+                if htf.inside and htf.beyond is not None and htf.beyond > 0:
+                    if (
+                        self.htf_stop == "on"
+                        and stop_is_valid(side, limit, htf.beyond)
+                        and not collides_with_fill(limit, htf.beyond, tick)
+                    ):
+                        logger.info(
+                            "MODEL_B HTF_STOP %s %s mode=on stop=%s was=%s "
+                            "swing=%s tf=%s beyond=%s under_swing=%s",
+                            coin_u,
+                            side,
+                            htf.beyond,
+                            stop,
+                            htf.swing,
+                            htf.tf,
+                            htf.beyond,
+                            int(htf.under_swing),
+                        )
+                        stop = htf.beyond
+                        if moved_tp_floor is not None:
+                            moved_tp_floor = max(
+                                _dist(limit, stop), self.tp_r * abs(limit - stop)
+                            )
+                    elif self.htf_stop == "shadow":
+                        logger.info(
+                            "MODEL_B HTF_STOP %s %s mode=shadow inside=1 "
+                            "stop=%s swing=%s tf=%s beyond=%s under_swing=%s",
+                            coin_u,
+                            side,
+                            stop,
+                            htf.swing,
+                            htf.tf,
+                            htf.beyond,
+                            int(htf.under_swing),
+                        )
             try:
                 lev = int(leverage)
             except (TypeError, ValueError):
@@ -744,13 +831,81 @@ class ModelBEngine:
                     notional_leverage=self.max_notional_leverage,
                     min_stop_bps=self.min_stop_bps,
                     include_fees=self.cap_includes_fees,
+                    maker_fee=maker_fee,
+                    taker_fee=taker_fee,
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
             # Hard 2% cap on the loss at the stop (Chris's absolute rule).
             size = cap_size_to_loss(
-                size, limit, stop, equity, include_fees=self.cap_includes_fees
+                size,
+                limit,
+                stop,
+                equity,
+                include_fees=self.cap_includes_fees,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
             )
+            if self.stop_slip != "off":
+                slip_bps, slip_src = resolve_stop_slip_bps(
+                    coin_u,
+                    self.stop_slip_bps,
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    entry=limit,
+                )
+                would = 0.0
+                try:
+                    slipped, _slipped_dollar = size_from_stop(
+                        equity,
+                        limit,
+                        stop,
+                        risk_pct=self.risk_pct,
+                        leverage=lev,
+                        notional_leverage=self.max_notional_leverage,
+                        min_stop_bps=self.min_stop_bps,
+                        include_fees=self.cap_includes_fees,
+                        maker_fee=maker_fee,
+                        taker_fee=taker_fee,
+                        slip_bps=slip_bps,
+                    )
+                    would = cap_size_to_loss(
+                        slipped,
+                        limit,
+                        stop,
+                        equity,
+                        include_fees=self.cap_includes_fees,
+                        maker_fee=maker_fee,
+                        taker_fee=taker_fee,
+                        slip_bps=slip_bps,
+                    )
+                except ValueError:
+                    would = 0.0
+                if self.stop_slip == "on":
+                    if would <= 0:
+                        return _done(BAD_STOP, **fields)
+                    logger.info(
+                        "MODEL_B STOP_SLIP %s %s mode=on bps=%.2f source=%s "
+                        "size=%s was=%s",
+                        coin_u,
+                        side,
+                        slip_bps,
+                        slip_src,
+                        would,
+                        size,
+                    )
+                    size = would
+                else:
+                    logger.info(
+                        "MODEL_B STOP_SLIP %s %s mode=shadow bps=%.2f source=%s "
+                        "size=%s would_size=%s",
+                        coin_u,
+                        side,
+                        slip_bps,
+                        slip_src,
+                        size,
+                        would,
+                    )
             if size <= 0:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
@@ -767,7 +922,7 @@ class ModelBEngine:
                 spent = filter_spent_swing_prices(side, tp_swings, bars, now, last_px)
                 levels_untaken = [px for px in levels_all if px not in spent]
                 levels = levels_untaken if self.tp_untaken_only == "on" else levels_all
-            floor = moved_tp_floor if moved_tp_floor is not None else min_tp_distance(limit, stop)
+            floor = moved_tp_floor if moved_tp_floor is not None else _dist(limit, stop)
             walked = walk_liquidity_tp(
                 side,
                 limit,
@@ -781,7 +936,7 @@ class ModelBEngine:
                 far_skip=self.tp_far_skip_countertrend,
                 moved_floor=moved_tp_floor,
                 trend_fn=_trend,
-                distance_fn=min_tp_distance,
+                distance_fn=_dist,
             )
             for fmt, args in walked.logs:
                 logger.info(fmt, *args)
@@ -806,7 +961,7 @@ class ModelBEngine:
                     far_skip=self.tp_far_skip_countertrend,
                     moved_floor=moved_tp_floor,
                     trend_fn=_trend,
-                    distance_fn=min_tp_distance,
+                    distance_fn=_dist,
                 )
                 logger.info(
                     "MODEL_B TP_UNTAKEN shadow %s %s kept=%s would=%s",
@@ -829,7 +984,7 @@ class ModelBEngine:
                     far_skip=self.tp_far_skip_countertrend,
                     moved_floor=moved_tp_floor,
                     trend_fn=_trend,
-                    distance_fn=min_tp_distance,
+                    distance_fn=_dist,
                 )
                 if plain.target != target:
                     logger.info(

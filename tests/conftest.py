@@ -93,6 +93,16 @@ _CONFIG_ENV = (
     "MODEL_B_OVERSIZE_RATIO",
     "MODEL_B_MAX_LOSS_PCT",
     "MODEL_B_CAP_INCLUDES_FEES",
+    "MODEL_B_QUALITY_RANK",
+    "MODEL_B_COIN_FEES",
+    "MODEL_B_CANDLE_INCREMENTAL",
+    "MODEL_B_WEIGHT_BUDGET",
+    "MODEL_B_RISK_CAP",
+    "MODEL_B_MAX_TOTAL_RISK_PCT",
+    "MODEL_B_ISOLATED_MARGIN",
+    "MODEL_B_STOP_SLIP",
+    "MODEL_B_STOP_SLIP_BPS",
+    "MODEL_B_HTF_STOP",
     "OTE_LOOKBACK_BARS",
     "OTE_FIB_SHALLOW",
     "OTE_FIB_DEEP",
@@ -131,3 +141,23 @@ def _offline_max_leverage(monkeypatch: pytest.MonkeyPatch) -> None:
         return {}
 
     monkeypatch.setattr(InfoClient, "max_leverages", _guard)
+
+
+@pytest.fixture(autouse=True)
+def _offline_fee_meta(monkeypatch: pytest.MonkeyPatch) -> None:
+    """userFees and asset flags stay off the network unless a test injects them."""
+    original_user = InfoClient.user_fee_rates
+    original_flags = InfoClient.asset_flags
+
+    def _user(self, user=None):
+        if getattr(self, "_has_injected_user_fees", False):
+            return original_user(self, user)
+        return None
+
+    def _flags(self, dexs=("",)):
+        if getattr(self, "_has_injected_flags", False):
+            return original_flags(self, dexs)
+        return {}
+
+    monkeypatch.setattr(InfoClient, "user_fee_rates", _user)
+    monkeypatch.setattr(InfoClient, "asset_flags", _flags)
