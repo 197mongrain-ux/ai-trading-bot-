@@ -129,6 +129,42 @@ def _post_info(base_url: str, payload: dict, timeout: float = 15.0) -> tuple[int
         return int(exc.code), None
 
 
+def parse_max_leverages(raw: object, dex: str = "") -> dict[str, int]:
+    """``name`` → ``maxLeverage`` from one ``meta`` universe.
+
+    The default dex stores bare names (``BTC``). A builder dex stores
+    ``xyz:XYZ100``. The number comes from the payload. It is not a
+    constant in this module.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    universe = raw.get("universe")
+    if not isinstance(universe, list):
+        return {}
+    prefix = str(dex or "").strip().lower()
+    out: dict[str, int] = {}
+    for item in universe:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not name:
+            continue
+        try:
+            lev = int(item.get("maxLeverage"))
+        except (TypeError, ValueError):
+            continue
+        if lev < 1:
+            continue
+        raw_name = str(name).strip()
+        if ":" in raw_name or not prefix:
+            key = canon_coin(raw_name)
+        else:
+            key = canon_coin(f"{prefix}:{raw_name}")
+        if key:
+            out[key] = lev
+    return out
+
+
 def parse_spot_usdc_total(payload: object) -> float | None:
     """USDC ``total`` from a ``spotClearinghouseState`` body.
 
@@ -214,6 +250,9 @@ class InfoClient:
         self._injected_spot_usdc: float | None = None
         self._has_injected_account = False
         self._injected_account: AccountSnapshot | None = None
+        self._has_injected_lev = False
+        self._injected_lev: dict[str, int] = {}
+        self._lev_cache: dict[str, dict[str, int]] = {}
 
     def _ensure_client(self) -> Any:
         if self._info is None:
@@ -473,6 +512,57 @@ class InfoClient:
             reported_margin=reported,
             dexs=tuple(names),
         )
+
+    def inject_max_leverages(self, mapping: dict | None) -> None:
+        """Force coin max leverage. ``None`` or empty is unknown meta (20×)."""
+        parsed: dict[str, int] = {}
+        if mapping:
+            for key, value in mapping.items():
+                name = canon_coin(key)
+                try:
+                    lev = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if name and lev >= 1:
+                    parsed[name] = lev
+        self._has_injected_lev = True
+        self._injected_lev = parsed
+
+    def max_leverages(self, dexs: tuple[str, ...] | list[str] = ("",)) -> dict[str, int]:
+        """Coin max leverage for the hunt dexes.
+
+        An injected map is returned with no network call. Otherwise each
+        dex is ``POST /info {"type":"meta"}``. A failed dex is left out
+        so the caller falls back to 20× for those coins. A successful
+        dex is cached for this client.
+        """
+        if self._has_injected_lev:
+            return dict(self._injected_lev)
+        return self._fetch_max_leverages(tuple(dexs) if dexs is not None else ("",))
+
+    def _fetch_max_leverages(self, dexs: tuple[str, ...]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for dex in dexs:
+            key = str(dex or "")
+            cached = self._lev_cache.get(key)
+            if cached is not None:
+                out.update(cached)
+                continue
+            body: dict = {"type": "meta"}
+            if key:
+                body["dex"] = key
+            try:
+                status, raw = _post_info(self.base_url, body)
+            except Exception as exc:
+                logger.warning("meta maxLeverage dex=%s failed: %s", key or "default", exc)
+                continue
+            if status != 200 or not isinstance(raw, dict):
+                logger.warning("meta maxLeverage dex=%s HTTP %s", key or "default", status)
+                continue
+            parsed = parse_max_leverages(raw, dex=key)
+            self._lev_cache[key] = parsed
+            out.update(parsed)
+        return out
 
     def inject_bars(self, bars: list[dict[str, float]], coin: str | None = None) -> None:
         """Inject synthetic bars (for tests / offline VWAP).

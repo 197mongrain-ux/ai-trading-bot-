@@ -46,6 +46,14 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw is not None and raw.strip() else default
 
 
+def _optional_int_unset(name: str) -> int | None:
+    """Empty or ``0`` is unset. A present integer is returned as-is."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip() or raw.strip() == "0":
+        return None
+    return int(raw)
+
+
 def _optional_float(name: str, default: float | None) -> float | None:
     """Parse float; empty string → None (disabled). Missing → default."""
     raw = os.getenv(name)
@@ -154,6 +162,10 @@ class Settings:
     # (highest score, then closer limit in bps). An unarmed close setup
     # does not hold it. 0 turns the reserve off. Not hard-coded to BTC.
     model_b_close_margin_reserve: float = CLOSE_MARGIN_RESERVE
+    # Optional cap on the exchange max leverage used for margin. None
+    # (unset or 0) uses the coin max. It only lowers that max. It does
+    # not change the stop, the target, or the 2% size. Env LEVERAGE stays 20.
+    model_b_max_leverage: int | None = None
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -281,6 +293,13 @@ class Settings:
                 f"MODEL_B_CLOSE_MARGIN_RESERVE={self.model_b_close_margin_reserve} "
                 "must be in [0, 1] (0 = off)."
             )
+        if self.model_b_max_leverage is not None and not (
+            1 <= int(self.model_b_max_leverage) <= 50
+        ):
+            raise ValueError(
+                f"MODEL_B_MAX_LEVERAGE={self.model_b_max_leverage} must be "
+                "in [1, 50], or unset / 0 to use the coin max."
+            )
         if self.ote_lookback_bars < 3:
             raise ValueError(
                 f"OTE_LOOKBACK_BARS={self.ote_lookback_bars} must be >= 3."
@@ -404,6 +423,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_close_margin_reserve=_float(
             "MODEL_B_CLOSE_MARGIN_RESERVE", CLOSE_MARGIN_RESERVE
         ),
+        model_b_max_leverage=_optional_int_unset("MODEL_B_MAX_LEVERAGE"),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

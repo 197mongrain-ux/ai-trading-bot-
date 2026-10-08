@@ -14,11 +14,13 @@
   tightened back into the wick to make 1.5%.
 - Size = spot USDC × ``RISK_PER_TRADE`` / that stop distance. Model B
   requires the fraction to be 0.02. Wider stop, smaller size. Notional
-  capped at 20× the same balance, which trims a very tight stop.
+  is capped at the coin's max leverage times that balance (20× when the
+  coin max is unknown). A very tight stop is trimmed. Dollar risk never
+  goes above the 2% target.
 - ``BAD_STOP`` is only impossible geometry: wrong side of the fill,
   stop == fill, or a one-tick collision (LIT). A size that rounds to
   zero is the same fail-closed.
-- 20× only. 40× is rejected.
+- Env ``LEVERAGE`` stays 20. Margin uses the exchange max for that coin.
 - TP is the next liquidity in the trade direction (confirmed swing or
   untaken pool) that clears the round-trip fee and at least 1R of the
   stop. A closer pool is skipped. Past 2R is still that level. The
@@ -77,9 +79,43 @@ def assert_policy() -> None:
 
 
 def assert_leverage(leverage: int) -> int:
+    """Env ``LEVERAGE`` stays 20. Per-coin margin does not use this check."""
     if int(leverage) != LEVERAGE:
         raise ValueError(f"Model B is 20x only (40x off); got {leverage}")
     return LEVERAGE
+
+
+def usable_leverage(coin_max: int | None, cap: int | None = None) -> int:
+    """Leverage for margin and the notional cap.
+
+    A missing coin max falls back to 20 so the ticket is never sized for
+    a leverage the exchange was not told to use. ``cap``
+    (``MODEL_B_MAX_LEVERAGE``) only lowers that max. It never raises it.
+    """
+    base = LEVERAGE
+    if coin_max is not None:
+        try:
+            parsed = int(coin_max)
+        except (TypeError, ValueError):
+            parsed = 0
+        if parsed >= 1:
+            base = parsed
+    if cap is not None:
+        try:
+            cap_i = int(cap)
+        except (TypeError, ValueError):
+            cap_i = 0
+        if cap_i >= 1:
+            base = min(base, cap_i)
+    return base
+
+
+def _margin_leverage(leverage: int) -> int:
+    try:
+        lev = int(leverage)
+    except (TypeError, ValueError):
+        return LEVERAGE
+    return lev if lev >= 1 else LEVERAGE
 
 
 def clamp_tp_r(tp_r: float) -> float:
@@ -424,16 +460,16 @@ def widen_stop_for_fill(
 
 
 def initial_margin(size: float, price: float, leverage: int = LEVERAGE) -> float:
-    """USDC initial margin for one ticket: notional / 20.
+    """USDC initial margin for one ticket: notional / leverage.
 
     ``price`` is the Alo limit for a resting order and the fill for an
-    open position. This is the same 20× notional ``size_from_stop`` caps.
-    It is not a second balance.
+    open position. ``leverage`` is the coin max set on that order. Unknown
+    meta uses 20, the same fallback ``usable_leverage`` returns. This is
+    not a second balance, and it does not change the 2% size.
     """
-    assert_leverage(leverage)
     if size <= 0 or price <= 0:
         return 0.0
-    return float(size) * float(price) / float(LEVERAGE)
+    return float(size) * float(price) / float(_margin_leverage(leverage))
 
 
 def ticket_fits(
@@ -519,10 +555,12 @@ def size_from_stop(
     in directly). It is not perp account value. ``risk_pct`` is
     ``RISK_PER_TRADE`` (0.02 for Model B), so dollar risk is at most 2% of
     spot USDC. A wider stop returns a smaller size. Notional is capped at
-    20× that same balance, which trims size when the stop is very tight.
-    The fraction is not hard-wired here.
+    ``leverage`` times that same balance, which trims size when the stop
+    is very tight. The trim can only shrink the dollar risk. The fraction
+    is not hard-wired here, and the stop price is not an input this
+    function is allowed to move.
     """
-    assert_leverage(leverage)
+    lev = _margin_leverage(leverage)
     if spot_usdc <= 0 or entry <= 0 or stop <= 0:
         raise ValueError("invalid size inputs")
     if risk_pct <= 0:
@@ -532,7 +570,7 @@ def size_from_stop(
         raise ValueError("stop distance is zero")
     dollar = spot_usdc * float(risk_pct)
     size = dollar / dist
-    max_notional = spot_usdc * LEVERAGE
+    max_notional = spot_usdc * lev
     if size * entry > max_notional:
         size = max_notional / entry
         dollar = size * dist

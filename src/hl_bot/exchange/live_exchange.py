@@ -114,21 +114,31 @@ class LiveExchange:
     ) -> Any:
         """Post-only Alo. Model B never crosses and never falls back to market.
 
-        40× is rejected. Leverage is updated to 20 before the order.
+        Leverage is the coin max already used for margin. It is set cross
+        before the order. A failed update does not send the order: the
+        ticket would otherwise rest at leftover leverage while the margin
+        math assumed the coin max.
         """
-        if int(leverage) != 20:
-            raise ValueError(f"Model B is 20x only (40x off); got {leverage}")
+        lev = int(leverage)
+        if lev < 1:
+            raise ValueError(f"leverage must be >= 1; got {leverage}")
         logger.warning(
-            "LIVE ALO: %s %s size=%.6f px=%.6f lev=20x tif=Alo",
+            "LIVE ALO: %s %s size=%.6f px=%.6f lev=%sx tif=Alo",
             "BUY" if is_buy else "SELL",
             coin,
             size,
             limit_px,
+            lev,
         )
         try:
-            self._exchange.update_leverage(20, coin, is_cross=True)
+            updated = self._exchange.update_leverage(lev, coin, is_cross=True)
         except Exception as exc:
             logger.error("update_leverage failed: %s", exc)
+            raise
+        if isinstance(updated, dict):
+            status = updated.get("status")
+            if status not in (None, "ok"):
+                raise RuntimeError(f"update_leverage rejected: {updated}")
         order_type = {"limit": {"tif": "Alo"}}
         return self._exchange.order(
             coin,

@@ -6,7 +6,8 @@ is stale (a print through the sweep extreme that does not fill it).
 ``MODEL_B_ALO_TIMEOUT_SEC=0`` (the default) disables the clock cancel.
 Exits are stop and TP only. One thesis per coin. Another coin may rest
 at the same time when the sizing balance still covers that ticket's
-initial margin (notional / 20) at the full 2% size. When it does not,
+initial margin (notional / that coin's max leverage, 20× when meta is
+missing) at the full 2% size. When it does not,
 a new coin takes the slot only by cancelling an unfilled Alo whose
 limit is strictly closer to the market, in bps, and whose arm score
 is not strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on:
@@ -66,12 +67,14 @@ from hl_bot.strategy.model_b.alo import (
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import (
+    LEVERAGE,
     assert_leverage,
     initial_margin,
     leaves_reserve_headroom,
     other_margin_cap,
     reserve_headroom,
     ticket_fits,
+    usable_leverage,
 )
 from hl_bot.strategy.model_b.thesis import CloseEvent, OpenPosition, ThesisBook
 from hl_bot.strategy.model_b.universe import (
@@ -685,6 +688,8 @@ def run_model_b(
 
         active = session_coins(now, symbols=hunt_coins)
         hunts: list[dict] = []
+        lev_map = _coin_max_leverages(info, hunt_coins)
+        lev_cap = getattr(settings, "model_b_max_leverage", None)
 
         # Live dollar risk is 2% of spot USDC. A missing read skips new
         # arms. It is not replaced with perp account value or STARTING_EQUITY.
@@ -839,6 +844,8 @@ def run_model_b(
                 bid, ask = feed.bbo(coin)
             tick = tick_for(coin) if tick_for is not None else _default_tick(coin, last)
 
+            meta_lev = lev_map.get(canon_coin(coin))
+            coin_lev = usable_leverage(meta_lev, lev_cap)
             decision = engine.evaluate(
                 coin,
                 now=now,
@@ -849,6 +856,7 @@ def run_model_b(
                 best_ask=ask,
                 equity=risk_base,
                 tick=tick,
+                leverage=coin_lev,
             )
             hunts.append(
                 {
@@ -859,6 +867,8 @@ def run_model_b(
                     "last": last,
                     "post": not occupied,
                     "exposure": exposure,
+                    "lev_meta": meta_lev,
+                    "lev_cap": lev_cap,
                 }
             )
 
@@ -924,12 +934,10 @@ def run_model_b(
                 if canon_coin(order.coin) != preference.coin
             ]
             crowded.sort(
-                key=lambda order: initial_margin(order.size, order.limit_px),
+                key=_order_margin,
                 reverse=True,
             )
-            kept_margin = sum(
-                initial_margin(order.size, order.limit_px) for order in crowded
-            )
+            kept_margin = sum(_order_margin(order) for order in crowded)
             for order in crowded:
                 if kept_margin <= cap + 1e-6:
                     break
@@ -939,12 +947,12 @@ def run_model_b(
                     # PR #5: a strictly higher resting score is not cancelled
                     # to fund the reserve. It stays, and it no longer forces
                     # the smaller tickets out.
-                    kept_margin -= initial_margin(order.size, order.limit_px)
+                    kept_margin -= _order_margin(order)
                     continue
                 released = book.release_for_closer(order.coin)
                 if released is None:
                     continue
-                kept_margin -= initial_margin(released.size, released.limit_px)
+                kept_margin -= _order_margin(released)
                 _cancel_working(
                     released,
                     "close_margin_reserve",
@@ -995,8 +1003,9 @@ def run_model_b(
             # may both rest when the sizing balance (spot USDC, or paper
             # equity) still covers this ticket's initial margin at the
             # size already chosen — 2% of that full balance, not a cut-down
-            # size. Margin already in use is notional / 20 on resting Alos
-            # and open positions. When the remainder cannot fund this
+            # size. Margin already in use is notional / the leverage set on
+            # that order (20× when it was adopted or meta was missing).
+            # When the remainder cannot fund this
             # ticket, fall back to cancelling a strictly farther unfilled
             # Alo. A filled position is never cancelled.
             if (
@@ -1005,7 +1014,7 @@ def run_model_b(
                 and not _score_beats_reserve(decision.score, preference.score)
             ):
                 capacity = _reserve_capacity(float(risk_base), book, preference.coin)
-                reserve_need = initial_margin(intent.size, intent.limit_px)
+                reserve_need = _order_margin(intent)
                 committed = _other_resting_margin(book, preference.coin)
                 headroom = reserve_headroom(capacity, fraction)
                 free_for_preferred = capacity - committed
@@ -1041,24 +1050,32 @@ def run_model_b(
                     )
                     logger.info(
                         "MODEL_B MARGIN %s CLOSE_MARGIN_RESERVE hold free=%.4f "
-                        "need=%.4f reserve=%.4f capacity=%.4f preferred=%s",
+                        "need=%.4f reserve=%.4f capacity=%.4f preferred=%s "
+                        "leverage=%s",
                         coin,
                         free_for_preferred,
                         reserve_need,
                         headroom,
                         capacity,
                         preference.coin,
+                        intent.leverage,
                     )
                     continue
 
             resting = [order for order in book.resting_orders() if order.coin != intent.coin]
             used_now = _margin_in_use(book)
-            need_now = initial_margin(intent.size, intent.limit_px)
+            need_now = _order_margin(intent)
             free_now = float(risk_base) - used_now
             if (
                 used_now > 1e-9
                 and not resting
-                and not ticket_fits(float(risk_base), used_now, intent.size, intent.limit_px)
+                and not ticket_fits(
+                    float(risk_base),
+                    used_now,
+                    intent.size,
+                    intent.limit_px,
+                    intent.leverage,
+                )
             ):
                 held_by = ",".join(pos.coin for pos in book.open_positions()) or "-"
                 summary["fails"] += 1
@@ -1078,17 +1095,22 @@ def run_model_b(
                 )
                 logger.info(
                     "MODEL_B MARGIN %s insufficient free=%.4f need=%.4f "
-                    "spot=%.4f held=%.4f held_by=%s",
+                    "spot=%.4f held=%.4f held_by=%s leverage=%s",
                     coin,
                     free_now,
                     need_now,
                     float(risk_base),
                     used_now,
                     held_by,
+                    intent.leverage,
                 )
                 continue
             if used_now > 1e-9 and not resting and ticket_fits(
-                float(risk_base), used_now, intent.size, intent.limit_px
+                float(risk_base),
+                used_now,
+                intent.size,
+                intent.limit_px,
+                intent.leverage,
             ):
                 held_by = ",".join(pos.coin for pos in book.open_positions()) or "-"
                 logger.info(
@@ -1115,9 +1137,15 @@ def run_model_b(
             if resting:
                 used = _margin_in_use(book)
                 free = float(risk_base) - used
-                need = initial_margin(intent.size, intent.limit_px)
+                need = _order_margin(intent)
                 held = ",".join(order.coin for order in resting)
-                if ticket_fits(float(risk_base), used, intent.size, intent.limit_px):
+                if ticket_fits(
+                    float(risk_base),
+                    used,
+                    intent.size,
+                    intent.limit_px,
+                    intent.leverage,
+                ):
                     logger.info(
                         "MODEL_B MARGIN %s dual_rest free=%.4f need=%.4f "
                         "equity=%.4f held=%s",
@@ -1140,12 +1168,13 @@ def run_model_b(
                 else:
                     logger.info(
                         "MODEL_B MARGIN %s insufficient free=%.4f need=%.4f "
-                        "equity=%.4f held=%s",
+                        "equity=%.4f held=%s leverage=%s",
                         coin,
                         free,
                         need,
                         float(risk_base),
                         held,
+                        intent.leverage,
                     )
                     challenger_ref = market_ref(bid, ask, last)
                     challenger_bps = (
@@ -1278,6 +1307,17 @@ def run_model_b(
                 _block_same_coin(intent.coin, exposure_now, decision)
                 continue
 
+            meta_txt = hunt.get("lev_meta") if hunt.get("lev_meta") else "-"
+            cap_txt = hunt.get("lev_cap") if hunt.get("lev_cap") else "coin"
+            logger.info(
+                "MODEL_B LEVERAGE %s max=%s used=%s cap=%s margin=%.4f risk=%.4f",
+                intent.coin,
+                meta_txt,
+                intent.leverage,
+                cap_txt,
+                _order_margin(intent),
+                intent.size * abs(intent.limit_px - intent.stop),
+            )
             oid = None
             if live is not None:
                 rejected: str | None = None
@@ -1288,7 +1328,7 @@ def run_model_b(
                         intent.side == "long",
                         intent.size,
                         intent.limit_px,
-                        leverage=20,
+                        leverage=intent.leverage,
                     )
                 except Exception as exc:
                     logger.exception("LIVE Alo failed for %s", coin)
@@ -1635,12 +1675,49 @@ def _merge_fills(snapshot_fills, ws_fills: list[UserFill]) -> list[UserFill]:
     return merged
 
 
+def _ticket_leverage(ticket) -> int:
+    """Leverage stored on an order or position. Missing stays 20."""
+    raw = getattr(ticket, "leverage", LEVERAGE)
+    try:
+        lev = int(raw)
+    except (TypeError, ValueError):
+        return LEVERAGE
+    return lev if lev >= 1 else LEVERAGE
+
+
+def _order_margin(ticket) -> float:
+    """Initial margin of a resting Alo or an intent at the leverage it was set to."""
+    return initial_margin(ticket.size, ticket.limit_px, _ticket_leverage(ticket))
+
+
+def _coin_max_leverages(info, coins) -> dict[str, int]:
+    """Exchange max leverage by coin. A miss or a failure is an empty map.
+
+    Callers then use 20×. An injected map does not touch the network.
+    """
+    loader = getattr(info, "max_leverages", None)
+    if loader is None:
+        return {}
+    try:
+        loaded = loader(dexs_for_coins(coins))
+    except Exception:
+        logger.exception("maxLeverage meta failed; margin falls back to 20x")
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return loaded
+
+
 def _position_margin(pos) -> float:
-    """Exchange ``marginUsed`` when the position has one, else notional / 20."""
+    """Exchange ``marginUsed`` when the position has one, else notional / leverage.
+
+    Adopted positions carry the exchange figure. A position this process
+    opened uses the leverage set before the entry. Unknown leverage is 20×.
+    """
     held = getattr(pos, "margin_used", None)
     if held is not None and float(held) > 0:
         return float(held)
-    return initial_margin(pos.size, pos.entry)
+    return initial_margin(pos.size, pos.entry, _ticket_leverage(pos))
 
 
 def _reserve_capacity(equity: float, book: ThesisBook, coin: str) -> float:
@@ -1655,7 +1732,7 @@ def _reserve_capacity(equity: float, book: ThesisBook, coin: str) -> float:
         locked += _position_margin(pos)
     for order in book.working_orders():
         if canon_coin(order.coin) == preferred:
-            locked += initial_margin(order.size, order.limit_px)
+            locked += _order_margin(order)
     return float(equity) - locked
 
 
@@ -1665,7 +1742,7 @@ def _other_resting_margin(book: ThesisBook, coin: str) -> float:
     for order in book.resting_orders():
         if canon_coin(order.coin) == preferred:
             continue
-        used += initial_margin(order.size, order.limit_px)
+        used += _order_margin(order)
     return used
 
 
@@ -1681,7 +1758,7 @@ def _margin_in_use(book: ThesisBook) -> float:
     """
     used = 0.0
     for order in book.working_orders():
-        used += initial_margin(order.size, order.limit_px)
+        used += _order_margin(order)
     for pos in book.open_positions():
         used += _position_margin(pos)
     floor = float(getattr(book, "margin_floor", 0.0) or 0.0)
