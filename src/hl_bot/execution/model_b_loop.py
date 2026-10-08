@@ -244,6 +244,8 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         stop_slip=str(getattr(settings, "model_b_stop_slip", "shadow")),
         stop_slip_bps=str(getattr(settings, "model_b_stop_slip_bps", "") or ""),
         htf_stop=str(getattr(settings, "model_b_htf_stop", "shadow")),
+        xyz_min_stop=str(getattr(settings, "model_b_xyz_min_stop", "shadow")),
+        xyz_min_stop_bps=float(getattr(settings, "model_b_xyz_min_stop_bps", 40.0)),
     )
 
 

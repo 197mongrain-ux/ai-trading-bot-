@@ -309,6 +309,12 @@ class Settings:
     # 1 places the stop beyond the swing and sizes from the wider distance.
     # 0 does not look.
     model_b_htf_stop: str = "shadow"
+    # xyz stop floor. shadow logs the wider stop and posts today's.
+    # 1 places it (only loosens) and the 1.5R TP walk uses that stop.
+    # 0 does not look. 40 bps is the Oct 7-8 expectancy pick. Main-dex
+    # coins are not moved. The hard loss cap and the 20x cap stay.
+    model_b_xyz_min_stop: str = "shadow"
+    model_b_xyz_min_stop_bps: float = 40.0
     model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -361,10 +367,13 @@ class Settings:
             )
         mode_now = (self.entry_mode or "").strip().lower()
         if mode_now == "model_b":
-            if abs(self.risk_per_trade - 0.02) > 1e-12:
+            # 1% and 1.5% are allowed. The hard loss cap stays 2%.
+            # 0.5% (the scalp band) is still rejected.
+            if self.risk_per_trade < 0.01 - 1e-12 or self.risk_per_trade > 0.02 + 1e-12:
                 raise ValueError(
                     f"RISK_PER_TRADE={self.risk_per_trade} — Model B sizes at "
-                    "RISK_PER_TRADE=0.02 (max 2% of spot USDC, not perp account value)."
+                    "1% to 2% of spot USDC (default 0.02, not perp account value). "
+                    "The hard loss cap stays 2%."
                 )
         elif not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
@@ -519,6 +528,15 @@ class Settings:
         if self.model_b_htf_stop not in ("on", "off", "shadow"):
             raise ValueError(
                 f"MODEL_B_HTF_STOP={self.model_b_htf_stop!r} must be 1|shadow|0."
+            )
+        if self.model_b_xyz_min_stop not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_XYZ_MIN_STOP={self.model_b_xyz_min_stop!r} must be 1|shadow|0."
+            )
+        if not (0.0 <= self.model_b_xyz_min_stop_bps <= 200.0):
+            raise ValueError(
+                f"MODEL_B_XYZ_MIN_STOP_BPS={self.model_b_xyz_min_stop_bps} "
+                "must be in [0, 200]."
             )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
@@ -692,6 +710,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_stop_slip=_tp_mode("MODEL_B_STOP_SLIP", "shadow"),
         model_b_stop_slip_bps=(os.getenv("MODEL_B_STOP_SLIP_BPS") or "").strip(),
         model_b_htf_stop=_tp_mode("MODEL_B_HTF_STOP", "shadow"),
+        model_b_xyz_min_stop=_tp_mode("MODEL_B_XYZ_MIN_STOP", "shadow"),
+        model_b_xyz_min_stop_bps=_float("MODEL_B_XYZ_MIN_STOP_BPS", 40.0),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),

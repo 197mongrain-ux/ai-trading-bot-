@@ -212,7 +212,9 @@ def _skhx_bars():
     for bucket in range(7):
         for minute in range(15):
             t = bucket * 900 + minute * 60
-            high = 1198.9 if bucket == 2 and minute == 7 else 1197.0
+            # Other highs sit under the 1196.7 entry so the last closed 15m
+            # bar is not an opposing extreme. The 1198.9 print stays the anchor.
+            high = 1198.9 if bucket == 2 and minute == 7 else 1196.5
             bars.append({"t": t, "o": 1196.8, "h": high, "l": high - 0.2, "c": 1196.8})
     return bars, 7 * 900
 
@@ -230,6 +232,35 @@ def test_skhx_stop_sat_one_tick_under_the_15m_swing():
     buf = stop_buffer(SKHX_ENTRY, SKHX_TICK, atr14(bars, now))
     assert check.beyond == pytest.approx(1198.9 + buf)
     assert check.beyond > check.swing
+
+
+def test_nearer_15m_bar_beats_a_far_fractal():
+    """SKHX 13:45 high is not a width-2 fractal. The fractal was ~1234.
+
+    The stop check uses the closer of the two, so a 3% fractal does not
+    become the stop when the last closed 15m high is 1198.9.
+    """
+    bars = []
+    for bucket in range(8):
+        for minute in range(15):
+            t = bucket * 900 + minute * 60
+            if bucket == 2:
+                high = 1234.3
+            elif bucket == 7:
+                high = 1198.9
+            else:
+                high = 1190.0
+            bars.append({"t": t, "o": 1196.0, "h": high, "l": high - 0.4, "c": 1196.0})
+    now = 8 * 900
+    check = check_htf_stop(
+        "short", SKHX_ENTRY, SKHX_STOP, bars, now, SKHX_TICK, atr14(bars, now)
+    )
+    assert check.swing == pytest.approx(1198.9)
+    assert check.under_swing
+    assert check.inside
+    # beyond is the swing plus the buffer, snapped out to the next tick.
+    assert check.beyond + 1e-9 >= 1198.9 + check.buffer
+    assert check.beyond < 1198.9 + check.buffer + SKHX_TICK + 1e-9
 
 
 def test_oct7_replay_htf_stop_frequency():
@@ -259,18 +290,12 @@ def test_oct7_replay_htf_stop_frequency():
         if check.under_swing:
             under.append(label)
     assert checked == 6
-    # Measured on tests/fixtures/oct7_winners_1m.json. "Inside" means the
-    # armed stop is not beyond the nearest opposing 15m swing plus buffer.
-    # ETH's swing is 17 pts past the stop (a far level, not a one-tick
-    # miss). SOL and PUMP cleared the swing print and missed only the
-    # buffer. The three XYZ100 stops were already beyond. The SKHX
-    # one-tick miss is the synthetic test above; it is not in this book.
-    assert [row[0] for row in inside] == [
-        "ETH L 10-06 23:47",
-        "SOL S 10-07 00:26",
-        "PUMP S 10-07 08:04",
-    ]
-    assert under == ["ETH L 10-06 23:47"]
-    eth = inside[0]
-    assert eth[4] is True  # stop still on the entry side of the swing
-    assert abs(eth[1] - eth[2]) > 10  # 2588.1 vs 2605.5, not a one-tick miss
+    # Measured on tests/fixtures/oct7_winners_1m.json. "Inside" is the
+    # nearer of the 15m fractal and the last closed 15m extreme, plus
+    # the buffer. The old fractal-only read marked ETH, SOL, and PUMP
+    # inside because a far fractal sat past a stop that had already
+    # cleared the last 15m bar. Those three are not inside anymore.
+    # The three XYZ100 stops were already beyond either reading. The
+    # SKHX one-tick miss is the synthetic test above; it is not in this book.
+    assert inside == []
+    assert under == []
