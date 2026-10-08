@@ -47,7 +47,7 @@ ICT-lite pullback entry alongside the 1m breakout scalp. **OTE ≈ the 62%–79%
 
 **Short:** mirror (VWAP short bias, swing high→low impulse, OTE zone on the retrace up).
 
-**`ENTRY_MODE`** = `breakout` | `ote` | `both` (default **`both`**):
+**`ENTRY_MODE`** = `breakout` | `ote` | `both` | `model_b` (default **`both`**):
 - `breakout` — existing N-bar micro breakout only.
 - `ote` — OTE pullback only (reasons: `ote_long` / `ote_short` / `ote_no_swing` / `ote_outside_zone`).
 - `both` — **prefer OTE when mark is in the zone**; otherwise try breakout. Session / vol / HTF / cooldown filters still apply before either path.
@@ -57,6 +57,49 @@ Long OTE zone = `[110 − 0.79×10, 110 − 0.62×10]` = **`[102.1, 103.8]`**.
 Mark 103.0 inside → `ote_long`. With `STOP_PCT=0.0015`, pct stop ≈ 102.845; zone stop at 102.1 is wider → use pct stop 102.845 so risk stays 0.15%.
 
 Env knobs: `ENTRY_MODE`, `OTE_LOOKBACK_BARS`, `OTE_FIB_SHALLOW`, `OTE_FIB_DEEP`, `OTE_STOP_BUFFER_BPS`, `OTE_REQUIRE_CLOSE`, `OTE_USE_HTF_SWINGS`. Journal `open` events log `entry_mode` + `reason`.
+
+### Model B (testnet hunt this week)
+
+`ENTRY_MODE=model_b` is a **separate** entry mode. It does not run inside the VWAP breakout/OTE path, and it does not sit on top of a Model 3 score door. A 7/9 or 9/9 score is written to the journal and then ignored. A low score does not block. `HEAVY` / `VOL_OK` is a tag only. There is no `FLOW_OK` pre-place gate.
+
+```bash
+# Desk start — testnet live. Paper is for unit tests only.
+TRADING_MODE=live
+HL_NETWORK=testnet
+ENTRY_MODE=model_b
+LEVERAGE=20
+RISK_PER_TRADE=0.02   # max 2% of spot USDC (not perp account value)
+I_UNDERSTAND_LIVE_TRADING=true
+# HL_PRIVATE_KEY=0x...   # API wallet
+# MODEL_B_TP_R=1.5       # clamped to [1, 2], then capped at the untaken pool
+```
+
+```bash
+python -m hl_bot run
+```
+
+`SYMBOLS` is not the hunt list in this mode. The clock picks the coins (America/New_York):
+
+| When | Coins |
+|------|--------|
+| 09:00–16:00 ET (16:00 exclusive) | BTC, ETH, NEAR, PUMP, SOL, LIT, AAVE, ONDO, WLD, TAO |
+| After hours | BTC, ETH, SOL |
+
+What it does:
+
+- **Bias** is the nearest untaken pool (PDH / PDL / WKH / WKL). Pool above price drops shorts; pool below drops longs. No pool, or a tie, is **NONE and both sides are allowed**. Bias never arms. The pool on the trade's side is a liquidity target for the take-profit, not the entry.
+- **Data** is aggressor trade prints `{ts, coin, price, size, side}` from the Hyperliquid trades websocket (`B` = buy aggressor, `A` = sell aggressor). A print with no side fails closed as `NO_SIDE`. Book depth is not an entry input. Best bid/ask is used only to keep the Alo from crossing. The socket sends `{"method":"ping"}` every 20s and resubscribes after a disconnect (`Expired` included). The print buffer is kept across that reconnect. `BTC-PERP` is stored as `BTC`.
+- **Candles** for bias pools are cached per coin for 60s. HTTP 429 backs off (5s, then double, cap 60s) and reuses the last good snapshot. The hunt does not refetch `candleSnapshot` for all 10 names on every pass.
+- **Arm** on the latest confirmed 1-minute swing opposite the bias (long = swing low, short = swing high), ignoring a swing closer than 3 ticks to the last trade. The 90s window needs at least `MODEL_B_MIN_PRINTS` prints (`THIN_TAPE` otherwise). Mainnet stays at **30**. On testnet the unset default is **3**, the same density as 30 prints against a much thicker mainnet tape: a 2026-10-05 NY sample was **252 BTC prints/min** on mainnet (84 prints in 20s) and the desk probe was **~7 BTC prints/min** on testnet (~10.5 in 90s). `30 * (7/252)` rounds to 1, and the auto floor is `max(3, that)`. Set `MODEL_B_MIN_PRINTS` to override. The print floor does not change absorb or sweep. Long: a print at least 1 tick through the swing low, last trade back above it, absorb (sell size sweep→reclaim / buy size reclaim→now) ≥ 1.3 (`ABSORB_MIN`). Window delta and last-15s delta are coin size (buy size minus sell size, the logged `dW` / `d15`). The flat band in coins is the larger of `MODEL_B_DELTA_FLAT_USDC` / mid (default **$100**; the last trade when the book is one-sided) and `MODEL_B_DELTA_FLAT_EPS` (default **0.05** coins). Long passes when each delta is at or above minus that coin size. Short passes at or below plus it. At $150 the $100 term is about 0.67 SOL and wins. At $86,000 the 0.05-coin floor is about $4,300 and wins, so a BTC short with `dW` about +0.006 still passes. A short SOL `dW` of +1.1 (~$165 at $150) still fails. Set either value to 0 to drop that term. Both at 0 restore the strict sign check.
+- **Order** is a post-only Alo immediately, never a market. A live Alo the exchange does not rest is not kept as a ticket: insufficient margin is `MARGIN_REJECT`, and any other never-rested response or send exception is `SEND_FAIL`. Nothing is posted into the book, so that coin does not reserve margin or block another ticker. The swing is not consumed, so a later pass can arm once the margin is actually free. Long rests at the swept low, or the best bid if that low would cross. Short mirrors. It rests until the thesis is stale: a later print through the sweep extreme that does not fill the order cancels it and ends that swing. There is no 20s maker timeout. `MODEL_B_ALO_TIMEOUT_SEC=0` (default) keeps the timer off; a positive value is an optional clock cancel. One thesis per coin: no average-down, no second Alo, no re-entry after a stale cancel or stop on that swing. Another coin can rest at the same time when the sizing balance still covers that ticket's initial margin. The balance is the same one the sizer uses: live spot USDC `total`, or paper equity. Margin is notional / 20 (Alo limit for a resting order, fill for an open position). The new ticket keeps its full 2% size; it is not cut down to fit. `MODEL_B MARGIN … dual_rest` is that place, and the journal event is `model_b_margin` with `action=dual_rest`. When the remainder cannot fund that full size, a new coin takes the slot only by cancelling a strictly farther unfilled Alo (closer to the mid, else the last trade, in bps). The log is `MODEL_B MARGIN … closer_cancel`, the cancel reason is `closer_ticker`, and the log names the coin that won (`margin_for_better`). A tie keeps the resting order. The coin that loses the slot is not posted (`NOT_CLOSER`). A coin that already has a fill is not cancelled; its stop and TP stay. When BTC is the only close major, 60% of free-margin capacity stays available for a full BTC 2% ticket (`BTC_FREE_MARGIN_RESERVE`). Close means this pass selected a confirmed swing and stopped before posting: waiting on the sweep or reclaim (`NO_SWEEP`, `NO_RECLAIM`), or a later tape or geometry fail on that swing (`ABSORB`, `DELTA`, `LAST_15s`, `NO_ALO`, `BAD_STOP`, `BAD_TP`). `THIN_TAPE` and `NO_SWING` are not close. A coin that arms this pass is a ticket, not a waiting setup. If another major is also close, the reserve stays off and dual-rest / closer-cancel are unchanged. While it is on, a non-BTC Alo may use at most the other 40%. A resting non-BTC Alo that would leave less than 60% is cancelled (`btc_margin_reserve`). The desk logs `MODEL_B MARGIN BTC reserve engage` and `reserve release`. This does not change the flat-delta floor.
+- **Risk** is `RISK_PER_TRADE` (Model B requires **0.02**) times the **spot USDC balance**, divided by the stop distance. That is a max of 2% of spot USDC. Live reads `spotClearinghouseState` (USDC `total`). It does not size off perp `accountValue`, which can be a thin remainder while the USDC sits in spot. A missing or zero spot balance fails closed (`NO_SPOT_USDC`) and does not fall back to `STARTING_EQUITY`. Paper tests pass the balance in directly. Notional is capped at 20× that same balance. Set `HL_ACCOUNT_ADDRESS` to the master account that holds the spot USDC.
+- **Stop** is placed past opposing liquidity, and only then is the Alo sized. A wick, swing, or last-3-bar extreme more than one tick past the fill owns the stop. The buffer past that print is `max(3 ticks, 2 bps, 0.5×ATR14)`. ATR14 is used only when 15 closed bars exist. A print inside the old 0.15% / 10-tick / fee room is kept and is not lifted onto that floor: the Oct 5 ETH long at **2705.8** with a 1m low at **2704** rests near **2703.4**, not at **2701.7**. When the anchor is the fill itself, that few-tick buffer is still inside wick room (the Oct 6 BTC short at **85658** was stopped **18** points away at **85676**). The stop then goes past the nearest opposing print that already sits outside the room — every closed bar extreme on the stop side, a confirmed swing, or an untaken pool — or, with no such print, past the room by the 3-tick / 2 bp pad. The no-print ETH case clears the room near **2701.2**, beyond the old **2701.7** floor snap, and is not parked on it. A 0.5×ATR buffer that already clears the room is kept. A deeper wick is never pulled back. Distance over **1.5%** of price arms at a smaller size (`size_adjust=wide_stop`). The stop is not tightened into the wick to fit 1.5%. `BAD_STOP` remains only when the stop is on the wrong side of the fill, equal to the fill, or one tick off it (the LIT collision). A size that rounds to zero fails closed the same way. Size is still 2% of spot USDC divided by the distance that results.
+- **Volume profile is a log tag only.** `vp_as_filter`, `vp_entries`, and `vp_enabled` stay off. Each evaluation writes `vp_poc`, `vp_vah`, `vp_val`, `nearest_lvn_on_side`, `sweep_to_val_bps`, `sweep_to_lvn_bps`, `vp_tag` (`val`, `lvn`, `val+lvn`, `none`, or `vp_error`), and `catalyst_flag` on the arm/fail journal row. A touch is 12 bps. Too few session bars leave the numbers null and `vp_tag=none`. The tags do not arm, block, move the Alo, or widen the stop. The live laptop still needs this port; it is not applied there yet.
+- **TP1** is the next liquidity in the trade direction that clears the round-trip fee and at least 1R of the stop just placed: the nearest confirmed swing (long: swing high, short: swing low) or untaken pool, more than one tick past the entry, and at least `max(1 × stop distance, maker+taker fee)` away. A closer pool is skipped. The Oct 6 short at **85818** with a ~147 point stop does not take the **85814** print (about 0.03R); it advances to the next real pool, such as PDL **85273**. A level past 2R is still that pool and is not pulled back to 2R. PDL **85500** on the **85658** short is inside 1R of the 180-point stop, so it is skipped too. If no level clears the band, the target falls back to 1.5R of that stop (clamped to **[1, 2]** via `MODEL_B_TP_R`). `BAD_TP` is that fallback when it still cannot clear the band, or a target that is not strictly beyond the entry. A later drip resizes the stop and TP to the filled size and does not move a chosen pool back to 2R. The hunt owns both brackets in this process. An amend that fails is logged and does not exit the loop. The fail logs `r` (entry→stop), `pool_dist`, `pool_r`, and `why` (`pool_too_close`, `under_1r`, `over_2r` only if the rejected target itself is past 2R, or `fees`). An absorb ratio with no reclaim-side size is infinite and still clears 1.3; the journal writes null, not `1000000`. A heal cannot replace a wider stop with a tighter one. On a live fill the arm stop is kept unless a recompute is wider. A fill-only buffer is not substituted when it would tighten the stop or sit on the fill. TP is recomputed from that stop, and the stop/TP size is the **filled** size (a margin trim or partial fill does not bracket the requested size). A partial fill keeps the unfilled maker resting. Further drips grow the position and the brackets are resized to the filled size. The remainder's margin is released when the position closes or goes flat (`MODEL_B MARGIN … release`), including a bracket fill that prints between the stop and the target. It is not left reserved until the thesis is stale. While the position is still open, the remainder is cancelled when that thesis is stale (`MODEL_B PARTIAL … remainder cancelled reason=thesis_stale`, position kept) or another existing cancel fires. A closer coin does not take the slot once any size on that coin has filled. Soft-prop, strategy kill, and flow exits are off.
+
+Every arm and fail is journaled (`model_b_arm` / `model_b_fail`) with coin, bias, pool, swing, sweep price, absorb, window delta, last-15s delta, score, volume tag, `size_adjust` (`wide_stop` when the armed stop is wider than 1.5% of entry, otherwise null), `delta_flat` (`window`, `last_15s`, or `both` when the flat band passed a delta the strict sign check would have failed, otherwise null), `delta_flat_eps` (the coin size compared: the larger of the USDC term and the coin floor), `delta_flat_usdc_eps`, `delta_flat_coin_eps`, and `delta_flat_px` (the price that scaled the USDC term), and on `BAD_TP` also `r_distance`, `pool_distance`, `pool_r`, and `bad_tp_why`. One fail reason: `NO_SIDE`, `THIN_TAPE`, `NO_SWEEP`, `NO_RECLAIM`, `ABSORB`, `DELTA`, `LAST_15s` (plus `NO_SWING`, `OUT_OF_SESSION`, `THESIS_DONE`, `SECOND_ALO`, `AVERAGE_DOWN` when the hunt never reaches the tape). A `THIN_TAPE` line also shows `prints=N/M` for the 90s window and the floor in force (`M` is 30 on mainnet, 3 on testnet unless overridden).
+
+The operator kill switch still flattens. That is account safety, not a score kill. Unit tests stay offline; they do not need a testnet session.
 
 
 ## Watching on TradingView
@@ -157,7 +200,7 @@ PAPER mode **never** calls `Exchange.order`. It uses `PaperBroker` fills at mark
 | `HTF_CONFIRM` | `true` | Require 5m VWAP bias alignment |
 | `HTF_INTERVAL` | `5m` | HTF candle interval |
 | `ENTRY_COOLDOWN_SEC` | `120` | Block re-entry after stop-out (same symbol) |
-| `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` (prefer OTE in zone) |
+| `ENTRY_MODE` | `both` | `breakout` \| `ote` \| `both` \| `model_b` |
 | `OTE_LOOKBACK_BARS` | `45` | Impulse swing lookback (1m or HTF) |
 | `SCALE_OUT_ENABLED` | `true` | Sell into strength at `SCALE_OUT_R` |
 | `SCALE_OUT_R` | `1.0` | Unrealized R to scale out |
@@ -261,8 +304,11 @@ src/hl_bot/
     vwap.py              # VWAP bias + micro breakout / OTE + filters
     ote.py               # OTE Fib zone helpers (impulse / zone / stop)
     filters.py           # vol / session / HTF / cooldown helpers
+    model_b/             # ENTRY_MODE=model_b sweep/reclaim Alo (score is log-only)
     ai_signal.py         # stub (unused)
-  execution/loop.py      # main loop (per-symbol)
+  exchange/hl_trades.py  # aggressor trade-print feed (fail closed without side)
+  execution/loop.py      # main loop (per-symbol); model_b dispatches out
+  execution/model_b_loop.py
 src/dashboard/
   state.py               # journal → open positions / stats / status
   marks.py               # optional Hyperliquid allMids
