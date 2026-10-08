@@ -8,6 +8,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _isolated_only_error(value: object) -> bool:
+    text = str(value or "").lower()
+    return "isolated" in text and ("only" in text or "must" in text or "not" in text)
+
 # Seconds before an order / cancel / trigger HTTP call gives up.
 HTTP_TIMEOUT_SEC = 10.0
 
@@ -175,6 +180,37 @@ class LiveExchange:
             coin, is_buy, size, trigger_px, order_type, reduce_only=True
         )
 
+    def _set_leverage(self, coin: str, leverage: int, *, is_cross: bool) -> Any:
+        """Set leverage. An isolated-only reject retries with isolated margin.
+
+        Cross coins stay cross. The retry only runs when the caller asked
+        for cross and the exchange says this asset cannot use it.
+        """
+        try:
+            updated = self._exchange.update_leverage(leverage, coin, is_cross=is_cross)
+        except Exception as exc:
+            if is_cross and _isolated_only_error(exc):
+                logger.warning(
+                    "MODEL_B LEVERAGE %s cross rejected (%s); isolated margin",
+                    coin,
+                    exc,
+                )
+                try:
+                    return self._exchange.update_leverage(leverage, coin, is_cross=False)
+                except Exception as retry_exc:
+                    logger.error("update_leverage isolated retry failed: %s", retry_exc)
+                    raise
+            logger.error("update_leverage failed: %s", exc)
+            raise
+        if is_cross and _isolated_only_error(updated):
+            logger.warning(
+                "MODEL_B LEVERAGE %s cross rejected (%s); isolated margin",
+                coin,
+                updated,
+            )
+            return self._exchange.update_leverage(leverage, coin, is_cross=False)
+        return updated
+
     def place_alo(
         self,
         coin: str,
@@ -182,13 +218,16 @@ class LiveExchange:
         size: float,
         limit_px: float,
         leverage: int = 20,
+        is_cross: bool = True,
     ) -> Any:
         """Post-only Alo. Model B never crosses and never falls back to market.
 
         Leverage is the coin max already used for margin. It is set cross
-        before the order. A failed update does not send the order: the
-        ticket would otherwise rest at leftover leverage while the margin
-        math assumed the coin max.
+        before the order, unless the asset is isolated-only (``is_cross``
+        false, or the exchange rejects cross with an isolated-only error).
+        A failed update does not send the order: the ticket would otherwise
+        rest at leftover leverage while the margin math assumed the coin max.
+        Margin is still notional / leverage either way.
         """
         lev = int(leverage)
         if lev < 1:
@@ -196,18 +235,15 @@ class LiveExchange:
         size = self._round_size(coin, size)
         limit_px = self._round_price(coin, limit_px)
         logger.warning(
-            "LIVE ALO: %s %s size=%.6f px=%.6f lev=%sx tif=Alo",
+            "LIVE ALO: %s %s size=%.6f px=%.6f lev=%sx tif=Alo cross=%s",
             "BUY" if is_buy else "SELL",
             coin,
             size,
             limit_px,
             lev,
+            bool(is_cross),
         )
-        try:
-            updated = self._exchange.update_leverage(lev, coin, is_cross=True)
-        except Exception as exc:
-            logger.error("update_leverage failed: %s", exc)
-            raise
+        updated = self._set_leverage(coin, lev, is_cross=bool(is_cross))
         if isinstance(updated, dict):
             status = updated.get("status")
             if status not in (None, "ok"):

@@ -61,6 +61,9 @@ class WorkingOrder:
     tp_r: float = 1.5
     # Arm score, kept so a closer-ticker cancel can compare it. Not an entry gate.
     score: int | None = None
+    # Setup quality when MODEL_B_QUALITY_RANK is on. None keeps the integer
+    # score comparison (flag 0, and orders posted before the field existed).
+    quality: float | None = None
     # Leverage set on the exchange before this Alo. Adopted entries stay
     # at 20 so an old order is not counted as the coin's current max.
     leverage: int = 20
@@ -190,6 +193,7 @@ class ThesisBook:
         now: float,
         oid: object | None = None,
         score: int | None = None,
+        quality: float | None = None,
     ) -> WorkingOrder:
         if intent.tif != "Alo" or intent.market_fallback:
             raise ValueError("Model B is post-only Alo; market fallback is off")
@@ -218,6 +222,7 @@ class ThesisBook:
             pool_px=intent.pool_px,
             tp_r=intent.tp_r,
             score=None if score is None else int(score),
+            quality=None if quality is None else float(quality),
             leverage=lev,
             orig_size=float(intent.size),
             planned_risk=float(intent.size) * abs(float(intent.limit_px) - float(intent.stop)),

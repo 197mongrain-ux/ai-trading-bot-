@@ -3458,6 +3458,7 @@ def _two_coin_hunt(
     btc_step: float = 0.3,
     eth_step: float = 0.3,
     closer_score_guard: bool | None = None,
+    quality_rank: str | None = None,
 ):
     now = _now()
     btc = _long_prints(
@@ -3501,6 +3502,8 @@ def _two_coin_hunt(
     )
     if closer_score_guard is not None:
         settings_kw["model_b_closer_score_guard"] = closer_score_guard
+    if quality_rank is not None:
+        settings_kw["model_b_quality_rank"] = quality_rank
     summary = run_model_b(
         Settings(**settings_kw),
         max_iterations=iterations,
@@ -3556,6 +3559,9 @@ def test_closer_ticker_keeps_a_higher_score_alo(tmp_path, caplog):
             btc_prefix=78,
             btc_step=0.1,
             eth_prefix=28,
+            # Rollback: density score, not setup quality. The two arms
+            # share a price pattern, so quality is a tie and would swap.
+            quality_rank="off",
         )
     assert summary["arms"] == 1
     assert summary["cancels"] == 0

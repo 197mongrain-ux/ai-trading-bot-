@@ -28,6 +28,64 @@ logger = logging.getLogger(__name__)
 CANDLE_TTL_SEC = 60.0
 CANDLE_BACKOFF_BASE_SEC = 5.0
 CANDLE_BACKOFF_CAP_SEC = 60.0
+# Steady-state 1m refresh: the last few minutes, merged into the cache.
+# A full 14-day pull is ~5,000 bars and ~107 weight; eight bars are ~20.
+CANDLE_TAIL_BARS = 8
+# One cold backfill at a time. 18 coins × ~107 weight in one second is
+# what produced the startup 429s.
+CANDLE_BACKFILL_GAP_SEC = 6.0
+# Leave headroom under Hyperliquid's 1,200 weight/min address limit.
+# Account and guard reads are never deferred for this budget.
+WEIGHT_BUDGET_PER_MIN = 1000.0
+_INTERVAL_MS = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "4h": 14_400_000,
+}
+
+
+def candle_request_weight(start_ms: int, end_ms: int, interval: str) -> float:
+    """``20 + n/60``, capped at 5,000 bars. Matches ~107 for a 5,200-bar pull."""
+    step = _INTERVAL_MS.get(interval, 60_000)
+    span = max(0, int(end_ms) - int(start_ms))
+    n = min(5000, max(1, span // step + 1))
+    return 20.0 + n / 60.0
+
+
+def _merge_bars(prior: list[dict], fresh: list[dict]) -> list[dict]:
+    """Union by bar open. A bar in both lists keeps the fresh print."""
+    by_t: dict[int, dict] = {}
+    for bar in prior:
+        by_t[int(float(bar.get("t") or 0))] = bar
+    for bar in fresh:
+        by_t[int(float(bar.get("t") or 0))] = bar
+    return [by_t[key] for key in sorted(by_t)]
+
+
+class _WeightLedger:
+    """Rolling info-call weight. Candle 429 backoff does not live here."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._events: list[tuple[float, float, str]] = []
+
+    def add(self, now: float, weight: float, kind: str) -> None:
+        with self._lock:
+            self._events.append((float(now), float(weight), str(kind)))
+            cutoff = float(now) - 120.0
+            if len(self._events) > 32:
+                self._events = [item for item in self._events if item[0] >= cutoff]
+
+    def report(self, now: float, window: float = 60.0) -> dict[str, float]:
+        with self._lock:
+            recent = [item for item in self._events if float(now) - window <= item[0] <= float(now) + 1e-6]
+        candle = sum(item[1] for item in recent if item[2] == "candle")
+        account = sum(item[1] for item in recent if item[2] != "candle")
+        return {"per_min": candle + account, "candle": candle, "account": account}
 
 
 class _CandleCache:
@@ -254,6 +312,20 @@ class InfoClient:
         self._has_injected_lev = False
         self._injected_lev: dict[str, int] = {}
         self._lev_cache: dict[str, dict[str, int]] = {}
+        self._flag_cache: dict[str, dict[str, dict]] = {}
+        self._has_injected_flags = False
+        self._injected_flags: dict[str, dict] = {}
+        self._has_injected_user_fees = False
+        self._user_add: float | None = None
+        self._user_cross: float | None = None
+        self._user_fee_cache: tuple[float, tuple[float, float] | None] | None = None
+        # "full" refetches the caller's window (today's behavior).
+        # "incremental" backfills once, then merges a short tail.
+        self.candle_mode = "full"
+        self.defer_candles = False
+        self.weight_budget = WEIGHT_BUDGET_PER_MIN
+        self._weight = _WeightLedger()
+        self._next_cold_at = 0.0
 
     def _ensure_client(self) -> Any:
         if self._info is None:
@@ -341,10 +413,30 @@ class InfoClient:
             prior = self._candles.last_good(key)
             return _slice_bars(prior, start_ms, end_ms) if prior is not None else []
 
+        fetch_start = int(start_ms)
+        incremental = getattr(self, "candle_mode", "full") == "incremental"
+        prior = self._candles.last_good(key) if incremental else None
+        if incremental and prior:
+            step = _INTERVAL_MS.get(interval, 60_000)
+            tail = int(end_ms) - CANDLE_TAIL_BARS * step
+            fetch_start = max(int(start_ms), tail)
+            upcoming = candle_request_weight(fetch_start, int(end_ms), interval)
+            if self.defer_candles or self.weight_blocks(upcoming, now):
+                return _slice_bars(prior, start_ms, end_ms)
+        elif incremental:
+            upcoming = candle_request_weight(int(start_ms), int(end_ms), interval)
+            if (
+                self.defer_candles
+                or now < self._next_cold_at
+                or self.weight_blocks(upcoming, now)
+            ):
+                return []
+            self._next_cold_at = now + CANDLE_BACKFILL_GAP_SEC
+
         # One attempt. A 429 (or any other failure) must not loop.
         try:
             status, raw = _post_candle_snapshot(
-                self.base_url, coin_key, interval, start_ms, end_ms
+                self.base_url, coin_key, interval, fetch_start, end_ms
             )
         except Exception as exc:
             delay = self._candles.penalize(now)
@@ -382,8 +474,29 @@ class InfoClient:
             return _slice_bars(prior, start_ms, end_ms) if prior is not None else []
 
         bars = _parse_candle_rows(raw)
+        self._weight.add(now, candle_request_weight(fetch_start, int(end_ms), interval), "candle")
+        if incremental and prior:
+            merged = _merge_bars(prior, bars)
+            merged = [bar for bar in merged if float(bar.get("t") or 0) >= int(start_ms)]
+            self._candles.store(key, merged, now)
+            return _slice_bars(merged, start_ms, end_ms)
         self._candles.store(key, bars, now)
         return _slice_bars(bars, start_ms, end_ms)
+
+    def weight_blocks(self, upcoming: float, now: float | None = None) -> bool:
+        """True when this call would push the last minute over the budget."""
+        moment = float(self._now() if now is None else now)
+        report = self._weight.report(moment)
+        budget = float(getattr(self, "weight_budget", WEIGHT_BUDGET_PER_MIN) or WEIGHT_BUDGET_PER_MIN)
+        return report["per_min"] + float(upcoming) > budget
+
+    def weight_report(self, now: float | None = None) -> dict[str, float]:
+        moment = float(self._now() if now is None else now)
+        return self._weight.report(moment)
+
+    def candle_cached(self, coin: str, interval: str = "1m") -> list[dict[str, float]] | None:
+        """Last stored series, ignoring TTL. None when this coin was never fetched."""
+        return self._candles.last_good((canon_coin(coin), interval))
 
     def spot_usdc_balance(self, user: str | None) -> float | None:
         """Spot USDC ``total`` for ``user``. Not perp account value.
@@ -406,6 +519,7 @@ class InfoClient:
         except Exception as exc:
             logger.warning("spotClearinghouseState failed: %s", exc)
             return None
+        self._note_weight(2)
         if status != 200:
             logger.warning("spotClearinghouseState HTTP %s", status)
             return None
@@ -462,6 +576,7 @@ class InfoClient:
                 logger.warning("clearinghouseState dex=%s failed: %s", dex or "default", exc)
                 ok = False
                 continue
+            self._note_weight(2)
             if status != 200:
                 logger.warning("clearinghouseState dex=%s HTTP %s", dex or "default", status)
                 ok = False
@@ -485,6 +600,7 @@ class InfoClient:
                 logger.warning("frontendOpenOrders dex=%s failed: %s", dex or "default", exc)
                 ok = False
                 continue
+            self._note_weight(20)
             if order_status != 200:
                 logger.warning(
                     "frontendOpenOrders dex=%s HTTP %s", dex or "default", order_status
@@ -518,6 +634,7 @@ class InfoClient:
         except Exception as exc:
             logger.warning("userFillsByTime failed: %s", exc)
             fill_status, fill_raw = 0, None
+        self._note_weight(20)
         if fill_status == 200:
             fills = parse_account_fills(fill_raw)
         else:
@@ -578,9 +695,78 @@ class InfoClient:
             if status != 200 or not isinstance(raw, dict):
                 logger.warning("meta maxLeverage dex=%s HTTP %s", key or "default", status)
                 continue
+            self._note_weight(20)
             parsed = parse_max_leverages(raw, dex=key)
             self._lev_cache[key] = parsed
+            from hl_bot.strategy.model_b.fees import parse_asset_flags
+
+            self._flag_cache[key] = parse_asset_flags(raw, dex=key)
             out.update(parsed)
+        return out
+
+    def _note_weight(self, weight: float, kind: str = "account") -> None:
+        self._weight.add(float(self._now()), weight, kind)
+
+    def inject_user_fees(self, maker: float | None, taker: float | None) -> None:
+        """Force account maker/taker. ``None`` means the read failed."""
+        self._has_injected_user_fees = True
+        self._user_add = None if maker is None else float(maker)
+        self._user_cross = None if taker is None else float(taker)
+
+    def user_fee_rates(self, user: str | None) -> tuple[float, float] | None:
+        """Account maker/taker from ``userFees``. None when it cannot be read.
+
+        Cached for 10 minutes. An injected pair does not touch the network.
+        """
+        if self._has_injected_user_fees:
+            if self._user_add is None or self._user_cross is None:
+                return None
+            return (float(self._user_add), float(self._user_cross))
+        user = (user or "").strip()
+        if not user:
+            return None
+        now = float(self._now())
+        if self._user_fee_cache is not None and now - self._user_fee_cache[0] < 600.0:
+            return self._user_fee_cache[1]
+        from hl_bot.strategy.model_b.fees import parse_user_fees
+
+        try:
+            status, raw = _post_info(self.base_url, {"type": "userFees", "user": user})
+        except Exception as exc:
+            logger.warning("userFees failed: %s", exc)
+            self._user_fee_cache = (now, None)
+            return None
+        self._note_weight(20)
+        parsed = parse_user_fees(raw) if status == 200 else None
+        if status != 200:
+            logger.warning("userFees HTTP %s", status)
+        self._user_fee_cache = (now, parsed)
+        return parsed
+
+    def inject_asset_flags(self, mapping: dict | None) -> None:
+        """Force growth / isolated / fee overrides. Empty is an unknown meta."""
+        parsed: dict[str, dict] = {}
+        if mapping:
+            for key, value in mapping.items():
+                name = canon_coin(key)
+                if name and isinstance(value, dict):
+                    parsed[name] = dict(value)
+        self._has_injected_flags = True
+        self._injected_flags = parsed
+
+    def asset_flags(self, dexs: tuple[str, ...] | list[str] = ("",)) -> dict[str, dict]:
+        """Growth mode, isolated-only, and any per-asset fee on the meta row.
+
+        Shares the meta fetch with ``max_leverages``. An injected map does
+        not touch the network.
+        """
+        if self._has_injected_flags:
+            return dict(self._injected_flags)
+        names = tuple(dexs) if dexs is not None else ("",)
+        self.max_leverages(names)
+        out: dict[str, dict] = {}
+        for dex in names:
+            out.update(self._flag_cache.get(str(dex or ""), {}))
         return out
 
     def inject_bars(self, bars: list[dict[str, float]], coin: str | None = None) -> None:

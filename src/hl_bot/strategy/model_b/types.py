@@ -157,6 +157,11 @@ class Decision:
     # MODEL_B_MACRO_SIDE_ONLY on/shadow: the 1h/4h ADX macro read on arms and
     # MACRO_SIDE fails ("would_block ..." in shadow). None (not journaled) off.
     macro: str | None = None
+    # Setup quality (MODEL_B_QUALITY_RANK). None when the flag is off, so
+    # the density ``score`` and the hunt order stay exactly as they were.
+    # Not an arm gate. ``quality_parts`` is the component breakdown.
+    quality: float | None = None
+    quality_parts: dict | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -209,6 +214,11 @@ class Decision:
             "sizing_dist": _num(self.sizing_dist),
             **({"trend": self.trend} if self.trend is not None else {}),
             **({"macro": self.macro} if self.macro is not None else {}),
+            **(
+                {"quality": self.quality, "quality_parts": self.quality_parts}
+                if self.quality is not None
+                else {}
+            ),
             **(
                 {
                     "side": self.side,

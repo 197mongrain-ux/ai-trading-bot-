@@ -108,6 +108,25 @@ from hl_bot.strategy.model_b.tp_select import (
 )
 from hl_bot.strategy.model_b.trend import AdxTrend, MacroRead, TfTrend, TrendRead, read_macro, read_trend
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
+
+
+def _bound_distance(maker_fee: float | None, taker_fee: float | None):
+    """``min_tp_distance`` closed over this coin's fee rates.
+
+    Looking up ``min_tp_distance`` at call time keeps a test patch on
+    ``hl_bot.strategy.model_b.engine.min_tp_distance`` in force.
+    """
+
+    def _fn(entry, stop, *, min_r=1.0):
+        # Omit the fee kwargs when this coin is on the base tier so a test
+        # patch of min_tp_distance(entry, stop, min_r=) still matches.
+        if maker_fee is None and taker_fee is None:
+            return min_tp_distance(entry, stop, min_r=min_r)
+        return min_tp_distance(
+            entry, stop, min_r=min_r, maker_fee=maker_fee, taker_fee=taker_fee
+        )
+
+    return _fn
 from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
 from hl_bot.strategy.model_b.vp_log import vp_error_fields, vp_log_fields
 from hl_bot.strategy.volume_profile import VP_AS_FILTER, VP_ENABLED, VP_ENTRIES
@@ -322,6 +341,8 @@ class ModelBEngine:
         last: float | None,
         *,
         coin: str = "",
+        maker_fee: float | None = None,
+        taker_fee: float | None = None,
     ) -> TpWalk:
         """Same TP walk the arm uses, from a fill price and the planned stop.
 
@@ -361,7 +382,7 @@ class ModelBEngine:
             far_skip=self.tp_far_skip_countertrend,
             moved_floor=None,
             trend_fn=_trend,
-            distance_fn=min_tp_distance,
+            distance_fn=_bound_distance(maker_fee, taker_fee),
         )
 
     def evaluate(
@@ -380,6 +401,8 @@ class ModelBEngine:
         mark: float | None = None,
         leverage: int = 20,
         htf_bars: list[dict] | None = None,
+        maker_fee: float | None = None,
+        taker_fee: float | None = None,
     ) -> Decision:
         """Decide an arm or a single fail reason.
 
@@ -396,6 +419,7 @@ class ModelBEngine:
         target. Unknown meta passes 20.
         """
         coin_u = canon_coin(coin)
+        _dist = _bound_distance(maker_fee, taker_fee)
         window = window_prints(prints, coin=coin_u, now=now)
         logged_score = (
             log_only_score(len(window))
@@ -725,7 +749,7 @@ class ModelBEngine:
                     return _done(STOP_TOO_TIGHT, **fields)
                 stop = moved
                 moved_tp_floor = max(
-                    min_tp_distance(limit, stop), self.tp_r * abs(limit - stop)
+                    _dist(limit, stop), self.tp_r * abs(limit - stop)
                 )
 
             try:
@@ -744,12 +768,20 @@ class ModelBEngine:
                     notional_leverage=self.max_notional_leverage,
                     min_stop_bps=self.min_stop_bps,
                     include_fees=self.cap_includes_fees,
+                    maker_fee=maker_fee,
+                    taker_fee=taker_fee,
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
             # Hard 2% cap on the loss at the stop (Chris's absolute rule).
             size = cap_size_to_loss(
-                size, limit, stop, equity, include_fees=self.cap_includes_fees
+                size,
+                limit,
+                stop,
+                equity,
+                include_fees=self.cap_includes_fees,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
             )
             if size <= 0:
                 return _done(BAD_STOP, **fields)
@@ -767,7 +799,7 @@ class ModelBEngine:
                 spent = filter_spent_swing_prices(side, tp_swings, bars, now, last_px)
                 levels_untaken = [px for px in levels_all if px not in spent]
                 levels = levels_untaken if self.tp_untaken_only == "on" else levels_all
-            floor = moved_tp_floor if moved_tp_floor is not None else min_tp_distance(limit, stop)
+            floor = moved_tp_floor if moved_tp_floor is not None else _dist(limit, stop)
             walked = walk_liquidity_tp(
                 side,
                 limit,
@@ -781,7 +813,7 @@ class ModelBEngine:
                 far_skip=self.tp_far_skip_countertrend,
                 moved_floor=moved_tp_floor,
                 trend_fn=_trend,
-                distance_fn=min_tp_distance,
+                distance_fn=_dist,
             )
             for fmt, args in walked.logs:
                 logger.info(fmt, *args)
@@ -806,7 +838,7 @@ class ModelBEngine:
                     far_skip=self.tp_far_skip_countertrend,
                     moved_floor=moved_tp_floor,
                     trend_fn=_trend,
-                    distance_fn=min_tp_distance,
+                    distance_fn=_dist,
                 )
                 logger.info(
                     "MODEL_B TP_UNTAKEN shadow %s %s kept=%s would=%s",
@@ -829,7 +861,7 @@ class ModelBEngine:
                     far_skip=self.tp_far_skip_countertrend,
                     moved_floor=moved_tp_floor,
                     trend_fn=_trend,
-                    distance_fn=min_tp_distance,
+                    distance_fn=_dist,
                 )
                 if plain.target != target:
                     logger.info(

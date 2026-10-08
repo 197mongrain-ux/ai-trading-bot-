@@ -277,14 +277,26 @@ def next_opposing_level(
     return best
 
 
-def min_tp_distance(entry: float, stop: float, *, min_r: float = TP_R_MIN) -> float:
+def min_tp_distance(
+    entry: float,
+    stop: float,
+    *,
+    min_r: float = TP_R_MIN,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
+) -> float:
     """Closest target that still pays: at least ``min_r`` and the round-trip fee.
 
     ``min_r`` defaults to 1. The fee is the maker entry plus the taker
     exit on ``entry``. A pool inside the larger of those two is not a target.
+    ``maker_fee`` / ``taker_fee`` default to the published base tier.
+    A coin that pays more (xyz outside growth mode) passes its own rates
+    so the floor moves with the fee. Prices are not moved here.
     """
     dist = abs(float(entry) - float(stop))
-    fee = abs(float(entry)) * ROUND_TRIP_FEE_RATE
+    maker = MAKER_FEE_RATE if maker_fee is None else float(maker_fee)
+    taker = TAKER_FEE_RATE if taker_fee is None else float(taker_fee)
+    fee = abs(float(entry)) * (maker + taker)
     return max(float(min_r) * dist, fee)
 
 
@@ -547,16 +559,35 @@ def leaves_reserve_headroom(
     )
 
 
-def fee_per_unit(entry: float, stop: float) -> float:
-    """USDC fees per coin for a stop-out: maker Alo entry + taker exit at the stop."""
-    return abs(float(entry)) * MAKER_FEE_RATE + abs(float(stop)) * TAKER_FEE_RATE
+def fee_per_unit(
+    entry: float,
+    stop: float,
+    *,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
+) -> float:
+    """USDC fees per coin for a stop-out: maker Alo entry + taker exit at the stop.
+
+    Omitted rates are the published base tier (1.5 / 4.5 bps).
+    """
+    maker = MAKER_FEE_RATE if maker_fee is None else float(maker_fee)
+    taker = TAKER_FEE_RATE if taker_fee is None else float(taker_fee)
+    return abs(float(entry)) * maker + abs(float(stop)) * taker
 
 
-def loss_at_stop(size: float, entry: float, stop: float, *, include_fees: bool = True) -> float:
+def loss_at_stop(
+    size: float,
+    entry: float,
+    stop: float,
+    *,
+    include_fees: bool = True,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
+) -> float:
     """Dollar loss if ``size`` is stopped out: price move, plus both fees when asked."""
     per = abs(float(entry) - float(stop))
     if include_fees:
-        per += fee_per_unit(entry, stop)
+        per += fee_per_unit(entry, stop, maker_fee=maker_fee, taker_fee=taker_fee)
     return max(0.0, float(size)) * per
 
 
@@ -569,6 +600,8 @@ def cap_size_to_loss(
     round_down=None,
     *,
     include_fees: bool = False,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
 ) -> float:
     """Largest size <= ``size`` whose loss at the stop is <= the hard cap.
 
@@ -582,7 +615,7 @@ def cap_size_to_loss(
     if size <= 0 or dist <= 0 or account <= 0 or pct <= 0:
         return 0.0
     if include_fees:
-        dist += fee_per_unit(entry, stop)
+        dist += fee_per_unit(entry, stop, maker_fee=maker_fee, taker_fee=taker_fee)
     cap = pct * float(account)
     if size * dist <= cap * (1 + 1e-12):
         return float(size)
@@ -609,6 +642,8 @@ def size_from_stop(
     notional_leverage: int | None = None,
     min_stop_bps: float = 0.0,
     include_fees: bool = False,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
 ) -> tuple[float, float]:
     """Return ``(size, dollar_risk)`` from stop distance and ``risk_pct``.
 
@@ -646,7 +681,11 @@ def size_from_stop(
     floor_dist = float(entry) * max(0.0, float(min_stop_bps or 0.0)) / 10_000.0
     sizing_dist = max(dist, floor_dist)
     target = spot_usdc * float(risk_pct)
-    fees = fee_per_unit(entry, stop) if include_fees else 0.0
+    fees = (
+        fee_per_unit(entry, stop, maker_fee=maker_fee, taker_fee=taker_fee)
+        if include_fees
+        else 0.0
+    )
     size = target / (sizing_dist + fees)
     cap_lev = lev
     if notional_leverage is not None:

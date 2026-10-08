@@ -145,6 +145,7 @@ class PositionGuard:
         clock: Callable[[], float] = time.time,
         alert_cooldown_sec: float = 30.0,
         include_fees: bool = True,
+        fee_for: Callable[[str], tuple[float, float]] | None = None,
     ):
         self.live = live
         self.info = info
@@ -185,6 +186,11 @@ class PositionGuard:
         self._thread: threading.Thread | None = None
         # The 2% cap counts the maker entry and the taker exit fee.
         self.include_fees = bool(include_fees)
+        # Per-coin rates. None keeps the published base tier.
+        self.fee_for = fee_for
+        self.last_snapshot: AccountSnapshot | None = None
+        self.last_snapshot_at: float | None = None
+        self._offered: AccountSnapshot | None = None
         # Clock time of the last pass that read the account and checked
         # every position. The hunt sends nothing new while it is stale.
         self.last_ok_at: float | None = None
@@ -214,6 +220,17 @@ class PositionGuard:
     def kick(self) -> None:
         """Wake the guard thread now (a fill or a new ticket just happened)."""
         self._wake.set()
+
+    def offer_snapshot(self, snapshot: AccountSnapshot | None) -> None:
+        """The hunt already read the account. The next guard pass uses it.
+
+        A candle refresh must not be the reason this pass has to read
+        again. The offer is consumed once.
+        """
+        if snapshot is None or not getattr(snapshot, "ok", False):
+            return
+        with self._plan_lock:
+            self._offered = snapshot
 
     # ---- thread -------------------------------------------------------
     def start(self, every_sec: float) -> None:
@@ -249,8 +266,25 @@ class PositionGuard:
         with self._pass_lock:
             return self._run(snapshot, spot)
 
+    def _rates(self, coin: str) -> tuple[float, float]:
+        if self.fee_for is None:
+            return MAKER_FEE_RATE, TAKER_FEE_RATE
+        try:
+            pair = self.fee_for(coin)
+        except Exception:
+            return MAKER_FEE_RATE, TAKER_FEE_RATE
+        if not pair or pair[0] is None or pair[1] is None:
+            return MAKER_FEE_RATE, TAKER_FEE_RATE
+        return float(pair[0]), float(pair[1])
+
     def _run(self, snapshot, spot) -> list[dict]:
         events: list[dict] = []
+        if snapshot is None:
+            with self._plan_lock:
+                offered = self._offered
+                self._offered = None
+            if offered is not None:
+                snapshot = offered
         if snapshot is None:
             try:
                 snapshot = self.info.load_account_snapshot(
@@ -267,6 +301,8 @@ class PositionGuard:
         if snapshot is None or not snapshot.ok:
             logger.warning("MODEL_B GUARD snapshot not ok; cannot verify stops this pass")
             return events
+        self.last_snapshot = snapshot
+        self.last_snapshot_at = float(self.clock())
         live_positions = [pos for pos in snapshot.positions if pos.size > 0]
         open_coins = {pos.coin for pos in live_positions}
         # Our own stop / TP triggers on a coin that is now flat are pulled so
@@ -398,7 +434,8 @@ class PositionGuard:
         """Maker entry + taker exit fee for the whole position (0 when off)."""
         if not self.include_fees or pos.size <= 0:
             return 0.0
-        return pos.size * (abs(pos.entry) * MAKER_FEE_RATE + abs(float(exit_px)) * TAKER_FEE_RATE)
+        maker, taker = self._rates(pos.coin)
+        return pos.size * (abs(pos.entry) * maker + abs(float(exit_px)) * taker)
 
     def _cap_stop(self, pos: PerpPosition, cap: float) -> float:
         """Trigger where the position has lost exactly ``cap``, rounded tighter.
@@ -410,8 +447,9 @@ class PositionGuard:
         if self.include_fees:
             # Solve size x (dist + entry x maker + exit x taker) = cap with
             # exit = entry -/+ dist: the same fee model the engine sizes with.
-            fixed = abs(pos.entry) * (MAKER_FEE_RATE + TAKER_FEE_RATE)
-            slope = 1.0 - TAKER_FEE_RATE if pos.side == "long" else 1.0 + TAKER_FEE_RATE
+            maker, taker = self._rates(pos.coin)
+            fixed = abs(pos.entry) * (maker + taker)
+            slope = 1.0 - taker if pos.side == "long" else 1.0 + taker
             dist = max(0.0, per - fixed) / slope
         else:
             dist = per

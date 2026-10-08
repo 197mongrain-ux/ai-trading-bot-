@@ -9,15 +9,17 @@ at the same time when the sizing balance still covers that ticket's
 initial margin (notional / that coin's max leverage, 20× when meta is
 missing) at the full 2% size. When it does not,
 a new coin takes the slot only by cancelling an unfilled Alo whose
-limit is strictly closer to the market, in bps, and whose arm score
-is not strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on:
-resting score 9 is not cancelled for a closer score 4
-(``CLOSER_SKIP_LOWER_SCORE``). Equal scores still swap on closer bps.
-``MODEL_B_CLOSE_MARGIN_RESERVE`` (default 0.60, ``0`` off) keeps that
-fraction of free-margin capacity for a resting unfilled Alo: highest
-arm score, then the closer limit in bps. A close setup that has not
-armed does not hold it, and an equal or lower score does not steal it
-when only the distance twitches. A strictly higher score takes it
+limit is strictly closer to the market, in bps, and whose rank is not
+strictly higher. ``MODEL_B_CLOSER_SCORE_GUARD`` defaults on.
+``MODEL_B_QUALITY_RANK=1`` (default) compares setup quality; ``0``
+compares the density score, so resting score 9 is not cancelled for a
+closer score 4 (``CLOSER_SKIP_LOWER_SCORE``). Equal rank still swaps
+on closer bps. ``MODEL_B_CLOSE_MARGIN_RESERVE`` (default 0.60, ``0``
+off) keeps that fraction of free-margin capacity for a resting
+unfilled Alo: highest quality (or density score when the rank flag is
+off), then the closer limit in bps. A close setup that has not armed
+does not hold it, and an equal or lower rank does not steal it when
+only the distance twitches. A strictly higher rank takes it
 immediately. It is not hard-coded to BTC. Spot USDC ``total`` is still
 the 2% sizing base. Free margin subtracts margin already held by open
 positions and resting entries, including builder-dex positions.
@@ -64,8 +66,12 @@ from hl_bot.strategy.model_b.alo import (
     distance_to_fill_bps,
     is_closer_to_fill,
     market_ref,
+    resting_quality_blocks_closer_cancel,
     resting_score_blocks_closer_cancel,
 )
+from hl_bot.strategy.model_b.fees import FeeBook, build_fee_book
+from hl_bot.strategy.model_b.groups import assess_risk_cap
+from hl_bot.strategy.model_b.quality import quality_for_decision, rank_armed_hunts
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.tp_select import (
@@ -473,6 +479,9 @@ def _run_model_b(
         max_loss_pct * 100,
     )
 
+    fee_holder = {
+        "book": FeeBook(force_base=not bool(getattr(settings, "model_b_coin_fees", True)))
+    }
     if live is not None and (guard_user or getattr(info, "has_injected_account", False)):
 
         def _last_print(coin: str) -> float | None:
@@ -496,6 +505,7 @@ def _run_model_b(
             price_for=_last_print,
             clock=clock,
             include_fees=bool(getattr(settings, "model_b_cap_includes_fees", True)),
+            fee_for=lambda coin: fee_holder["book"].pair(coin),
         )
         logger.info(
             "MODEL_B GUARD on max_leverage=%sx min_stop_bps=%s loss_kill_r=%s "
@@ -534,6 +544,17 @@ def _run_model_b(
         getattr(settings, "model_b_tp_refresh_on_fill", "on"),
         getattr(settings, "model_b_tp_runner", "shadow"),
     )
+    logger.info(
+        "MODEL_B RANK quality=%s coin_fees=%s candles=%s risk_cap=%s "
+        "total_risk_pct=%s isolated=%s weight_budget=%s",
+        getattr(settings, "model_b_quality_rank", "on"),
+        "on" if getattr(settings, "model_b_coin_fees", True) else "off",
+        "incremental" if getattr(settings, "model_b_candle_incremental", True) else "full",
+        getattr(settings, "model_b_risk_cap", "shadow"),
+        getattr(settings, "model_b_max_total_risk_pct", 6.0),
+        "on" if getattr(settings, "model_b_isolated_margin", True) else "off",
+        getattr(settings, "model_b_weight_budget", 1000.0),
+    )
     if _crash_ctx is not None:
         _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
     # No new entry when the guard has not verified the account this recently.
@@ -545,6 +566,7 @@ def _run_model_b(
     macro_bars_cache: dict[str, tuple[float, int, list]] = {}
     session_started_at: float | None = None
     last_margin_sig: tuple | None = None
+    last_weight_log = 0.0
 
     while True:
         iterations += 1
@@ -552,6 +574,18 @@ def _run_model_b(
             break
 
         now = float(clock())
+        fee_book = fee_holder["book"]
+        if hasattr(info, "weight_report") and now - last_weight_log >= 60.0:
+            report = info.weight_report(now)
+            if report.get("per_min", 0) > 0:
+                logger.info(
+                    "MODEL_B WEIGHT per_min=%.0f candle=%.0f account=%.0f budget=%.0f",
+                    report["per_min"],
+                    report["candle"],
+                    report["account"],
+                    float(getattr(settings, "model_b_weight_budget", 1000.0) or 1000.0),
+                )
+            last_weight_log = now
 
         def _release_margin(coin: str, reason: str, **extra) -> None:
             """Journal that this coin's reserved margin is free now."""
@@ -786,7 +820,16 @@ def _run_model_b(
                         if applied.just_opened:
                             summary["opens"] += 1
                             try:
-                                _prepare_fill_targets(engine, info, settings, applied, now)
+                                maker_fee, taker_fee = fee_book.pair(applied.coin)
+                                _prepare_fill_targets(
+                                    engine,
+                                    info,
+                                    settings,
+                                    applied,
+                                    now,
+                                    maker_fee=maker_fee,
+                                    taker_fee=taker_fee,
+                                )
                             except Exception:
                                 logger.exception(
                                     "TP refresh failed for %s; planned TP kept and stop still placed",
@@ -884,6 +927,11 @@ def _run_model_b(
         ):
             user = settings.account_address or getattr(live, "account_address", "") or ""
             try:
+                # Always read here. Reusing the guard's previous snapshot
+                # dropped fills that landed after that pass (and every
+                # injected test snapshot, because the clock does not move).
+                # The guard thread consumes this read via offer_snapshot
+                # instead of opening a second one on the wake.
                 snapshot = info.load_account_snapshot(user, dexs_for_coins(hunt_coins))
             except Exception:
                 logger.exception("MODEL_B account snapshot failed")
@@ -967,9 +1015,10 @@ def _run_model_b(
         if guard is not None:
             guard.set_plans(plans_from_book(book))
             if guard.threaded:
-                # The fast thread reads the account itself; wake it now
-                # instead of a second full read here (two readers every pass
-                # push the weight budget into 429s, and a 429 blinds both).
+                # Hand the hunt's snapshot across so the wake does not
+                # open a second clearinghouse / open-orders read.
+                if snapshot is not None and getattr(snapshot, "ok", False):
+                    guard.offer_snapshot(snapshot)
                 guard.kick()
             else:
                 try:
@@ -1018,6 +1067,27 @@ def _run_model_b(
         active = session_coins(now, symbols=hunt_coins)
         hunts: list[dict] = []
         lev_map = _coin_max_leverages(info, hunt_coins)
+        quality_mode = str(getattr(settings, "model_b_quality_rank", "on") or "off")
+        use_quality = quality_mode == "on"
+        fee_user = settings.account_address or getattr(live, "account_address", "") or ""
+        fee_holder["book"] = build_fee_book(
+            info,
+            hunt_coins,
+            user=fee_user,
+            enabled=bool(getattr(settings, "model_b_coin_fees", True)),
+        )
+        fee_book = fee_holder["book"]
+        if hasattr(info, "candle_mode"):
+            if getattr(settings, "model_b_candle_incremental", True):
+                info.candle_mode = "incremental"
+                info.weight_budget = float(getattr(settings, "model_b_weight_budget", 1000.0) or 1000.0)
+                info.defer_candles = bool(
+                    guard is not None
+                    and guard.stale(now, float(getattr(settings, "model_b_guard_sec", 3.0) or 3.0))
+                )
+            else:
+                info.candle_mode = "full"
+                info.defer_candles = False
         # Exchange leverage stays the coin max (PR #8 margin). The 20x
         # brake is applied to notional inside the engine's sizing.
         lev_cap = int(getattr(settings, "model_b_max_leverage", 20) or 20)
@@ -1180,6 +1250,7 @@ def _run_model_b(
 
             meta_lev = lev_map.get(canon_coin(coin))
             coin_lev = usable_leverage(meta_lev, None)
+            maker_fee, taker_fee = fee_book.pair(coin)
             extra: dict = {}
             if getattr(engine, "macro_side_only", "off") != "off":
                 extra["htf_bars"] = _macro_bars(info, coin, now, macro_bars_cache)
@@ -1194,8 +1265,22 @@ def _run_model_b(
                 equity=risk_base,
                 tick=tick,
                 leverage=coin_lev,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
                 **extra,
             )
+            if quality_mode != "off":
+                setup = quality_for_decision(
+                    decision,
+                    bars,
+                    engine,
+                    now=now,
+                    maker_fee=maker_fee,
+                    taker_fee=taker_fee,
+                )
+                if setup is not None:
+                    decision.quality = setup.quality
+                    decision.quality_parts = setup.parts()
             hunts.append(
                 {
                     "coin": coin,
@@ -1207,6 +1292,8 @@ def _run_model_b(
                     "exposure": exposure,
                     "lev_meta": meta_lev,
                     "lev_cap": lev_cap,
+                    "maker": maker_fee,
+                    "taker": taker_fee,
                 }
             )
 
@@ -1215,7 +1302,10 @@ def _run_model_b(
         # setup does not, so a coin that cleared every gate is not held
         # back for it. Equal scores do not flip the owner on bps alone.
         preference = (
-            stick_preferred(resting_reserve_candidates(book, hunts), reserve_coin)
+            stick_preferred(
+                resting_reserve_candidates(book, hunts, use_quality=use_quality),
+                reserve_coin,
+            )
             if risk_base is not None and fraction > 0
             else None
         )
@@ -1279,8 +1369,8 @@ def _run_model_b(
             for order in crowded:
                 if kept_margin <= cap + 1e-6:
                     break
-                if settings.model_b_closer_score_guard and resting_score_blocks_closer_cancel(
-                    order.score, preference.score
+                if settings.model_b_closer_score_guard and _blocks_closer(
+                    order, preference.score, getattr(preference, "quality", None), use_quality
                 ):
                     # PR #5: a strictly higher resting score is not cancelled
                     # to fund the reserve. It stays, and it no longer forces
@@ -1300,6 +1390,7 @@ def _run_model_b(
                     preferred=preference.coin,
                 )
 
+        hunts = rank_armed_hunts(hunts, quality_mode)
         for hunt in hunts:
             if not hunt["post"]:
                 reason = hunt.get("exposure")
@@ -1357,7 +1448,7 @@ def _run_model_b(
             if (
                 preference is not None
                 and canon_coin(coin) != preference.coin
-                and not _score_beats_reserve(decision.score, preference.score)
+                and not _beats_reserve(decision, preference, use_quality)
             ):
                 capacity = _reserve_capacity(float(risk_base), book, preference.coin)
                 reserve_need = _order_margin(intent)
@@ -1586,11 +1677,14 @@ def _run_model_b(
                     if settings.model_b_closer_score_guard:
                         blocker = None
                         for order in resting:
-                            if resting_score_blocks_closer_cancel(
-                                order.score, decision.score
+                            if _blocks_closer(
+                                order,
+                                decision.score,
+                                getattr(decision, "quality", None),
+                                use_quality,
                             ):
-                                if blocker is None or int(order.score) > int(
-                                    blocker.score
+                                if blocker is None or _stronger_block(
+                                    order, blocker, use_quality
                                 ):
                                     blocker = order
                         if blocker is not None:
@@ -1673,6 +1767,8 @@ def _run_model_b(
                 )
                 continue
             # Last gate before the order: loss at the stop <= hard cap.
+            maker_fee = hunt.get("maker")
+            taker_fee = hunt.get("taker")
             capped = cap_size_to_loss(
                 intent.size,
                 intent.limit_px,
@@ -1681,6 +1777,8 @@ def _run_model_b(
                 max_loss_pct,
                 round_down=getattr(live, "round_size", None) if live is not None else None,
                 include_fees=cap_fees,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
             )
             if capped <= 0:
                 summary["fails"] += 1
@@ -1688,7 +1786,10 @@ def _run_model_b(
                     "MODEL_B FAIL %s reason=LOSS_CAP size=%s risk=%.4f cap=%.4f",
                     coin,
                     intent.size,
-                    loss_at_stop(intent.size, intent.limit_px, intent.stop, include_fees=cap_fees),
+                    loss_at_stop(
+                        intent.size, intent.limit_px, intent.stop,
+                        include_fees=cap_fees, maker_fee=maker_fee, taker_fee=taker_fee,
+                    ),
                     max_loss_pct * float(risk_base or 0.0),
                 )
                 continue
@@ -1698,11 +1799,57 @@ def _run_model_b(
                     intent.coin,
                     intent.size,
                     capped,
-                    loss_at_stop(intent.size, intent.limit_px, intent.stop, include_fees=cap_fees),
-                    loss_at_stop(capped, intent.limit_px, intent.stop, include_fees=cap_fees),
+                    loss_at_stop(
+                        intent.size, intent.limit_px, intent.stop,
+                        include_fees=cap_fees, maker_fee=maker_fee, taker_fee=taker_fee,
+                    ),
+                    loss_at_stop(
+                        capped, intent.limit_px, intent.stop,
+                        include_fees=cap_fees, maker_fee=maker_fee, taker_fee=taker_fee,
+                    ),
                     max_loss_pct * float(risk_base or 0.0),
                 )
                 intent = dataclasses.replace(intent, size=capped)
+            risk_mode = str(getattr(settings, "model_b_risk_cap", "shadow") or "off")
+            if risk_mode != "off" and risk_base:
+                ticket_risk = loss_at_stop(
+                    intent.size,
+                    intent.limit_px,
+                    intent.stop,
+                    include_fees=cap_fees,
+                    maker_fee=maker_fee,
+                    taker_fee=taker_fee,
+                )
+                verdict = assess_risk_cap(
+                    coin=intent.coin,
+                    new_risk=ticket_risk,
+                    equity=float(risk_base),
+                    open_rows=_open_risk_rows(book, fee_book, cap_fees),
+                    max_pct=float(getattr(settings, "model_b_max_total_risk_pct", 6.0) or 0.0),
+                    mode=risk_mode,
+                )
+                if verdict.reason:
+                    logger.info(
+                        "MODEL_B RISK_CAP %s would_block=%s reason=%s total_pct=%.2f mode=%s",
+                        intent.coin,
+                        1 if verdict.block or risk_mode == "shadow" else 0,
+                        verdict.reason,
+                        verdict.total_pct,
+                        risk_mode,
+                    )
+                    if verdict.block:
+                        summary["fails"] += 1
+                        journal.log(
+                            "model_b_fail",
+                            entry_mode="model_b",
+                            **{
+                                **decision.to_log(),
+                                "fail_reason": "RISK_CAP",
+                                "armed": False,
+                                "risk_cap": verdict.reason,
+                            },
+                        )
+                        continue
             meta_txt = hunt.get("lev_meta") if hunt.get("lev_meta") else "-"
             notional = intent.size * intent.limit_px
             eff = notional / float(risk_base) if risk_base else 0.0
@@ -1725,12 +1872,22 @@ def _run_model_b(
                 rejected: str | None = None
                 detail = ""
                 try:
+                    alo_kwargs = {"leverage": intent.leverage}
+                    if (
+                        getattr(settings, "model_b_isolated_margin", True)
+                        and fee_book.only_isolated(intent.coin)
+                    ):
+                        alo_kwargs["is_cross"] = False
+                        logger.info(
+                            "MODEL_B LEVERAGE %s isolated-only margin (notional/leverage unchanged)",
+                            intent.coin,
+                        )
                     resp = live.place_alo(
                         intent.coin,
                         intent.side == "long",
                         intent.size,
                         intent.limit_px,
-                        leverage=intent.leverage,
+                        **alo_kwargs,
                     )
                 except Exception as exc:
                     logger.exception("LIVE Alo failed for %s", coin)
@@ -1778,7 +1935,13 @@ def _run_model_b(
                         detail=detail,
                     )
                     continue
-            book.post(intent, now, oid=oid, score=decision.score)
+            book.post(
+                intent,
+                now,
+                oid=oid,
+                score=decision.score,
+                quality=getattr(decision, "quality", None),
+            )
             if guard is not None:
                 # The guard knows this ticket's stop / TP / size before it can
                 # fill, not one pass (~15 s) later with a fallback stop.
@@ -1786,11 +1949,28 @@ def _run_model_b(
                 guard.kick()
             summary["arms"] += 1
             journal.log("model_b_arm", entry_mode="model_b", **decision.to_log())
+            quality_txt = ""
+            parts = getattr(decision, "quality_parts", None) or {}
+            if getattr(decision, "quality", None) is not None:
+                quality_txt = (
+                    " quality=%.3f tp1_r=%.2f absorb_q=%.2f macro_adx=%.1f "
+                    "align=%+.0f stop_atr=%.2f sweep_bps=%.1f fee_drag=%.3f"
+                    % (
+                        float(decision.quality),
+                        float(parts.get("tp1_r") or 0.0),
+                        float(parts.get("absorb") or 0.0),
+                        float(parts.get("macro_adx") or 0.0),
+                        float(parts.get("macro_align") or 0.0),
+                        float(parts.get("stop_atr") or 0.0),
+                        float(parts.get("sweep_bps") or 0.0),
+                        float(parts.get("fee_drag") or 0.0),
+                    )
+                )
             logger.info(
                 "MODEL_B ARM %s %s alo=%s stop=%s tp=%s size=%s "
                 "bias=%s pool=%s swing=%s sweep=%s absorb=%s "
                 "dW=%s d15=%s score=%s vol=%s vp=%s size_adjust=%s delta_flat=%s "
-                "structure=%s structure_shadow=%s flow=%s",
+                "structure=%s structure_shadow=%s flow=%s%s",
                 intent.coin,
                 intent.side,
                 intent.limit_px,
@@ -1812,6 +1992,7 @@ def _run_model_b(
                 decision.structure or "-",
                 decision.structure_shadow or "-",
                 decision.counter_flow or "-",
+                quality_txt,
             )
 
         equity_mark = equity
@@ -1866,6 +2047,8 @@ class ClosePreference:
     coin: str
     score: int
     distance_bps: float | None
+    # Set only when MODEL_B_QUALITY_RANK is on. None keeps the integer score.
+    quality: float | None = None
 
 
 def close_distance_bps(decision, ref_px: float | None) -> float | None:
@@ -1922,14 +2105,14 @@ def preferred_close(hunts) -> ClosePreference | None:
         ref = market_ref(hunt.get("bid"), hunt.get("ask"), hunt.get("last"))
         bps = close_distance_bps(decision, ref)
         score = int(getattr(decision, "score", 0) or 0)
+        quality = getattr(decision, "quality", None)
         candidate = ClosePreference(
             coin=canon_coin(decision.coin),
             score=score,
             distance_bps=bps,
+            quality=None if quality is None else float(quality),
         )
-        if best is None or score > best.score or (
-            score == best.score and _bps_is_closer(bps, best.distance_bps)
-        ):
+        if best is None or _preference_beats(score, bps, candidate.quality, best):
             best = candidate
     return best
 
@@ -1943,9 +2126,7 @@ def stick_preferred(candidates: list[ClosePreference], incumbent: str | None) ->
     """
     best: ClosePreference | None = None
     for cand in candidates:
-        if best is None or cand.score > best.score or (
-            cand.score == best.score and _bps_is_closer(cand.distance_bps, best.distance_bps)
-        ):
+        if best is None or _preference_beats(cand.score, cand.distance_bps, cand.quality, best):
             best = cand
     if best is None:
         return None
@@ -1954,7 +2135,7 @@ def stick_preferred(candidates: list[ClosePreference], incumbent: str | None) ->
     current = next((cand for cand in candidates if cand.coin == canon_coin(incumbent)), None)
     if current is None:
         return best
-    if best.score > current.score:
+    if _strictly_better(best, current):
         return best
     return current
 
@@ -1966,7 +2147,7 @@ def _score_beats_reserve(candidate: int | None, resting: int | None) -> bool:
     return int(candidate) > int(resting)
 
 
-def resting_reserve_candidates(book: ThesisBook, hunts) -> list[ClosePreference]:
+def resting_reserve_candidates(book: ThesisBook, hunts, *, use_quality: bool = False) -> list[ClosePreference]:
     """Resting unfilled Alos, in hunt order. Unarmed close setups are not included."""
     hunt_by = {canon_coin(hunt["decision"].coin): hunt for hunt in hunts}
     coins = [canon_coin(hunt["decision"].coin) for hunt in hunts]
@@ -1986,8 +2167,116 @@ def resting_reserve_candidates(book: ThesisBook, hunts) -> list[ClosePreference]
         if ref is not None and float(ref) > 0:
             bps = distance_to_fill_bps(order.side, order.limit_px, float(ref))
         score = int(order.score) if order.score is not None else 0
-        candidates.append(ClosePreference(coin=coin, score=score, distance_bps=bps))
+        quality = None
+        if use_quality and getattr(order, "quality", None) is not None:
+            quality = float(order.quality)
+        candidates.append(
+            ClosePreference(coin=coin, score=score, distance_bps=bps, quality=quality)
+        )
     return candidates
+
+
+def _preference_beats(
+    score: int,
+    bps: float | None,
+    quality: float | None,
+    best: ClosePreference,
+) -> bool:
+    """Strictly better than ``best``. Equal quality falls through to closer bps.
+
+    Both qualities missing: the integer score, then closer bps. That is
+    today's reserve order.
+    """
+    if quality is not None and best.quality is not None:
+        if quality > best.quality + 1e-9:
+            return True
+        if quality < best.quality - 1e-9:
+            return False
+        return _bps_is_closer(bps, best.distance_bps)
+    if quality is not None and best.quality is None:
+        return True
+    if quality is None and best.quality is not None:
+        return False
+    if score > best.score:
+        return True
+    return score == best.score and _bps_is_closer(bps, best.distance_bps)
+
+
+def _strictly_better(challenger: ClosePreference, incumbent: ClosePreference) -> bool:
+    """Higher quality, else higher integer score. Bps does not unseat."""
+    if challenger.quality is not None and incumbent.quality is not None:
+        return challenger.quality > incumbent.quality + 1e-9
+    if challenger.quality is not None and incumbent.quality is None:
+        return True
+    if challenger.quality is None and incumbent.quality is not None:
+        return False
+    return challenger.score > incumbent.score
+
+
+def _blocks_closer(order, candidate_score, candidate_quality, use_quality: bool) -> bool:
+    if use_quality:
+        return resting_quality_blocks_closer_cancel(
+            getattr(order, "quality", None), candidate_quality
+        )
+    return resting_score_blocks_closer_cancel(
+        getattr(order, "score", None), candidate_score
+    )
+
+
+def _stronger_block(order, blocker, use_quality: bool) -> bool:
+    if use_quality:
+        left = getattr(order, "quality", None)
+        right = getattr(blocker, "quality", None)
+        if left is None or right is None:
+            return False
+        return float(left) > float(right) + 1e-9
+    return int(getattr(order, "score", 0) or 0) > int(getattr(blocker, "score", 0) or 0)
+
+
+def _beats_reserve(decision, preference: ClosePreference, use_quality: bool) -> bool:
+    if (
+        use_quality
+        and preference.quality is not None
+        and getattr(decision, "quality", None) is not None
+    ):
+        return float(decision.quality) > float(preference.quality) + 1e-9
+    return _score_beats_reserve(getattr(decision, "score", None), preference.score)
+
+
+def _open_risk_rows(book: ThesisBook, fee_book: FeeBook, include_fees: bool) -> list[tuple[str, float]]:
+    """Fee-inclusive loss at the planned stop for positions and resting tickets."""
+    rows: list[tuple[str, float]] = []
+    for pos in book.open_positions():
+        maker, taker = fee_book.pair(pos.coin)
+        rows.append(
+            (
+                pos.coin,
+                loss_at_stop(
+                    pos.size,
+                    pos.entry,
+                    pos.stop,
+                    include_fees=include_fees,
+                    maker_fee=maker,
+                    taker_fee=taker,
+                ),
+            )
+        )
+    for order in book.resting_orders():
+        maker, taker = fee_book.pair(order.coin)
+        rows.append(
+            (
+                order.coin,
+                loss_at_stop(
+                    order.size,
+                    order.limit_px,
+                    order.stop,
+                    include_fees=include_fees,
+                    maker_fee=maker,
+                    taker_fee=taker,
+                ),
+            )
+        )
+    return rows
 
 
 def _exposure_reason(book: ThesisBook, coin: str, snapshot: AccountSnapshot | None) -> str | None:
@@ -2223,7 +2512,16 @@ def _r_multiple(entry: float, stop: float, tp: float | None) -> float:
     return abs(float(tp) - float(entry)) / dist
 
 
-def _prepare_fill_targets(engine, info, settings, pos, now: float) -> None:
+def _prepare_fill_targets(
+    engine,
+    info,
+    settings,
+    pos,
+    now: float,
+    *,
+    maker_fee: float | None = None,
+    taker_fee: float | None = None,
+) -> None:
     """Re-pick a spent TP, then split the runner off the final TP1.
 
     The stop is never written. A failed re-pick keeps the planned TP, and
@@ -2275,6 +2573,8 @@ def _prepare_fill_targets(engine, info, settings, pos, now: float) -> None:
                     float(now),
                     pos.entry,
                     coin=pos.coin,
+                    maker_fee=maker_fee,
+                    taker_fee=taker_fee,
                 )
                 if walk.fail is None and walk.target is not None and float(walk.target) > 0:
                     new_tp = float(walk.target)
