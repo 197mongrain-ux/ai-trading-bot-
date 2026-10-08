@@ -106,6 +106,10 @@ class OpenPosition:
     # arm. 0 for an adopted position (unknown plan).
     intended_size: float = 0.0
     planned_risk: float = 0.0
+    # Taker reduces (a stop drip, a guard cut, a manual trim) already done.
+    # ``size`` is what is still open; the final close reports the sum.
+    closed_size: float = 0.0
+    closed_pnl: float = 0.0
 
 
 @dataclass
@@ -628,6 +632,7 @@ class ThesisBook:
         ts: float,
         crossed: bool | None,
         size: float | None = None,
+        direction: str | None = None,
     ) -> OpenPosition | CloseEvent | None:
         """Live fills.
 
@@ -640,10 +645,37 @@ class ThesisBook:
         position, so its margin does not wait for the thesis to go stale.
         A taker fill with no position is ignored (no market entry).
         Unknown ``crossed`` is ignored.
+
+        ``direction`` (the fill's "Open Long" / "Close Long" / ...) refines a
+        taker fill: an "Open ..." fill adds exposure and is not a close; a
+        "Close ..." fill smaller than the open size is a partial reduce (a
+        stop dripping, the guard's oversize cut, a manual trim). The book
+        keeps the rest open with its stop and TP, and the final close
+        reports the whole size and PnL. Without ``direction`` every taker
+        fill is still treated as a full close (old behaviour).
         """
         st = self._coins.get(canon_coin(coin))
         if crossed is True:
             if st is None or st.position is None:
+                return None
+            d = (direction or "").strip().lower()
+            if d.startswith("open"):
+                return None
+            pos = st.position
+            dust = max(1e-12, abs(pos.size) * 1e-6)
+            if (
+                d.startswith("close")
+                and size is not None
+                and 0 < float(size) < pos.size - dust
+                and price > 0
+            ):
+                part = float(size)
+                if pos.side == "long":
+                    pos.closed_pnl += (float(price) - pos.entry) * part
+                else:
+                    pos.closed_pnl += (pos.entry - float(price)) * part
+                pos.closed_size += part
+                pos.size -= part
                 return None
             closed = self.try_exit(coin, price)
             if closed is not None:
@@ -712,12 +744,13 @@ class ThesisBook:
             pnl = (exit_px - pos.entry) * pos.size
         else:
             pnl = (pos.entry - exit_px) * pos.size
+        pnl += pos.closed_pnl
         remainder = st.working
         st.working = None
         event = CloseEvent(
             coin=pos.coin,
             side=pos.side,
-            size=pos.size,
+            size=pos.size + pos.closed_size,
             entry=pos.entry,
             exit=exit_px,
             pnl=pnl,

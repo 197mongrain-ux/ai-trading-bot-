@@ -87,6 +87,28 @@ def _parse_symbols() -> tuple[str, ...]:
     return ("BTC", "SOL", "XRP")
 
 
+def check_network_url(network: str, api_url: str) -> None:
+    """``HL_NETWORK`` (websocket prints / fills) and ``HL_API_URL`` (orders,
+    balance, guard) must name the same chain.
+
+    A mismatch sizes and prices mainnet orders off the testnet tape (or the
+    reverse) and puts stops on the wrong side of the real market.
+    """
+    net = (network or "").strip().lower()
+    url = (api_url or "").strip().lower()
+    url_testnet = "testnet" in url
+    if net == "testnet" and not url_testnet:
+        raise ValueError(
+            f"HL_NETWORK=testnet but HL_API_URL={api_url} is not a testnet URL. "
+            "Fix both together (testnet: https://api.hyperliquid-testnet.xyz)."
+        )
+    if net != "testnet" and url_testnet:
+        raise ValueError(
+            f"HL_NETWORK={network or 'mainnet'} but HL_API_URL={api_url} is a testnet URL. "
+            "Fix both together (mainnet: https://api.hyperliquid.xyz)."
+        )
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable runtime settings loaded from environment."""
@@ -203,6 +225,9 @@ class Settings:
     model_b_loss_kill_r: float = 1.0
     # Hard per-position loss cap (fraction of account). Max 0.02.
     model_b_max_loss_pct: float = 0.02
+    # The 2% cap counts the maker entry + taker exit fee (size only; the
+    # stop and TP prices are unchanged). 0 = price-only 2% (old sizing).
+    model_b_cap_includes_fees: bool = True
     model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -398,6 +423,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         else "https://api.hyperliquid.xyz"
     )
     api_url = os.getenv("HL_API_URL", default_url).strip() or default_url
+    check_network_url(network, api_url)
 
     symbols = _parse_symbols()
     entry_mode = os.getenv("ENTRY_MODE", "both").strip().lower() or "both"
@@ -491,6 +517,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
         model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),
+        model_b_cap_includes_fees=_bool("MODEL_B_CAP_INCLUDES_FEES", True),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),

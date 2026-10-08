@@ -547,6 +547,19 @@ def leaves_reserve_headroom(
     )
 
 
+def fee_per_unit(entry: float, stop: float) -> float:
+    """USDC fees per coin for a stop-out: maker Alo entry + taker exit at the stop."""
+    return abs(float(entry)) * MAKER_FEE_RATE + abs(float(stop)) * TAKER_FEE_RATE
+
+
+def loss_at_stop(size: float, entry: float, stop: float, *, include_fees: bool = True) -> float:
+    """Dollar loss if ``size`` is stopped out: price move, plus both fees when asked."""
+    per = abs(float(entry) - float(stop))
+    if include_fees:
+        per += fee_per_unit(entry, stop)
+    return max(0.0, float(size)) * per
+
+
 def cap_size_to_loss(
     size: float,
     entry: float,
@@ -554,16 +567,22 @@ def cap_size_to_loss(
     account: float,
     max_loss_pct: float = HARD_MAX_LOSS_PCT,
     round_down=None,
+    *,
+    include_fees: bool = False,
 ) -> float:
     """Largest size <= ``size`` whose loss at the stop is <= the hard cap.
 
     ``max_loss_pct`` is clamped to HARD_MAX_LOSS_PCT. ``round_down`` floors
     to the coin's size step (never rounds up). 0 when nothing fits.
+    ``include_fees`` counts the maker entry and taker exit fee in that
+    loss (Oct 6 ETH: 2.00% on price was 2.56% after fees).
     """
     pct = min(float(max_loss_pct), HARD_MAX_LOSS_PCT)
     dist = abs(float(entry) - float(stop))
     if size <= 0 or dist <= 0 or account <= 0 or pct <= 0:
         return 0.0
+    if include_fees:
+        dist += fee_per_unit(entry, stop)
     cap = pct * float(account)
     if size * dist <= cap * (1 + 1e-12):
         return float(size)
@@ -589,6 +608,7 @@ def size_from_stop(
     leverage: int = LEVERAGE,
     notional_leverage: int | None = None,
     min_stop_bps: float = 0.0,
+    include_fees: bool = False,
 ) -> tuple[float, float]:
     """Return ``(size, dollar_risk)`` from stop distance and ``risk_pct``.
 
@@ -607,6 +627,12 @@ def size_from_stop(
       the same balance. ``leverage`` is the coin max the exchange is set
       to; ``notional_leverage`` is ``MODEL_B_MAX_LEVERAGE`` (20).
 
+    ``include_fees`` (``MODEL_B_CAP_INCLUDES_FEES``, on by default in the
+    engine) sizes so the price loss *plus* the maker entry and taker exit
+    fee at the stop is at most ``risk_pct`` of the balance. Without it a
+    stop-out loses 2% + ~6 bps of notional (2.8% at 13x). The stop and
+    target prices are not moved.
+
     ``dollar_risk`` is the loss if the real stop is hit at the returned size.
     """
     lev = _margin_leverage(leverage)
@@ -620,7 +646,8 @@ def size_from_stop(
     floor_dist = float(entry) * max(0.0, float(min_stop_bps or 0.0)) / 10_000.0
     sizing_dist = max(dist, floor_dist)
     target = spot_usdc * float(risk_pct)
-    size = target / sizing_dist
+    fees = fee_per_unit(entry, stop) if include_fees else 0.0
+    size = target / (sizing_dist + fees)
     cap_lev = lev
     if notional_leverage is not None:
         try:
@@ -630,7 +657,7 @@ def size_from_stop(
         if brake >= 1:
             cap_lev = min(cap_lev, brake)
     max_notional = spot_usdc * cap_lev
-    trimmed = sizing_dist > dist
+    trimmed = sizing_dist > dist or fees > 0
     if size * entry > max_notional:
         size = max_notional / entry
         trimmed = True

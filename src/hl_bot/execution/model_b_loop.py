@@ -73,6 +73,7 @@ from hl_bot.strategy.model_b.risk import (
     LEVERAGE,
     assert_leverage,
     cap_size_to_loss,
+    loss_at_stop,
     initial_margin,
     leaves_reserve_headroom,
     other_margin_cap,
@@ -211,12 +212,67 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         counter_flow_hold_sec=float(getattr(settings, "model_b_counter_flow_hold_sec", 30.0)),
         min_sweep_bps=getattr(settings, "model_b_min_sweep_bps", "0.3"),
         sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
+        cap_includes_fees=bool(getattr(settings, "model_b_cap_includes_fees", True)),
     )
 
 
-def run_model_b(
+def _fail_closed(exc: BaseException, *, book, live, guard, journal) -> None:
+    """Crash path: alert, pull this process's resting entries, one last guard pass."""
+    logger.critical("MODEL_B LOOP_CRASH %r: cancelling entries, protecting positions", exc)
+    try:
+        journal.log(
+            "model_b_alert",
+            entry_mode="model_b",
+            kind="LOOP_CRASH",
+            error=repr(exc)[:500],
+        )
+    except Exception:
+        logger.exception("MODEL_B LOOP_CRASH journal failed")
+    if live is not None:
+        for order in list(book.working_orders()):
+            if order.external or order.oid is None:
+                continue
+            try:
+                live.cancel_order(order.coin, order.oid)
+                logger.warning("MODEL_B LOOP_CRASH cancelled %s oid=%s", order.coin, order.oid)
+            except Exception:
+                logger.exception("MODEL_B LOOP_CRASH cancel failed %s", order.coin)
+    if guard is not None:
+        try:
+            guard.set_plans(plans_from_book(book))
+        except Exception:
+            logger.exception("MODEL_B LOOP_CRASH plan hand-off failed")
+        try:
+            guard.stop()
+        except Exception:
+            logger.exception("MODEL_B LOOP_CRASH guard stop failed")
+        try:
+            guard.run_once()
+        except Exception:
+            logger.exception("MODEL_B LOOP_CRASH final guard pass failed")
+
+
+def run_model_b(settings: Settings, **kwargs) -> dict:
+    """Run the hunt; on any crash, fail closed before re-raising.
+
+    Any exception (a bug, a bad API reply, Ctrl-C) used to end the process
+    and the daemon guard with it, leaving resting entries that could fill
+    later with nothing to stop them. Now: journal a LOOP_CRASH alert, pull
+    this process's resting entries, run one last guard pass on positions.
+    """
+    ctx: dict = {}
+    try:
+        return _run_model_b(settings, _crash_ctx=ctx, **kwargs)
+    except BaseException as exc:
+        if ctx:
+            _fail_closed(exc, **ctx)
+        raise
+
+
+def _run_model_b(
     settings: Settings,
     *,
+    _crash_ctx: dict | None = None,
     max_iterations: int | None = None,
     info: InfoClient | None = None,
     feed: MemoryFeed | HyperliquidTradeFeed | None = None,
@@ -343,6 +399,7 @@ def run_model_b(
     # Startup assertion: Chris's absolute rule. No position may lose more than
     # 2% of the account. Refuse to run if any setting could allow more.
     max_loss_pct = float(getattr(settings, "model_b_max_loss_pct", HARD_MAX_LOSS_PCT))
+    cap_fees = bool(getattr(settings, "model_b_cap_includes_fees", True))
     if not (0 < max_loss_pct <= HARD_MAX_LOSS_PCT <= 0.02):
         raise RuntimeError(f"MODEL_B LOSS_CAP {max_loss_pct} above 2% of the account")
     if float(settings.risk_per_trade) > max_loss_pct + 1e-12:
@@ -382,6 +439,7 @@ def run_model_b(
             max_loss_pct=max_loss_pct,
             price_for=_last_print,
             clock=clock,
+            include_fees=bool(getattr(settings, "model_b_cap_includes_fees", True)),
         )
         logger.info(
             "MODEL_B GUARD on max_leverage=%sx min_stop_bps=%s loss_kill_r=%s "
@@ -407,6 +465,10 @@ def run_model_b(
         getattr(settings, "model_b_min_sweep_bps", "0.3"),
         int(bool(getattr(settings, "model_b_sweep_require_htf", False))),
     )
+    if _crash_ctx is not None:
+        _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
+    # No new entry when the guard has not verified the account this recently.
+    guard_stale_sec = max(15.0, 5.0 * float(getattr(settings, "model_b_guard_sec", 3.0) or 3.0))
     announced_adopts: set[str] = set()
     announced_stale: set[str] = set()
     used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
@@ -615,6 +677,7 @@ def run_model_b(
                     ts=fill.ts,
                     crossed=fill.crossed,
                     size=fill.size,
+                    direction=getattr(fill, "direction", None),
                 )
                 if isinstance(applied, OpenPosition):
                     if applied.just_opened:
@@ -778,18 +841,17 @@ def run_model_b(
         # below runs. Loss kill and oversize cut run here too.
         if guard is not None:
             guard.set_plans(plans_from_book(book))
-            try:
-                # With the fast thread running, read fresh inside the guard's
-                # lock (the thread may have just placed a stop this older
-                # snapshot cannot see; a second stop would be left behind).
-                use_snap = (
-                    snapshot
-                    if snapshot is not None and snapshot.ok and not guard.threaded
-                    else None
-                )
-                guard.run_once(snapshot=use_snap)
-            except Exception:
-                logger.exception("MODEL_B GUARD pass failed")
+            if guard.threaded:
+                # The fast thread reads the account itself; wake it now
+                # instead of a second full read here (two readers every pass
+                # push the weight budget into 429s, and a 429 blinds both).
+                guard.kick()
+            else:
+                try:
+                    use_snap = snapshot if snapshot is not None and snapshot.ok else None
+                    guard.run_once(snapshot=use_snap)
+                except Exception:
+                    logger.exception("MODEL_B GUARD pass failed")
 
         if session_started_at is None:
             session_started_at = now
@@ -1451,6 +1513,16 @@ def run_model_b(
                 _block_same_coin(intent.coin, exposure_now, decision)
                 continue
 
+            if guard is not None and guard.stale(float(clock()), guard_stale_sec):
+                summary["fails"] += 1
+                logger.warning(
+                    "MODEL_B FAIL %s reason=GUARD_STALE last_ok=%s max_age=%.0fs "
+                    "(account / stops not verified: API down or rate limited)",
+                    coin,
+                    guard.last_ok_at,
+                    guard_stale_sec,
+                )
+                continue
             if guard is not None and guard.unprotected:
                 summary["fails"] += 1
                 logger.warning(
@@ -1468,6 +1540,7 @@ def run_model_b(
                 float(risk_base or 0.0),
                 max_loss_pct,
                 round_down=getattr(live, "round_size", None) if live is not None else None,
+                include_fees=cap_fees,
             )
             if capped <= 0:
                 summary["fails"] += 1
@@ -1475,7 +1548,7 @@ def run_model_b(
                     "MODEL_B FAIL %s reason=LOSS_CAP size=%s risk=%.4f cap=%.4f",
                     coin,
                     intent.size,
-                    intent.size * abs(intent.limit_px - intent.stop),
+                    loss_at_stop(intent.size, intent.limit_px, intent.stop, include_fees=cap_fees),
                     max_loss_pct * float(risk_base or 0.0),
                 )
                 continue
@@ -1485,8 +1558,8 @@ def run_model_b(
                     intent.coin,
                     intent.size,
                     capped,
-                    intent.size * abs(intent.limit_px - intent.stop),
-                    capped * abs(intent.limit_px - intent.stop),
+                    loss_at_stop(intent.size, intent.limit_px, intent.stop, include_fees=cap_fees),
+                    loss_at_stop(capped, intent.limit_px, intent.stop, include_fees=cap_fees),
                     max_loss_pct * float(risk_base or 0.0),
                 )
                 intent = dataclasses.replace(intent, size=capped)
@@ -1566,6 +1639,11 @@ def run_model_b(
                     )
                     continue
             book.post(intent, now, oid=oid, score=decision.score)
+            if guard is not None:
+                # The guard knows this ticket's stop / TP / size before it can
+                # fill, not one pass (~15 s) later with a fallback stop.
+                guard.set_plans(plans_from_book(book))
+                guard.kick()
             summary["arms"] += 1
             journal.log("model_b_arm", entry_mode="model_b", **decision.to_log())
             logger.info(

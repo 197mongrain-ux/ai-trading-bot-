@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from hl_bot.exchange.account import AccountSnapshot, PerpPosition, ProtectiveOrder
-from hl_bot.strategy.model_b.risk import HARD_MAX_LOSS_PCT
+from hl_bot.strategy.model_b.risk import HARD_MAX_LOSS_PCT, MAKER_FEE_RATE, TAKER_FEE_RATE
 from hl_bot.strategy.model_b.universe import canon_coin
 
 logger = logging.getLogger("hl_bot.execution.model_b_loop")
@@ -130,6 +130,7 @@ class PositionGuard:
         price_for: Callable[[str], float | None] | None = None,
         clock: Callable[[], float] = time.time,
         alert_cooldown_sec: float = 30.0,
+        include_fees: bool = True,
     ):
         self.live = live
         self.info = info
@@ -160,7 +161,13 @@ class PositionGuard:
         self._pass_lock = threading.Lock()
         self.unprotected: set[str] = set()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        # The 2% cap counts the maker entry and the taker exit fee.
+        self.include_fees = bool(include_fees)
+        # Clock time of the last pass that read the account and checked
+        # every position. The hunt sends nothing new while it is stale.
+        self.last_ok_at: float | None = None
 
     # ---- plans (set by the hunt) -------------------------------------
     def set_plans(self, plans: dict[str, Plan]) -> None:
@@ -178,6 +185,16 @@ class PositionGuard:
     def threaded(self) -> bool:
         return self._thread is not None
 
+    def stale(self, now: float, max_age_sec: float) -> bool:
+        """True when no verified pass happened within ``max_age_sec`` of ``now``."""
+        if self.last_ok_at is None:
+            return True
+        return float(now) - float(self.last_ok_at) > float(max_age_sec)
+
+    def kick(self) -> None:
+        """Wake the guard thread now (a fill or a new ticket just happened)."""
+        self._wake.set()
+
     # ---- thread -------------------------------------------------------
     def start(self, every_sec: float) -> None:
         if every_sec <= 0 or self._thread is not None:
@@ -189,7 +206,8 @@ class PositionGuard:
                     self.run_once()
                 except Exception:
                     logger.exception("MODEL_B GUARD pass failed")
-                self._stop.wait(every_sec)
+                self._wake.wait(every_sec)
+                self._wake.clear()
 
         self._thread = threading.Thread(target=_run, name="model-b-guard", daemon=True)
         self._thread.start()
@@ -197,6 +215,7 @@ class PositionGuard:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
@@ -247,6 +266,7 @@ class PositionGuard:
             self._own.pop(coin, None)
         if not live_positions:
             self.unprotected.clear()
+            self.last_ok_at = float(self.clock())
             return events
         if spot is None:
             try:
@@ -268,6 +288,7 @@ class PositionGuard:
             if not ok:
                 still_naked.add(pos.coin)
         self.unprotected = still_naked
+        self.last_ok_at = float(self.clock())
         return events
 
     # ---- helpers ------------------------------------------------------
@@ -349,9 +370,27 @@ class PositionGuard:
             return None
         return self.max_loss_pct * base
 
+    def _fees(self, pos: PerpPosition, exit_px: float) -> float:
+        """Maker entry + taker exit fee for the whole position (0 when off)."""
+        if not self.include_fees or pos.size <= 0:
+            return 0.0
+        return pos.size * (abs(pos.entry) * MAKER_FEE_RATE + abs(float(exit_px)) * TAKER_FEE_RATE)
+
     def _cap_stop(self, pos: PerpPosition, cap: float) -> float:
-        """Trigger where the position has lost exactly ``cap``, rounded tighter."""
-        dist = cap / pos.size
+        """Trigger where the position has lost exactly ``cap``, rounded tighter.
+
+        With fees on, the entry and exit fee come out of ``cap`` first, so
+        the realized loss at the trigger (fees included) is still <= cap.
+        """
+        per = cap / pos.size
+        if self.include_fees:
+            # Solve size x (dist + entry x maker + exit x taker) = cap with
+            # exit = entry -/+ dist: the same fee model the engine sizes with.
+            fixed = abs(pos.entry) * (MAKER_FEE_RATE + TAKER_FEE_RATE)
+            slope = 1.0 - TAKER_FEE_RATE if pos.side == "long" else 1.0 + TAKER_FEE_RATE
+            dist = max(0.0, per - fixed) / slope
+        else:
+            dist = per
         px = pos.entry - dist if pos.side == "long" else pos.entry + dist
         px = max(px, pos.entry * 1e-6)
         rnd = getattr(self.live, "round_price_toward", None)
@@ -370,10 +409,14 @@ class PositionGuard:
         if base is not None and pos.size > 0:
             dist = self.risk_pct * base / pos.size
         else:
+            # Balance unknown: a placeholder only. It is not cached, the coin
+            # stays "unprotected" (no new entries), and the 2% cap stop
+            # replaces it on the first pass that can read the balance.
             dist = pos.entry * 0.01
         stop = pos.entry - dist if pos.side == "long" else pos.entry + dist
         stop = max(stop, pos.entry * 1e-6)
-        self._fallback[key] = stop
+        if base is not None:
+            self._fallback[key] = stop
         return stop
 
     def _place(self, kind: str, coin: str, side: str, size: float, trigger: float) -> object | None | bool:
@@ -462,7 +505,15 @@ class PositionGuard:
         if planned is not None:
             limits.append((self.loss_kill_r * planned, "planned_risk"))
         if hard_cap is not None:
-            limits.append((hard_cap, "hard_cap_%.2fpct" % (self.max_loss_pct * 100)))
+            # Price loss allowed once both fees are paid: the realized loss
+            # (net of fees) is what Chris's 2% rule and the board measure.
+            limits.append(
+                (
+                    max(0.0, hard_cap - self._fees(pos, mark)),
+                    "hard_cap_%.2fpct%s"
+                    % (self.max_loss_pct * 100, "_net_fees" if self.include_fees else ""),
+                )
+            )
         if limits:
             limit, basis = min(limits, key=lambda t: t[0])
             if upnl < 0 and -upnl >= limit - 1e-12:
@@ -481,11 +532,14 @@ class PositionGuard:
         size = float(pos.size)
         target: float | None = None
         why = []
-        if account is not None and mark > 0 and self.max_leverage > 0:
-            lev_size = self.max_leverage * account / mark
+        # Leverage against the balance seen at open: a loss elsewhere that
+        # shrinks spot must not turn a valid ticket into an "oversize" one.
+        lev_base = self._open_account.get((pos.coin, pos.side), account)
+        if lev_base is not None and lev_base > 0 and mark > 0 and self.max_leverage > 0:
+            lev_size = self.max_leverage * lev_base / mark
             if size > lev_size * (1 + 1e-6):
                 target = lev_size
-                why.append(f"lev={size * mark / account:.1f}x>{self.max_leverage}x")
+                why.append(f"lev={size * mark / lev_base:.1f}x>{self.max_leverage}x")
         if plan is not None and plan.intended_size > 0 and size > self.oversize_ratio * plan.intended_size:
             target = plan.intended_size if target is None else min(target, plan.intended_size)
             why.append(f"size>{self.oversize_ratio}x_ticket")
@@ -513,7 +567,12 @@ class PositionGuard:
         stop = planned_stop if planned_stop is not None else self._fallback_stop(pos, account)
         if hard_cap is not None and pos.size > 0:
             cap_px = self._cap_stop(pos, hard_cap)
-            if (pos.side == "long" and cap_px > stop) or (pos.side == "short" and cap_px < stop):
+            # A ticket sized exactly to the cap ties here; float noise must
+            # not nudge the planned stop a tick tighter.
+            eps = abs(stop) * 1e-9
+            if (pos.side == "long" and cap_px > stop + eps) or (
+                pos.side == "short" and cap_px < stop - eps
+            ):
                 stop = cap_px
             # A resting stop past the cap price does not count as protection.
             orders = [
@@ -524,6 +583,25 @@ class PositionGuard:
                 or (pos.side == "long" and o.trigger_px >= cap_px * (1 - 1e-9))
                 or (pos.side == "short" and o.trigger_px <= cap_px * (1 + 1e-9))
             ]
+        # Our own stop looser than the target (a fallback placed before the
+        # plan reached the guard, or an older plan) does not count either;
+        # it is replaced at the target and then pulled.
+        own = self._own.get(coin, set())
+        tol = abs(stop) * 1e-4
+        loose_own = [
+            o
+            for o in orders
+            if o.kind == "sl"
+            and o.protects(pos.side)
+            and o.oid in own
+            and (
+                (pos.side == "long" and o.trigger_px < stop - tol)
+                or (pos.side == "short" and o.trigger_px > stop + tol)
+            )
+        ]
+        if loose_own:
+            loose_ids = {o.oid for o in loose_own}
+            orders = [o for o in orders if o.oid not in loose_ids]
         stops_now = [o for o in orders if o.kind == "sl" and o.protects(pos.side)]
         covered_already = any(o.full_position for o in stops_now) or (
             sum(o.size for o in stops_now) + max(_SIZE_TOL, size * 1e-4) >= size
@@ -539,12 +617,30 @@ class PositionGuard:
                 "NAKED_CLOSE", pos, mark, snapshot, events, reason="stop_reject", stop=stop
             )
             return False
+        for o in loose_own:
+            try:
+                self.live.cancel_order(coin, o.oid)
+                own.discard(o.oid)
+                logger.info(
+                    "MODEL_B GUARD STOP %s replaced loose oid=%s trigger=%s -> %s",
+                    coin,
+                    o.oid,
+                    o.trigger_px,
+                    stop,
+                )
+            except Exception:
+                logger.exception("MODEL_B GUARD loose stop cancel failed %s", coin)
 
         # 4. Take profit (plan only; a failure is not a close).
         if plan is not None and plan.take_profit > 0:
             tp_ok, _ = self._cover("tp", pos, size, plan.take_profit, orders)
             if not tp_ok:
                 logger.warning("MODEL_B GUARD TP could not be placed for %s", coin)
+        if plan is None and hard_cap is None:
+            # No plan and no balance: the stop above is a placeholder, so this
+            # coin does not count as protected until the 2% cap is known.
+            logger.warning("MODEL_B GUARD %s stop is a placeholder (balance unknown)", coin)
+            return False
         return True
 
 

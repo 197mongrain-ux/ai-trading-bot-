@@ -114,6 +114,9 @@ def _guard(live, snapshot, spot=1000.0, **kw):
         max_leverage=kw.pop("max_leverage", 20),
         loss_kill_r=kw.pop("loss_kill_r", 1.0),
         oversize_ratio=kw.pop("oversize_ratio", 1.1),
+        # Price-only cap numbers below; the fee-inclusive cap (the default)
+        # is covered in test_model_b_audit.py.
+        include_fees=kw.pop("include_fees", False),
         **kw,
     )
 
@@ -537,6 +540,7 @@ def _replay_world():
 
 def _replay(**kw):
     now, bars, prints = _replay_world()
+    kw.setdefault("cap_includes_fees", False)
     engine = ModelBEngine(tp_r=1.67, risk_pct=0.02, coins=("BTC",), **kw)
     return engine.evaluate(
         "BTC",

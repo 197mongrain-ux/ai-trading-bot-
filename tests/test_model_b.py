@@ -217,6 +217,9 @@ def _decide(prints, bars, pools, **kw):
         risk_pct=risk_pct,
         min_stop_bps=min_stop_bps,
         min_sweep_bps=min_sweep_bps,
+        # Price-only arithmetic (5000 x 2% / dist) in these structure tests.
+        # Fee-inclusive sizing (the default) is in test_model_b_audit.py.
+        cap_includes_fees=kw.pop("cap_includes_fees", False),
     )
     return engine.evaluate(
         kw.pop("coin", "BTC"),
@@ -3295,6 +3298,7 @@ def test_live_size_is_two_percent_of_spot_usdc_not_starting_equity(tmp_path):
             network="testnet",
             journal_path=str(tmp_path / "spot.jsonl"),
             loop_interval_sec=0,
+            model_b_cap_includes_fees=False,
         ),
         max_iterations=1,
         info=info,
@@ -3492,6 +3496,8 @@ def _two_coin_hunt(
         risk_per_trade=0.02,
         journal_path=str(journal),
         loop_interval_sec=0,
+        # Margin-fit scenarios are tuned to price-only ticket sizes.
+        model_b_cap_includes_fees=False,
     )
     if closer_score_guard is not None:
         settings_kw["model_b_closer_score_guard"] = closer_score_guard
@@ -4310,6 +4316,8 @@ def _live_account_settings(tmp_path, name: str, **extra) -> Settings:
         network="mainnet",
         journal_path=str(tmp_path / name),
         loop_interval_sec=0,
+        # Price-only sizing keeps these margin numbers; fees: test_model_b_audit.py.
+        model_b_cap_includes_fees=False,
     )
     fields.update(extra)
     return Settings(**fields)
@@ -5054,6 +5062,7 @@ def test_live_partial_keeps_alo_and_stale_cancels_remainder(tmp_path):
             network="testnet",
             journal_path=str(tmp_path / "partial.jsonl"),
             loop_interval_sec=0,
+            model_b_cap_includes_fees=False,
         ),
         max_iterations=3,
         info=info,
