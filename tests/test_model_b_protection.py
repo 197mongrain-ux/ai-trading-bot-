@@ -32,7 +32,7 @@ from hl_bot.execution.model_b_loop import run_model_b
 from hl_bot.journal import TradeJournal
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.flow import counter_flow
-from hl_bot.strategy.model_b.risk import size_from_stop
+from hl_bot.strategy.model_b.risk import HARD_MAX_LOSS_PCT, cap_size_to_loss, size_from_stop
 from hl_bot.strategy.model_b.structure import classify, structure_blocks
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import AloIntent, Pool, TradePrint
@@ -179,8 +179,9 @@ def test_adopted_naked_position_gets_a_stop_for_full_exchange_size(caplog):
 def test_planned_position_gets_stop_and_tp_at_ticket_prices():
     snap = AccountSnapshot(ok=True, positions=(_pos(szi=0.05, mark=83110.0),))
     live = FakeLive()
-    g = _guard(live, snap, spot=293.0)
-    g.set_plans({"BTC": Plan("BTC", "long", 82970.0, 83337.0, 0.05, 5.86)})
+    # spot 400: 2% cap = $8 > 0.05 x 136 = $6.80 at the planned stop.
+    g = _guard(live, snap, spot=400.0)
+    g.set_plans({"BTC": Plan("BTC", "long", 82970.0, 83337.0, 0.05, 6.8)})
     g.run_once()
     assert live.stops == [("BTC", False, 0.05, 82970.0)]
     assert live.tps == [("BTC", False, 0.05, 83337.0)]
@@ -193,7 +194,7 @@ def test_existing_full_stop_is_left_alone():
         protective_orders=(ProtectiveOrder("BTC", 31, "sl", "sell", 82970.0, 0.05),),
     )
     live = FakeLive()
-    _guard(live, snap, spot=293.0).run_once()
+    _guard(live, snap, spot=400.0).run_once()
     assert live.stops == [] and live.cancels == [] and live.reduces == []
 
 
@@ -270,7 +271,7 @@ def test_loss_kill_uses_two_percent_of_account_when_plan_unknown():
     snap = AccountSnapshot(ok=True, positions=(_pos(szi=0.1402, mark=82856.0, upnl=-35.05),))
     live = FakeLive()
     events = _guard(live, snap, spot=293.0, max_leverage=50).run_once()
-    assert events[0]["kind"] == "LOSS_KILL" and events[0]["basis"] == "account_pct"
+    assert events[0]["kind"] == "LOSS_KILL" and events[0]["basis"] == "hard_cap_2.00pct"
     assert live.reduces == [("BTC", False, 0.1402, 82856.0)]
 
 
@@ -630,3 +631,214 @@ def test_counter_flow_needs_a_real_flip_that_holds():
     # Small flow (under the USDC band) never vetoes.
     small = counter_flow("long", prints + late, coin="BTC", now=now, mid=100.0, usdc=1e9)
     assert not small.blocked
+
+
+# ------------------------------------------------- hard 2% loss cap (Chris)
+
+
+def test_load_account_snapshot_network_path_parses_protective_orders(monkeypatch):
+    """The real HTTP path (no injection): 23:32 testnet start hit a NameError here."""
+    import hl_bot.exchange.info_client as ic
+
+    def fake_post(_url, body, timeout=15.0):
+        if body["type"] == "clearinghouseState":
+            if body.get("dex"):
+                return 200, {"assetPositions": [], "marginSummary": {"totalMarginUsed": "0"}}
+            return 200, {
+                "assetPositions": [
+                    {"position": {"coin": "BTC", "szi": "0.05", "entryPx": "83106",
+                                  "positionValue": "4155.5", "unrealizedPnl": "0.2",
+                                  "marginUsed": "200"}}
+                ],
+                "marginSummary": {"totalMarginUsed": "200"},
+            }
+        if body["type"] == "frontendOpenOrders":
+            if body.get("dex"):
+                return 200, []
+            return 200, [
+                {"coin": "BTC", "oid": 7, "side": "A", "sz": "0.05", "origSz": "0.05",
+                 "limitPx": "82900", "triggerPx": "82970", "isTrigger": True,
+                 "reduceOnly": True, "orderType": "Stop Market", "isPositionTpsl": False},
+            ]
+        return 200, []
+
+    monkeypatch.setattr(ic, "_post_info", fake_post)
+    snap = InfoClient().load_account_snapshot("0xabc", ("", "xyz"))
+    assert snap.ok and snap.positions[0].size == pytest.approx(0.05)
+    assert [o.oid for o in snap.protection("BTC")] == [7]
+
+
+def test_cap_size_to_loss_never_exceeds_two_percent():
+    import random
+
+    rnd = random.Random(7)
+    for _ in range(5000):
+        account = rnd.uniform(1, 100_000)
+        entry = rnd.uniform(0.0001, 100_000)
+        stop = entry * (1 + rnd.choice([-1, 1]) * rnd.uniform(1e-6, 0.3))
+        size = rnd.uniform(0, 10) * account / entry * 50
+        out = cap_size_to_loss(size, entry, stop, account, max_loss_pct=rnd.choice([0.02, 0.05, 1.0]))
+        assert 0 <= out <= size
+        assert out * abs(entry - stop) <= HARD_MAX_LOSS_PCT * account * (1 + 1e-9)
+    # Rounding helper floors; a size that floors to nothing is refused.
+    assert cap_size_to_loss(1.0, 100.0, 99.0, 10.0, round_down=lambda x: int(x * 100) / 100) == 0.2
+    def boom(_x):
+        raise ValueError("rounds to 0")
+    assert cap_size_to_loss(1.0, 100.0, 99.0, 10.0, round_down=boom) == 0.0
+
+
+def test_engine_tickets_never_risk_more_than_two_percent():
+    import random
+
+    rnd = random.Random(11)
+    for _ in range(3000):
+        equity = rnd.uniform(5, 50_000)
+        entry = rnd.uniform(0.01, 100_000)
+        stop = entry * (1 - rnd.uniform(1e-6, 0.2))
+        size, _d = size_from_stop(
+            equity, entry, stop, risk_pct=0.02, leverage=rnd.choice([3, 10, 20, 40, 50]),
+            notional_leverage=rnd.choice([1, 20, 50]), min_stop_bps=rnd.choice([0, 15]),
+        )
+        size = cap_size_to_loss(size, entry, stop, equity)
+        assert size * (entry - stop) <= 0.02 * equity * (1 + 1e-9)
+
+
+def test_settings_refuse_a_loss_cap_above_two_percent(tmp_path):
+    with pytest.raises(ValueError):
+        _live_account_settings(tmp_path, "x.jsonl", model_b_max_loss_pct=0.021).validate()
+    with pytest.raises(ValueError):
+        _live_account_settings(tmp_path, "x.jsonl", model_b_max_loss_pct=0.0).validate()
+    s = _live_account_settings(tmp_path, "x.jsonl")
+    s.validate()
+    assert s.model_b_max_loss_pct == 0.02
+    # Startup assertion: the loop refuses to run past the cap even unvalidated.
+    with pytest.raises((RuntimeError, ValueError), match="LOSS"):
+        run_model_b(
+            _live_account_settings(tmp_path, "y.jsonl", model_b_max_loss_pct=0.03),
+            max_iterations=1,
+            info=InfoClient(),
+            feed=MemoryFeed(),
+            exchange=FakeLive(),
+            sleep_fn=lambda _s: None,
+            connect_feed=False,
+            coins=("BTC",),
+        )
+
+
+def test_guard_clamps_any_loss_setting_to_two_percent():
+    g = _guard(FakeLive(), AccountSnapshot(ok=True), max_loss_pct=0.5)
+    assert g.max_loss_pct == HARD_MAX_LOSS_PCT
+    assert g.risk_pct <= HARD_MAX_LOSS_PCT
+
+
+def test_loss_kill_at_two_percent_even_when_planned_risk_is_bigger(caplog):
+    # Plan says $30 risk on a $293 account (10%): the hard cap ($5.86) wins.
+    snap = AccountSnapshot(ok=True, positions=(_pos(szi=0.05, mark=82990.0, upnl=-5.9),))
+    live = FakeLive()
+    g = _guard(live, snap, spot=293.0)
+    g.set_plans({"BTC": Plan("BTC", "long", 82500.0, 83337.0, 0.05, 30.0)})
+    with caplog.at_level(logging.WARNING):
+        events = g.run_once()
+    assert events[0]["kind"] == "LOSS_KILL"
+    assert events[0]["basis"] == "hard_cap_2.00pct" and events[0]["limit"] == pytest.approx(5.86)
+    assert live.reduces and any("MODEL_B ALERT kind=LOSS_KILL" in r.getMessage() for r in caplog.records)
+
+
+def test_loss_kill_uses_planned_risk_when_it_is_smaller():
+    snap = AccountSnapshot(ok=True, positions=(_pos(szi=0.05, mark=83040.0, upnl=-3.3),))
+    live = FakeLive()
+    g = _guard(live, snap, spot=1000.0)
+    g.set_plans({"BTC": Plan("BTC", "long", 83040.0, 83337.0, 0.05, 3.3)})
+    events = g.run_once()
+    assert events[0]["kind"] == "LOSS_KILL" and events[0]["basis"] == "planned_risk"
+
+
+def test_manual_position_with_a_wide_stop_gets_a_cap_stop():
+    # Manual long, its own stop 5% away: loss there = 0.05 x 4155 = $207 on $293.
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(_pos(szi=0.05, mark=83110.0),),
+        protective_orders=(ProtectiveOrder("BTC", 31, "sl", "sell", 78950.0, 0.05),),
+    )
+    live = FakeLive()
+    _guard(live, snap, spot=293.0).run_once()
+    assert len(live.stops) == 1
+    _c, _b, size, trigger = live.stops[0]
+    assert size == pytest.approx(0.05)
+    assert (83106.0 - trigger) * 0.05 <= 0.02 * 293.0 + 1e-9
+    assert all(oid != 31 for _c2, oid in live.cancels)  # the manual stop is not ours to pull
+
+
+def test_cap_uses_account_value_seen_at_open():
+    snap = AccountSnapshot(ok=True, positions=(_pos(szi=0.05, mark=83100.0, upnl=-0.3),))
+    live = FakeLive()
+    g = _guard(live, snap, spot=293.0)
+    g.run_once()
+    assert g.loss_cap(_pos(szi=0.05), None) == pytest.approx(5.86)
+    g.info.spot = 250.0
+    g.info.snapshot = AccountSnapshot(ok=True, positions=(_pos(szi=0.05, mark=83000.0, upnl=-5.3),))
+    events = g.run_once()
+    assert not any(e["kind"] == "LOSS_KILL" for e in events)  # -5.30 < 2% of 293 at open
+    g.info.snapshot = AccountSnapshot(ok=True)
+    g.run_once()
+    assert g._open_account == {}
+
+
+def test_guard_property_no_position_survives_past_two_percent():
+    import random
+
+    rnd = random.Random(3)
+    for _ in range(400):
+        account = rnd.uniform(50, 5000)
+        entry = rnd.uniform(10, 100_000)
+        side = rnd.choice(["long", "short"])
+        size = rnd.uniform(0.1, 30) * account / entry
+        move = rnd.uniform(-0.05, 0.05)
+        mark = entry * (1 + move)
+        sign = 1 if side == "long" else -1
+        upnl = (mark - entry) * size * sign
+        pos = _pos(szi=size * sign, entry=entry, mark=mark, upnl=upnl)
+        live = FakeLive()
+        g = _guard(live, AccountSnapshot(ok=True, positions=(pos,)), spot=account, max_leverage=50)
+        if rnd.random() < 0.5:
+            stop = entry * (1 - sign * rnd.uniform(0.001, 0.2))
+            g.set_plans({"BTC": Plan("BTC", side, stop, 0.0, size, size * abs(entry - stop))})
+        events = g.run_once()
+        killed = any(e["kind"] in ("LOSS_KILL", "NAKED_CLOSE") for e in events)
+        if upnl <= -0.02 * account:
+            assert killed, (side, upnl, account)
+        for _c, _b, sz, trig in live.stops:
+            assert abs(entry - trig) * sz <= 0.02 * account * (1 + 1e-6) + 1e-9
+
+
+def test_loop_shrinks_an_oversized_ticket_before_placement(tmp_path, caplog, monkeypatch):
+    """Even if sizing upstream misbehaves, the order sent risks <= 2%."""
+    import hl_bot.strategy.model_b.engine as eng
+
+    real = eng.size_from_stop
+    monkeypatch.setattr(eng, "size_from_stop", lambda *a, **k: (real(*a, **k)[0] * 3, 300.0))
+    monkeypatch.setattr(eng, "cap_size_to_loss", lambda size, *a, **k: size)
+    now = _now()
+    info, feed = _arm_world(now)
+    live = FakeLive()
+    with caplog.at_level(logging.INFO):
+        run_model_b(
+            _live_account_settings(tmp_path, "cap.jsonl"),
+            max_iterations=1,
+            info=info,
+            feed=feed,
+            exchange=live,
+            sleep_fn=lambda _s: None,
+            now_fn=lambda: now,
+            connect_feed=False,
+            coins=("BTC",),
+            pools_for=lambda *a, **k: [Pool("PDH", 130.0, False)],
+            tick_for=lambda coin: 0.01,
+        )
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("MODEL_B LOSS_CAP hard=2.00%") for m in msgs)
+    assert any(m.startswith("MODEL_B LOSS_CAP BTC size") for m in msgs)
+    lev = [m for m in msgs if m.startswith("MODEL_B LEVERAGE BTC")]
+    assert lev and live.alos
+    risk = float(lev[0].split(" risk=")[1].split()[0])
+    assert risk <= 0.02 * 5000.0 + 1e-6

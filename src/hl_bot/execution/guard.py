@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from hl_bot.exchange.account import AccountSnapshot, PerpPosition, ProtectiveOrder
+from hl_bot.strategy.model_b.risk import HARD_MAX_LOSS_PCT
 from hl_bot.strategy.model_b.universe import canon_coin
 
 logger = logging.getLogger("hl_bot.execution.model_b_loop")
@@ -124,6 +125,7 @@ class PositionGuard:
         max_leverage: int = 20,
         loss_kill_r: float = 1.0,
         oversize_ratio: float = 1.1,
+        max_loss_pct: float = HARD_MAX_LOSS_PCT,
         retries: int = 1,
         price_for: Callable[[str], float | None] | None = None,
         clock: Callable[[], float] = time.time,
@@ -137,6 +139,14 @@ class PositionGuard:
         self.risk_pct = float(risk_pct)
         self.max_leverage = int(max_leverage)
         self.loss_kill_r = float(loss_kill_r)
+        # Hard cap: no position may lose more than this share of the account
+        # value seen when it opened. Never above 2%.
+        self.max_loss_pct = min(float(max_loss_pct), HARD_MAX_LOSS_PCT)
+        if self.max_loss_pct <= 0:
+            raise ValueError("max_loss_pct must be > 0")
+        self.risk_pct = min(self.risk_pct, self.max_loss_pct)
+        self._open_account: dict[tuple, float] = {}
+        self._last_account: float | None = None
         self.oversize_ratio = float(oversize_ratio)
         self.retries = max(0, int(retries))
         self.price_for = price_for
@@ -222,6 +232,10 @@ class PositionGuard:
         open_coins = {pos.coin for pos in live_positions}
         # Our own stop / TP triggers on a coin that is now flat are pulled so
         # an old trigger can never act on a later position.
+        open_keys = {(pos.coin, pos.side) for pos in live_positions}
+        for key in list(self._open_account):
+            if key not in open_keys:
+                self._open_account.pop(key, None)
         for coin in list(self._own):
             if coin in open_coins:
                 continue
@@ -240,6 +254,10 @@ class PositionGuard:
             except Exception:
                 spot = None
         account = float(spot) if spot is not None and float(spot) > 0 else None
+        if account is not None:
+            self._last_account = account
+        else:
+            account = self._last_account
         still_naked: set[str] = set()
         for pos in live_positions:
             try:
@@ -321,12 +339,36 @@ class PositionGuard:
         self._cancel_entries(pos.coin, snapshot)
         return ok
 
+    def loss_cap(self, pos: PerpPosition, account: float | None) -> float | None:
+        """Dollar cap for this position: max_loss_pct x account at open."""
+        key = (pos.coin, pos.side)
+        if key not in self._open_account and account is not None and account > 0:
+            self._open_account[key] = float(account)
+        base = self._open_account.get(key)
+        if base is None:
+            return None
+        return self.max_loss_pct * base
+
+    def _cap_stop(self, pos: PerpPosition, cap: float) -> float:
+        """Trigger where the position has lost exactly ``cap``, rounded tighter."""
+        dist = cap / pos.size
+        px = pos.entry - dist if pos.side == "long" else pos.entry + dist
+        px = max(px, pos.entry * 1e-6)
+        rnd = getattr(self.live, "round_price_toward", None)
+        if callable(rnd):
+            try:
+                px = float(rnd(pos.coin, px, up=pos.side == "long"))
+            except Exception:
+                pass
+        return px
+
     def _fallback_stop(self, pos: PerpPosition, account: float | None) -> float:
         key = (pos.coin, pos.side, round(pos.entry, 10), round(pos.size, 10))
         if key in self._fallback:
             return self._fallback[key]
-        if account is not None and pos.size > 0:
-            dist = self.risk_pct * account / pos.size
+        base = self._open_account.get((pos.coin, pos.side), account)
+        if base is not None and pos.size > 0:
+            dist = self.risk_pct * base / pos.size
         else:
             dist = pos.entry * 0.01
         stop = pos.entry - dist if pos.side == "long" else pos.entry + dist
@@ -413,22 +455,27 @@ class PositionGuard:
             else (mark - pos.entry) * pos.size * sign
         )
 
-        # 1. Loss kill.
+        # 1. Loss kill at min(loss_kill_r x planned risk, hard cap).
+        hard_cap = self.loss_cap(pos, account)
         planned = plan.planned_risk if plan is not None and plan.planned_risk > 0 else None
-        risk_cap = planned if planned is not None else (
-            self.risk_pct * account if account is not None else None
-        )
-        if risk_cap is not None and upnl < 0 and -upnl > self.loss_kill_r * risk_cap + 1e-12:
-            return self._close(
-                "LOSS_KILL",
-                pos,
-                mark,
-                snapshot,
-                events,
-                upnl=round(upnl, 6),
-                limit=round(self.loss_kill_r * risk_cap, 6),
-                basis="planned_risk" if planned is not None else "account_pct",
-            ) and False
+        limits = []
+        if planned is not None:
+            limits.append((self.loss_kill_r * planned, "planned_risk"))
+        if hard_cap is not None:
+            limits.append((hard_cap, "hard_cap_%.2fpct" % (self.max_loss_pct * 100)))
+        if limits:
+            limit, basis = min(limits, key=lambda t: t[0])
+            if upnl < 0 and -upnl >= limit - 1e-12:
+                return self._close(
+                    "LOSS_KILL",
+                    pos,
+                    mark,
+                    snapshot,
+                    events,
+                    upnl=round(upnl, 6),
+                    limit=round(limit, 6),
+                    basis=basis,
+                ) and False
 
         # 2. Oversize cut.
         size = float(pos.size)
@@ -464,6 +511,19 @@ class PositionGuard:
         orders = snapshot.protection(coin)
         planned_stop = plan.stop if plan is not None and plan.stop > 0 else None
         stop = planned_stop if planned_stop is not None else self._fallback_stop(pos, account)
+        if hard_cap is not None and pos.size > 0:
+            cap_px = self._cap_stop(pos, hard_cap)
+            if (pos.side == "long" and cap_px > stop) or (pos.side == "short" and cap_px < stop):
+                stop = cap_px
+            # A resting stop past the cap price does not count as protection.
+            orders = [
+                o
+                for o in orders
+                if o.kind != "sl"
+                or not o.protects(pos.side)
+                or (pos.side == "long" and o.trigger_px >= cap_px * (1 - 1e-9))
+                or (pos.side == "short" and o.trigger_px <= cap_px * (1 + 1e-9))
+            ]
         stops_now = [o for o in orders if o.kind == "sl" and o.protects(pos.side)]
         covered_already = any(o.full_position for o in stops_now) or (
             sum(o.size for o in stops_now) + max(_SIZE_TOL, size * 1e-4) >= size

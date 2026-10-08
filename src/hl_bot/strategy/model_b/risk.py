@@ -38,6 +38,10 @@ from collections.abc import Sequence
 # Locked Model B fraction. Sizing reads the caller's risk_pct (from
 # RISK_PER_TRADE). This constant is the value that setting must be.
 MODEL_B_RISK_PCT = 0.02
+# Chris's absolute rule: no open position may ever lose more than 2% of the
+# account. Ticket sizing, the guard's LOSS_KILL and its cap stop all use this.
+# Settings may lower it (MODEL_B_MAX_LOSS_PCT) but never raise it.
+HARD_MAX_LOSS_PCT = 0.02
 RISK_PCT = MODEL_B_RISK_PCT
 LEVERAGE = 20
 DEFAULT_TP_R = 1.5
@@ -76,6 +80,8 @@ def assert_policy() -> None:
         raise RuntimeError("Model B policy flags must stay off")
     if LEVERAGE != 20 or RISK_PCT != 0.02:
         raise RuntimeError("Model B risk is 2% at 20x only")
+    if HARD_MAX_LOSS_PCT > 0.02 or RISK_PCT > HARD_MAX_LOSS_PCT:
+        raise RuntimeError("Model B loss cap is 2% of the account per position")
 
 
 def assert_leverage(leverage: int) -> int:
@@ -539,6 +545,39 @@ def leaves_reserve_headroom(
         float(committed_other) + float(new_need)
         <= other_margin_cap(capacity, fraction) + 1e-6
     )
+
+
+def cap_size_to_loss(
+    size: float,
+    entry: float,
+    stop: float,
+    account: float,
+    max_loss_pct: float = HARD_MAX_LOSS_PCT,
+    round_down=None,
+) -> float:
+    """Largest size <= ``size`` whose loss at the stop is <= the hard cap.
+
+    ``max_loss_pct`` is clamped to HARD_MAX_LOSS_PCT. ``round_down`` floors
+    to the coin's size step (never rounds up). 0 when nothing fits.
+    """
+    pct = min(float(max_loss_pct), HARD_MAX_LOSS_PCT)
+    dist = abs(float(entry) - float(stop))
+    if size <= 0 or dist <= 0 or account <= 0 or pct <= 0:
+        return 0.0
+    cap = pct * float(account)
+    if size * dist <= cap * (1 + 1e-12):
+        return float(size)
+    out = cap / dist
+    if round_down is not None:
+        try:
+            out = float(round_down(out))
+        except Exception:
+            return 0.0
+    else:
+        out = math.floor(out * 1e8) / 1e8
+    while out > 0 and out * dist > cap * (1 + 1e-12):
+        out = math.floor(out * 0.999999 * 1e8) / 1e8
+    return max(0.0, out)
 
 
 def size_from_stop(

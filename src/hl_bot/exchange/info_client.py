@@ -15,6 +15,7 @@ from hl_bot.exchange.account import (
     parse_account_fills,
     parse_clearinghouse,
     parse_entry_orders,
+    parse_protective_orders,
 )
 from hl_bot.strategy.model_b.universe import canon_coin
 

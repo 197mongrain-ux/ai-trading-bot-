@@ -37,6 +37,7 @@ amend that fails is logged; the hunt keeps running.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import time
@@ -68,8 +69,10 @@ from hl_bot.strategy.model_b.alo import (
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import (
+    HARD_MAX_LOSS_PCT,
     LEVERAGE,
     assert_leverage,
+    cap_size_to_loss,
     initial_margin,
     leaves_reserve_headroom,
     other_margin_cap,
@@ -329,6 +332,26 @@ def run_model_b(
     )
     guard: PositionGuard | None = None
     guard_user = (settings.account_address or getattr(live, "account_address", "") or "").strip()
+    # Startup assertion: Chris's absolute rule. No position may lose more than
+    # 2% of the account. Refuse to run if any setting could allow more.
+    max_loss_pct = float(getattr(settings, "model_b_max_loss_pct", HARD_MAX_LOSS_PCT))
+    if not (0 < max_loss_pct <= HARD_MAX_LOSS_PCT <= 0.02):
+        raise RuntimeError(f"MODEL_B LOSS_CAP {max_loss_pct} above 2% of the account")
+    if float(settings.risk_per_trade) > max_loss_pct + 1e-12:
+        raise RuntimeError(
+            f"MODEL_B LOSS_CAP risk_per_trade={settings.risk_per_trade} above cap {max_loss_pct}"
+        )
+    if settings.is_live and exchange is None and live is not None and not guard_user:
+        raise RuntimeError("MODEL_B LOSS_CAP live run without an account: guard cannot run")
+    logger.info(
+        "MODEL_B LOSS_CAP hard=%.2f%% of account per position: ticket shrunk to it before "
+        "placement; LOSS_KILL at min(%.2fx planned risk, %.2f%% of account at open); "
+        "cap stop on every position (bot, adopted, manual)",
+        max_loss_pct * 100,
+        float(getattr(settings, "model_b_loss_kill_r", 1.0)),
+        max_loss_pct * 100,
+    )
+
     if live is not None and (guard_user or getattr(info, "has_injected_account", False)):
 
         def _last_print(coin: str) -> float | None:
@@ -348,6 +371,7 @@ def run_model_b(
             max_leverage=int(getattr(settings, "model_b_max_leverage", 20) or 20),
             loss_kill_r=float(getattr(settings, "model_b_loss_kill_r", 1.0)),
             oversize_ratio=float(getattr(settings, "model_b_oversize_ratio", 1.1)),
+            max_loss_pct=max_loss_pct,
             price_for=_last_print,
             clock=clock,
         )
@@ -1415,6 +1439,36 @@ def run_model_b(
                     ",".join(sorted(guard.unprotected)),
                 )
                 continue
+            # Last gate before the order: loss at the stop <= hard cap.
+            capped = cap_size_to_loss(
+                intent.size,
+                intent.limit_px,
+                intent.stop,
+                float(risk_base or 0.0),
+                max_loss_pct,
+                round_down=getattr(live, "round_size", None) if live is not None else None,
+            )
+            if capped <= 0:
+                summary["fails"] += 1
+                logger.warning(
+                    "MODEL_B FAIL %s reason=LOSS_CAP size=%s risk=%.4f cap=%.4f",
+                    coin,
+                    intent.size,
+                    intent.size * abs(intent.limit_px - intent.stop),
+                    max_loss_pct * float(risk_base or 0.0),
+                )
+                continue
+            if capped < intent.size:
+                logger.warning(
+                    "MODEL_B LOSS_CAP %s size %s -> %s (risk %.4f -> %.4f, cap %.4f)",
+                    intent.coin,
+                    intent.size,
+                    capped,
+                    intent.size * abs(intent.limit_px - intent.stop),
+                    capped * abs(intent.limit_px - intent.stop),
+                    max_loss_pct * float(risk_base or 0.0),
+                )
+                intent = dataclasses.replace(intent, size=capped)
             meta_txt = hunt.get("lev_meta") if hunt.get("lev_meta") else "-"
             notional = intent.size * intent.limit_px
             eff = notional / float(risk_base) if risk_base else 0.0

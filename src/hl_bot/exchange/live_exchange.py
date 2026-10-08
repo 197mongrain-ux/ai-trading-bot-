@@ -80,6 +80,21 @@ class LiveExchange:
             return float(round(px))
         return round(float(f"{px:.5g}"), max(0, 6 - dec))
 
+    def round_price_toward(self, coin: str, px: float, up: bool) -> float:
+        """Valid HL price at or beyond ``px`` in one direction (stop never loosens)."""
+        px = float(px)
+        r = self._round_price(coin, px)
+        if (up and r >= px) or (not up and r <= px):
+            return r
+        step = 1.0 + (1e-4 if up else -1e-4)
+        q = px
+        for _ in range(50):
+            q *= step
+            r = self._round_price(coin, q)
+            if (up and r >= px) or (not up and r <= px):
+                return r
+        return r
+
     def round_size(self, coin: str, size: float) -> float:
         return self._round_size(coin, size)
 

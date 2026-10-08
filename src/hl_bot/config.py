@@ -189,6 +189,8 @@ class Settings:
     # spot when the plan is unknown), oversize cut above N x ticket size.
     model_b_guard_sec: float = 3.0
     model_b_loss_kill_r: float = 1.0
+    # Hard per-position loss cap (fraction of account). Max 0.02.
+    model_b_max_loss_pct: float = 0.02
     model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
@@ -324,6 +326,11 @@ class Settings:
             )
         if self.model_b_loss_kill_r <= 0:
             raise ValueError(f"MODEL_B_LOSS_KILL_R={self.model_b_loss_kill_r} must be > 0.")
+        if not (0 < self.model_b_max_loss_pct <= 0.02):
+            raise ValueError(
+                f"MODEL_B_MAX_LOSS_PCT={self.model_b_max_loss_pct} must be in (0, 0.02]: "
+                "no position may lose more than 2% of the account."
+            )
         if self.model_b_oversize_ratio < 1.0:
             raise ValueError(
                 f"MODEL_B_OVERSIZE_RATIO={self.model_b_oversize_ratio} must be >= 1."
@@ -470,6 +477,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_sweep_require_htf=_bool("MODEL_B_SWEEP_REQUIRE_HTF", False),
         model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
+        model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),

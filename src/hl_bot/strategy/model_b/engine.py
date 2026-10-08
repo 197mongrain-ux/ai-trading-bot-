@@ -44,6 +44,7 @@ from hl_bot.strategy.model_b.risk import (
     place_stop,
     size_adjust_tag,
     size_from_stop,
+    cap_size_to_loss,
     stop_buffer,
     stop_is_valid,
     tp_fail_detail,
@@ -573,6 +574,10 @@ class ModelBEngine:
                     min_stop_bps=self.min_stop_bps,
                 )
             except ValueError:
+                return _done(BAD_STOP, **fields)
+            # Hard 2% cap on the loss at the stop (Chris's absolute rule).
+            size = cap_size_to_loss(size, limit, stop, equity)
+            if size <= 0:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
 
