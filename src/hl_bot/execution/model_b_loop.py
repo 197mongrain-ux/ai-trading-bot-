@@ -123,8 +123,10 @@ logger = logging.getLogger(__name__)
 
 def format_model_b_fail(decision) -> str:
     """One desk line. THIN_TAPE adds ``prints=N/M`` so a quiet tape is visible."""
+    side = getattr(decision, "side", None)
+    side_txt = f"side={side} " if side else ""
     text = (
-        f"MODEL_B FAIL {decision.coin} bias={decision.bias} pool={decision.pool} "
+        f"MODEL_B FAIL {decision.coin} {side_txt}bias={decision.bias} pool={decision.pool} "
         f"swing={decision.swing} sweep={decision.sweep_price} "
         f"absorb={decision.absorb} dW={decision.window_delta} d15={decision.last_15s_delta} "
         f"score={decision.score} vol={decision.volume_tag} reason={decision.fail_reason} "
@@ -213,6 +215,7 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         min_sweep_bps=getattr(settings, "model_b_min_sweep_bps", "0.3"),
         sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
         cap_includes_fees=bool(getattr(settings, "model_b_cap_includes_fees", True)),
+        two_sided=bool(getattr(settings, "model_b_two_sided", True)),
     )
 
 
@@ -454,7 +457,7 @@ def _run_model_b(
             guard.start(float(getattr(settings, "model_b_guard_sec", 3.0)))
     logger.info(
         "MODEL_B FILTERS structure=%s counter_flow=%s(usdc=%s sec=%s flip=%s hold=%ss) "
-        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s",
+        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s",
         getattr(settings, "model_b_structure_mode", "on"),
         "on" if getattr(settings, "model_b_counter_flow", True) else "off",
         getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0),
@@ -464,6 +467,7 @@ def _run_model_b(
         getattr(settings, "model_b_min_stop_bps", 15.0),
         getattr(settings, "model_b_min_sweep_bps", "0.3"),
         int(bool(getattr(settings, "model_b_sweep_require_htf", False))),
+        int(bool(getattr(settings, "model_b_two_sided", True))),
     )
     if _crash_ctx is not None:
         _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
@@ -1188,7 +1192,15 @@ def _run_model_b(
                     "model_b_fail", entry_mode="model_b", **decision.to_log()
                 )
                 logger.info("%s", format_model_b_fail(decision))
+                # Two-sided hunt: the other side's fail is its own line (one
+                # line per side per cycle); the journal row above carries it
+                # in ``other_sides``.
+                for other in getattr(decision, "other_sides", ()) or ():
+                    logger.info("%s", format_model_b_fail(other))
                 continue
+            for other in getattr(decision, "other_sides", ()) or ():
+                if not other.armed:
+                    logger.info("%s", format_model_b_fail(other))
 
             if decision.delta_flat:
                 logger.info(
