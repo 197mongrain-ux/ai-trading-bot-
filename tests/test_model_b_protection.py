@@ -219,7 +219,7 @@ def test_undersized_own_stop_is_resized_after_a_drip():
     assert ("BTC", first) in live.cancels  # old undersized stop removed after the new one rests
 
 
-def test_stop_reject_twice_market_closes_and_alerts(tmp_path, caplog):
+def test_stop_reject_on_two_passes_market_closes_and_alerts(tmp_path, caplog):
     snap = AccountSnapshot(
         ok=True,
         positions=(_pos(szi=0.05, mark=83110.0),),
@@ -231,7 +231,12 @@ def test_stop_reject_twice_market_closes_and_alerts(tmp_path, caplog):
     g.set_plans({"BTC": Plan("BTC", "long", 82970.0, 83337.0, 0.05, 5.86)})
     with caplog.at_level(logging.INFO):
         g.run_once()
-    assert len(live.stops) == 2  # first try + one retry
+        assert len(live.stops) == 2  # first try + one in-pass retry
+        # Not closed yet: entries blocked, the next pass (~3s) retries.
+        assert live.reduces == [] and "BTC" in g.unprotected
+        assert any("STOP_RETRY BTC" in r.message for r in caplog.records)
+        g.run_once()
+    assert len(live.stops) == 4
     assert live.reduces == [("BTC", False, 0.05, 83110.0)]  # reduce-only sell, full size
     assert ("BTC", 11) in live.cancels  # resting entry pulled so it cannot refill naked
     assert any("MODEL_B NAKED_CLOSE BTC" in r.message for r in caplog.records)
