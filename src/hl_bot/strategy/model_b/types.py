@@ -142,6 +142,11 @@ class Decision:
     # Sizing brake read: notional cap leverage and the stop distance the
     # size was computed from (>= the real stop distance).
     sizing_dist: float | None = None
+    # Two-sided hunt only (MODEL_B_TWO_SIDED=1): the side this decision is
+    # for, and the other side's decision (logged as its own FAIL line).
+    # Both stay None / empty with the flag off, so the old log is unchanged.
+    side: str | None = None
+    other_sides: tuple = ()
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -192,4 +197,23 @@ class Decision:
             "counter_flow": self.counter_flow,
             "structure_shadow": self.structure_shadow,
             "sizing_dist": _num(self.sizing_dist),
+            **(
+                {
+                    "side": self.side,
+                    "other_sides": [
+                        {
+                            "side": o.side,
+                            "fail_reason": o.fail_reason,
+                            "armed": o.armed,
+                            "swing": o.swing,
+                            "sweep_price": o.sweep_price,
+                            "window_delta": _num(o.window_delta),
+                            "last_15s_delta": _num(o.last_15s_delta),
+                        }
+                        for o in self.other_sides
+                    ],
+                }
+                if self.side is not None
+                else {}
+            ),
         }

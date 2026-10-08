@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 
 import math
+from dataclasses import replace
 
 from hl_bot.strategy.model_b.alo import alo_limit, market_ref
 from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
@@ -179,6 +180,7 @@ class ModelBEngine:
         min_sweep_bps: float | str | dict | None = 0.3,
         sweep_require_htf: bool = False,
         cap_includes_fees: bool = True,
+        two_sided: bool = False,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -226,6 +228,9 @@ class ModelBEngine:
         self.sweep_require_htf = bool(sweep_require_htf)
         # 2% cap counts the maker entry + taker exit fee (stop and TP unchanged).
         self.cap_includes_fees = bool(cap_includes_fees)
+        # MODEL_B_TWO_SIDED: evaluate long AND short every cycle; the draw
+        # pool is the TP target only. Off = the nearest pool picks the side.
+        self.two_sided = bool(two_sided)
 
     def evaluate(
         self,
@@ -690,6 +695,15 @@ class ModelBEngine:
         if last_px is None:
             return _done(THIN_TAPE)
 
+        if self.two_sided:
+            return self._pick_two_sided(
+                [
+                    replace(attempt("long", bias.pool_above), side="long"),
+                    replace(attempt("short", bias.pool_below), side="short"),
+                ],
+                _structure,
+            )
+
         if bias.side == "long":
             sides = [("long", bias.pool)]
         elif bias.side == "short":
@@ -713,6 +727,53 @@ class ModelBEngine:
                 ),
             )
         return max(results, key=lambda item: _FAIL_RANK.get(item.fail_reason or "", 0))
+
+    @staticmethod
+    def _pick_two_sided(results: list[Decision], structure) -> Decision:
+        """One decision per coin from the long and the short attempt.
+
+        Only one side armed -> that side. Both armed -> the side the 15m/1h
+        structure agrees with (bull for long, bear for short; one ticket
+        per coin), then higher absorb, then long. Score is per coin, the
+        same for both sides, so it cannot break the tie. Neither armed ->
+        the side that got furthest. The other side rides along in
+        ``other_sides`` so the loop logs one FAIL line per side.
+        """
+        armed = [item for item in results if item.armed and item.intent is not None]
+        if len(armed) == 1:
+            chosen = armed[0]
+        elif len(armed) > 1:
+            try:
+                states = structure() or []
+            except Exception:
+                states = []
+
+            def _agrees(item: Decision) -> int:
+                want = "bull" if item.side == "long" else "bear"
+                against = "bear" if item.side == "long" else "bull"
+                return sum(1 for st in states if st.state == want) - sum(
+                    1 for st in states if st.state == against
+                )
+
+            chosen = max(
+                armed,
+                key=lambda item: (
+                    _agrees(item),
+                    item.score,
+                    item.absorb or 0.0,
+                    1 if item.side == "long" else 0,
+                ),
+            )
+        else:
+            chosen = max(
+                results,
+                key=lambda item: (
+                    _FAIL_RANK.get(item.fail_reason or "", 0),
+                    1 if item.side == "long" else 0,
+                ),
+            )
+        others = tuple(item for item in results if item is not chosen)
+        return replace(chosen, other_sides=others)
 
 
 def _meaningful_level(bars, now, side, level, pools, tick) -> bool:

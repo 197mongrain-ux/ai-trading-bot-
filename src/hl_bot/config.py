@@ -219,6 +219,10 @@ class Settings:
     # and optionally require the swept level to be a 15m swing / pool.
     model_b_min_sweep_bps: str = "0.3"
     model_b_sweep_require_htf: bool = False
+    # Two-sided hunt: every cycle evaluates the long AND the short setup on
+    # each coin (same gates / SL / TP / sizing); the nearest draw pool is
+    # only that side's TP target, not the bias. 0 = old pool-only bias.
+    model_b_two_sided: bool = True
     # Protection guard: cadence (s), loss kill at N x planned risk (2% of
     # spot when the plan is unknown), oversize cut above N x ticket size.
     model_b_guard_sec: float = 3.0
@@ -514,6 +518,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_counter_flow_hold_sec=_float("MODEL_B_COUNTER_FLOW_HOLD_SEC", 30.0),
         model_b_min_sweep_bps=(os.getenv("MODEL_B_MIN_SWEEP_BPS") or "0.3").strip(),
         model_b_sweep_require_htf=_bool("MODEL_B_SWEEP_REQUIRE_HTF", False),
+        model_b_two_sided=_bool("MODEL_B_TWO_SIDED", True),
         model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
         model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),
