@@ -20,12 +20,14 @@ from hl_bot.execution.model_b_loop import (
     _prepare_fill_targets,
     _replace_stop,
     _restore_adopted,
+    _sync_runner_sizes,
     _trail_runner,
 )
 from hl_bot.journal import TradeJournal
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.risk import cap_size_to_loss, loss_at_stop, size_from_stop
 from hl_bot.strategy.model_b.thesis import OpenPosition, ThesisBook
+from hl_bot.strategy.model_b.types import AloIntent
 from hl_bot.strategy.model_b.tp_select import (
     TpWalk,
     restore_plan,
@@ -335,6 +337,15 @@ def test_split_sums_to_the_ticket():
     tp1, runner = split_runner_size(0.08887, 0.5)
     assert tp1 + runner == pytest.approx(0.08887)
     assert tp1 > 0 and runner > 0
+
+
+def test_split_floors_eth_onto_sz_decimals():
+    """ETH szDecimals 4. Half of 0.6371 is not a lot; the extra lot is the runner."""
+    tp1, runner = split_runner_size(0.6371, 0.5, 0.0001)
+    assert tp1 == pytest.approx(0.3185)
+    assert runner == pytest.approx(0.3186)
+    assert tp1 + runner == pytest.approx(0.6371)
+    assert tp1 <= 0.6371 and runner <= 0.6371
 
 
 def test_runner_target_uses_the_significant_pool_else_max_r():
@@ -816,6 +827,323 @@ def test_guard_does_not_churn_a_tp_inside_one_size_step():
     guard._own["ETH"] = {1, 2, 3}
     guard.run_once(snap, spot=1000.0)
     guard.run_once(snap, spot=1000.0)
+    assert live.events == []
+
+
+# ETH short, 15:38 ET Oct 8 2026. Alo 2460.1 filled in three pieces.
+ETH_ENTRY = 2460.1
+ETH_STOP = 2464.9
+ETH_TP1 = 2452.1
+ETH_TP2 = 2447.0
+ETH_PIECES = (0.2262, 0.2054, 0.2055)  # 0.6371
+ETH_STEP = 0.0001
+
+
+def _eth_live():
+    return _skhx_live(ETH_STEP)
+
+
+def test_three_piece_fill_resplits_tp_from_the_current_size(caplog):
+    """The first drip is not the position. Each later fill re-splits both legs.
+
+    Live: TP1 and TP2 locked onto 0.2262 (0.1131 / 0.1131) while the
+    position finished at 0.6371. They have to be 0.3185 and 0.3186.
+    """
+    book = ThesisBook()
+    book.post(
+        AloIntent(
+            coin="ETH",
+            side="short",
+            limit_px=ETH_ENTRY,
+            size=sum(ETH_PIECES),
+            stop=ETH_STOP,
+            take_profit=ETH_TP1,
+            swing_id="eth-1538",
+            tick=0.1,
+            runner_px=ETH_TP2,
+            runner_mode="on",
+        ),
+        now=1_700_000_000.0,
+    )
+    live = _eth_live()
+    settings = _settings(model_b_tp_runner="on")
+    seen = []
+    with caplog.at_level(logging.INFO, logger="hl_bot.execution.model_b_loop"):
+        for i, piece in enumerate(ETH_PIECES):
+            pos = book.apply_user_fill(
+                coin="ETH",
+                oid=None,
+                price=ETH_ENTRY,
+                ts=1_700_000_100.0 + i,
+                crossed=False,
+                size=piece,
+            )
+            # The fill keeps the planned targets. This test is the size split.
+            pos.stop = ETH_STOP
+            pos.take_profit = ETH_TP1
+            pos.runner_px = ETH_TP2
+            _sync_runner_sizes(book, settings, live)
+            seen.append((pos.size, pos.tp1_size, pos.runner_size))
+            assert pos.tp1_size + pos.runner_size == pytest.approx(pos.size)
+            assert 0 < pos.tp1_size <= pos.size + 1e-12
+            assert 0 < pos.runner_size <= pos.size + 1e-12
+    assert seen[0] == pytest.approx((0.2262, 0.1131, 0.1131))
+    assert seen[1][0] == pytest.approx(0.4316)
+    assert seen[1][1] + seen[1][2] == pytest.approx(seen[1][0])
+    assert seen[2] == pytest.approx((0.6371, 0.3185, 0.3186))
+    lines = [r.getMessage() for r in caplog.records if "TP_RUNNER resize" in r.getMessage()]
+    assert len(lines) == 3
+    assert "size=0.2262" in lines[0] and "tp1_size=0.1131" in lines[0]
+    assert "size=0.6371" in lines[-1]
+    assert "tp1_size=0.3185" in lines[-1] and "runner_size=0.3186" in lines[-1]
+    # A second pass on the finished size does not log or move the split.
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hl_bot.execution.model_b_loop"):
+        _sync_runner_sizes(book, settings, live)
+    assert not [r for r in caplog.records if "TP_RUNNER resize" in r.getMessage()]
+    assert pos.tp1_size == pytest.approx(0.3185)
+    assert pos.runner_size == pytest.approx(0.3186)
+
+
+def test_snapshot_size_resplits_a_stale_first_fill():
+    """The exchange size wins when the book is still on the first drip."""
+    book, held = _short_pos(
+        0.2262,
+        ETH_ENTRY,
+        ETH_STOP,
+        ETH_TP1,
+        runner_on=True,
+        runner_px=ETH_TP2,
+        tp1_size=0.1131,
+        runner_size=0.1131,
+    )
+    held.size = 0.6371
+    _sync_runner_sizes(book, _settings(model_b_tp_runner="on"), _eth_live())
+    plan = plans_from_book(book)["ETH"]
+    assert plan.tp1_size == pytest.approx(0.3185)
+    assert plan.runner_size == pytest.approx(0.3186)
+    assert plan.tp1_size + plan.runner_size == pytest.approx(held.size)
+
+
+def test_guard_first_then_current_size_split_then_quiet():
+    """Guard rests a full-size TP, then the runner split arrives from the final size.
+
+    Same ordering as the xyz:SKHX print, on the ETH 0.6371 position. Once
+    the two legs match, further passes place and cancel nothing.
+    """
+    size = 0.6371
+    book, held = _short_pos(size, ETH_ENTRY, ETH_STOP, ETH_TP1)
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-size,
+                entry=ETH_ENTRY,
+                margin_used=80.0,
+                mark=ETH_ENTRY,
+                unrealized_pnl=0.0,
+            ),
+        ),
+    )
+    live = _eth_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard.run_once(snap, spot=10_000.0)
+    assert [e for e in live.events if e[0] == "stop"] == [("stop", "ETH", size, ETH_STOP)]
+    assert [e for e in live.events if e[0] == "tp"] == [("tp", "ETH", size, ETH_TP1)]
+    held.runner_on = True
+    held.runner_px = ETH_TP2
+    held.tp1_size = 0.1131
+    held.runner_size = 0.1131
+    _sync_runner_sizes(book, _settings(model_b_tp_runner="on"), live)
+    assert held.tp1_size == pytest.approx(0.3185)
+    assert held.runner_size == pytest.approx(0.3186)
+    stop_oid, tp_oid = 701, 702
+    snap2 = AccountSnapshot(
+        ok=True,
+        positions=snap.positions,
+        protective_orders=(
+            ProtectiveOrder("ETH", stop_oid, "sl", "buy", ETH_STOP, size),
+            ProtectiveOrder("ETH", tp_oid, "tp", "buy", ETH_TP1, size),
+        ),
+    )
+    guard.set_plans(plans_from_book(book))
+    live.events.clear()
+    guard.run_once(snap2, spot=10_000.0)
+    assert ("cancel", "ETH", stop_oid) not in live.events
+    assert ("cancel", "ETH", tp_oid) in live.events
+    new_tps = [e for e in live.events if e[0] == "tp"]
+    by_px = {e[3]: e[2] for e in new_tps}
+    assert by_px[ETH_TP1] == pytest.approx(0.3185)
+    assert by_px[ETH_TP2] == pytest.approx(0.3186)
+    assert by_px[ETH_TP1] + by_px[ETH_TP2] == pytest.approx(size)
+    correct = AccountSnapshot(
+        ok=True,
+        positions=snap.positions,
+        protective_orders=(
+            ProtectiveOrder("ETH", stop_oid, "sl", "buy", ETH_STOP, size),
+            ProtectiveOrder("ETH", 801, "tp", "buy", ETH_TP1, 0.3185),
+            ProtectiveOrder("ETH", 802, "tp", "buy", ETH_TP2, 0.3186),
+        ),
+    )
+    guard._own["ETH"] = {stop_oid, 801, 802}
+    live.events.clear()
+    for _ in range(4):
+        guard.run_once(correct, spot=10_000.0)
+    assert live.events == []
+
+
+def test_duplicate_tp_at_the_same_trigger_is_cancelled_not_replaced():
+    """One order already matches. The extra copy is pulled. Nothing is placed.
+
+    Summing the two 2452.1 orders made the guard cancel both and place a
+    new one every pass, which left two copies resting.
+    """
+    size = 0.6371
+    book, _held = _short_pos(
+        size,
+        ETH_ENTRY,
+        ETH_STOP,
+        ETH_TP1,
+        runner_on=True,
+        runner_px=ETH_TP2,
+        tp1_size=0.3185,
+        runner_size=0.3186,
+    )
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-size,
+                entry=ETH_ENTRY,
+                margin_used=80.0,
+                mark=ETH_ENTRY,
+                unrealized_pnl=0.0,
+            ),
+        ),
+        protective_orders=(
+            ProtectiveOrder("ETH", 1, "sl", "buy", ETH_STOP, size),
+            ProtectiveOrder("ETH", 4, "tp", "buy", ETH_TP1, 0.1131),
+            ProtectiveOrder("ETH", 2, "tp", "buy", ETH_TP1, 0.3185),
+            ProtectiveOrder("ETH", 3, "tp", "buy", ETH_TP2, 0.3186),
+        ),
+    )
+    live = _eth_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard._own["ETH"] = {1, 2, 3, 4}
+    guard.run_once(snap, spot=10_000.0)
+    assert ("cancel", "ETH", 4) in live.events
+    assert ("cancel", "ETH", 2) not in live.events
+    assert ("cancel", "ETH", 3) not in live.events
+    assert not any(e[0] == "tp" for e in live.events)
+    assert not any(e[0] == "stop" for e in live.events)
+    quiet = AccountSnapshot(
+        ok=True,
+        positions=snap.positions,
+        protective_orders=tuple(o for o in snap.protective_orders if o.oid != 4),
+    )
+    live.events.clear()
+    for _ in range(4):
+        guard.run_once(quiet, spot=10_000.0)
+    assert live.events == []
+
+
+def test_two_equal_copies_keep_one_and_do_not_place():
+    size = 0.6371
+    book, _held = _short_pos(
+        size,
+        ETH_ENTRY,
+        ETH_STOP,
+        ETH_TP1,
+        runner_on=True,
+        runner_px=ETH_TP2,
+        tp1_size=0.3185,
+        runner_size=0.3186,
+    )
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-size,
+                entry=ETH_ENTRY,
+                margin_used=80.0,
+                mark=ETH_ENTRY,
+                unrealized_pnl=0.0,
+            ),
+        ),
+        protective_orders=(
+            ProtectiveOrder("ETH", 1, "sl", "buy", ETH_STOP, size),
+            ProtectiveOrder("ETH", 2, "tp", "buy", ETH_TP1, 0.3185),
+            ProtectiveOrder("ETH", 5, "tp", "buy", ETH_TP1, 0.3185),
+            ProtectiveOrder("ETH", 3, "tp", "buy", ETH_TP2, 0.3186),
+        ),
+    )
+    live = _eth_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard._own["ETH"] = {1, 2, 3, 5}
+    guard.run_once(snap, spot=10_000.0)
+    cancels = [e for e in live.events if e[0] == "cancel"]
+    assert cancels == [("cancel", "ETH", 5)]
+    assert not any(e[0] == "tp" for e in live.events)
+
+
+def test_position_shrink_after_tp1_sizes_the_runner_to_what_is_left():
+    """After TP1 the open size is the target. A further shrink replaces once, then stops."""
+    book, held = _short_pos(
+        0.2,
+        ETH_ENTRY,
+        ETH_ENTRY,
+        ETH_TP2,
+        runner_on=True,
+        runner_px=ETH_TP2,
+        tp1_filled=True,
+        tp1_size=0.0,
+        runner_size=0.3186,
+    )
+    _sync_runner_sizes(book, _settings(model_b_tp_runner="on"), _eth_live())
+    assert held.tp1_filled and held.tp1_size == 0.0
+    plan = plans_from_book(book)["ETH"]
+    assert plan.tp1_size == 0.0 and plan.runner_size == 0.0
+    assert plan.take_profit == pytest.approx(ETH_TP2)
+    snap = AccountSnapshot(
+        ok=True,
+        positions=(
+            PerpPosition(
+                coin="ETH",
+                szi=-0.2,
+                entry=ETH_ENTRY,
+                margin_used=25.0,
+                mark=ETH_ENTRY - 1.0,
+                unrealized_pnl=0.2,
+            ),
+        ),
+        protective_orders=(
+            ProtectiveOrder("ETH", 1, "sl", "buy", ETH_ENTRY, 0.2),
+            ProtectiveOrder("ETH", 3, "tp", "buy", ETH_TP2, 0.3186),
+        ),
+    )
+    live = _eth_live()
+    guard = _guard(live, snap, plans_from_book(book))
+    guard._own["ETH"] = {1, 3}
+    guard.run_once(snap, spot=10_000.0)
+    assert ("cancel", "ETH", 1) not in live.events
+    assert ("cancel", "ETH", 3) in live.events
+    tps = [e for e in live.events if e[0] == "tp"]
+    assert tps == [("tp", "ETH", 0.2, ETH_TP2)]
+    quiet = AccountSnapshot(
+        ok=True,
+        positions=snap.positions,
+        protective_orders=(
+            ProtectiveOrder("ETH", 1, "sl", "buy", ETH_ENTRY, 0.2),
+            ProtectiveOrder("ETH", 9, "tp", "buy", ETH_TP2, 0.2),
+        ),
+    )
+    guard._own["ETH"] = {1, 9}
+    live.events.clear()
+    for _ in range(4):
+        guard.run_once(quiet, spot=10_000.0)
     assert live.events == []
 
 

@@ -337,17 +337,82 @@ def runner_target(
     return float(entry) + cap * dist if side == "long" else float(entry) - cap * dist
 
 
-def split_runner_size(size: float, frac: float) -> tuple[float, float]:
-    """``(tp1_size, runner_size)`` summing to ``size``. Runner is the remainder."""
+def _step_decimals(step: float) -> int:
+    """Decimal places of a szDecimals lot (0.0001 -> 4)."""
+    scaled = float(step)
+    decimals = 0
+    while decimals < 8 and abs(scaled - round(scaled)) > 1e-8:
+        scaled *= 10.0
+        decimals += 1
+    return decimals
+
+
+def _floor_to_step(value: float, step: float) -> float:
+    """Floor onto ``step``, snapping a float that is already on a lot.
+
+    ``0.6371 / 0.0001`` is not an integer in binary. A hair under the lot
+    must still be that lot, and a true half-lot must still floor down.
+    """
+    lots = float(value) / float(step)
+    nearest = round(lots)
+    if abs(lots - nearest) <= 1e-6:
+        lots = nearest
+    else:
+        lots = math.floor(lots + 1e-9)
+    if lots <= 0:
+        return 0.0
+    return round(lots * float(step), _step_decimals(step))
+
+
+def split_runner_size(size: float, frac: float, step: float = 0.0) -> tuple[float, float]:
+    """``(tp1_size, runner_size)`` summing to ``size``. Runner is the remainder.
+
+    ``step`` is one szDecimals lot. Both legs are floored onto that lot and
+    neither exceeds the position. The extra lot, when the half is not on a
+    lot boundary, stays on the runner. With no step, the old 1e-8 floor is
+    used so existing tickets do not change.
+    """
     size = float(size)
     frac = float(frac)
     if size <= 0 or not (0.0 < frac < 1.0):
         return size, 0.0
-    tp1 = math.floor(size * (1.0 - frac) * 1e8) / 1e8
-    runner = size - tp1
+    step = float(step or 0.0)
+    if step > 0:
+        sized = _floor_to_step(size, step)
+        if sized <= step:
+            return sized if sized > 0 else 0.0, 0.0
+        tp1 = _floor_to_step(sized * (1.0 - frac), step)
+        runner = round(sized - tp1, _step_decimals(step))
+    else:
+        tp1 = math.floor(size * (1.0 - frac) * 1e8) / 1e8
+        runner = size - tp1
     if tp1 <= 0 or runner <= 0:
         return size, 0.0
     return tp1, runner
+
+
+def refresh_runner_split(pos, frac: float, step: float = 0.0) -> bool:
+    """Re-split TP1 and the runner from the position's current size.
+
+    A later partial fill grows ``pos.size`` and must grow both targets with
+    it. After TP1 the remainder is one order at the runner price, sized to
+    whatever is still open, so this is a no-op. Returns True when the stored
+    sizes changed.
+    """
+    if pos is None or not getattr(pos, "runner_on", False) or getattr(pos, "tp1_filled", False):
+        return False
+    if not getattr(pos, "runner_px", None):
+        return False
+    tp1, runner = split_runner_size(float(pos.size), frac, step)
+    if tp1 <= 0 or runner <= 0:
+        return False
+    changed = (
+        abs(float(getattr(pos, "tp1_size", 0.0) or 0.0) - tp1) > 1e-12
+        or abs(float(getattr(pos, "runner_size", 0.0) or 0.0) - runner) > 1e-12
+    )
+    pos.tp1_size = tp1
+    pos.runner_size = runner
+    return changed
 
 
 def trail_stop(

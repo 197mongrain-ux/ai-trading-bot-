@@ -557,6 +557,78 @@ class PositionGuard:
             return False
         return covered > wanted + self._size_tol(wanted, coin)
 
+    def _within_step(self, covered: float, wanted: float, coin: str) -> bool:
+        """True when ``covered`` is already the wanted size, within one lot."""
+        if wanted <= _SIZE_TOL:
+            return covered <= _SIZE_TOL
+        if covered <= _SIZE_TOL:
+            return False
+        return self._enough(covered, wanted, coin) and not self._over(covered, wanted, coin)
+
+    def _cancel_protective(self, pos: PerpPosition, order: ProtectiveOrder, orders: list) -> bool:
+        own = self._own.setdefault(pos.coin, set())
+        try:
+            self.live.cancel_order(pos.coin, order.oid)
+        except Exception:
+            logger.exception("MODEL_B GUARD TP cancel failed %s oid=%s", pos.coin, order.oid)
+            return False
+        own.discard(order.oid)
+        try:
+            orders.remove(order)
+        except ValueError:
+            pass
+        return True
+
+    def _collapse_tp_copies(
+        self,
+        pos: PerpPosition,
+        mine: list[ProtectiveOrder],
+        size: float,
+        trigger: float,
+        orders: list,
+    ) -> str:
+        """One reduce-only TP per trigger.
+
+        Returns ``kept`` when one resting order already matches ``size`` and
+        the extras were cancelled (do not place another). ``cleared`` when
+        every copy was cancelled so the caller can place a single order.
+        ``failed`` when a cancel did not land.
+        """
+        match = next(
+            (
+                order
+                for order in mine
+                if not order.full_position
+                and self._within_step(float(order.size), size, pos.coin)
+            ),
+            None,
+        )
+        extras = [order for order in mine if order is not match]
+        if match is not None:
+            logger.info(
+                "MODEL_B GUARD TP %s %s drop duplicate trigger=%s keep_oid=%s cancel=%s",
+                pos.coin,
+                pos.side,
+                trigger,
+                match.oid,
+                [order.oid for order in extras],
+            )
+            for order in extras:
+                if not self._cancel_protective(pos, order, orders):
+                    return "failed"
+            return "kept"
+        logger.info(
+            "MODEL_B GUARD TP %s %s collapse trigger=%s cancel=%s",
+            pos.coin,
+            pos.side,
+            trigger,
+            [order.oid for order in mine],
+        )
+        for order in list(mine):
+            if not self._cancel_protective(pos, order, orders):
+                return "failed"
+        return "cleared"
+
     def _tp_room(
         self,
         orders: list[ProtectiveOrder],
@@ -604,11 +676,25 @@ class PositionGuard:
 
         Coverage within one szDecimals step (or equal after ``round_size``)
         is already covered. That is the 0.861 vs 0.8615 TP2 churn.
+
+        Two reduce-only TPs at the same trigger are not coverage. Adding
+        them up made a wanted-size order plus a leftover look oversized, so
+        every pass cancelled both and placed a fresh copy. If one of them
+        already matches, it stays and the extra is cancelled. Nothing new
+        is placed.
         """
         mine = [o for o in orders if o.kind == kind and o.protects(pos.side)]
         if match_trigger:
             tol = max(abs(float(trigger)) * 1e-6, 1e-9)
             mine = [o for o in mine if abs(float(o.trigger_px) - float(trigger)) <= tol]
+        same_trigger = len({round(float(o.trigger_px), 6) for o in mine}) <= 1
+        if kind == "tp" and len(mine) > 1 and (match_trigger or same_trigger):
+            action = self._collapse_tp_copies(pos, mine, size, trigger, orders)
+            if action == "failed":
+                return False, False
+            if action == "kept":
+                return True, False
+            mine = []
         covered = sum(float(o.size) for o in mine if not o.full_position)
         if any(o.full_position for o in mine):
             if not shrink_oversize:
@@ -929,7 +1015,13 @@ class PositionGuard:
                 tp_ok = ok1 and ok2
             else:
                 tp_ok, _ = self._cover(
-                    "tp", pos, size, plan.take_profit, orders, budget=size
+                    "tp",
+                    pos,
+                    size,
+                    plan.take_profit,
+                    orders,
+                    shrink_oversize=True,
+                    budget=size,
                 )
             if not tp_ok:
                 logger.warning("MODEL_B GUARD TP could not be placed for %s", coin)

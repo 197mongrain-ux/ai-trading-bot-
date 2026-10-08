@@ -143,6 +143,7 @@ SHALLOW_SWEEP = "SHALLOW_SWEEP"
 TP_TOO_FAR_COUNTERTREND = "TP_TOO_FAR_COUNTERTREND"
 TP_UNDER_1_5R_COUNTERTREND = "TP_UNDER_1_5R_COUNTERTREND"
 MACRO_SIDE = "MACRO_SIDE"
+MACRO_UNKNOWN = "MACRO_UNKNOWN"
 MACRO_MODES_ALLOWED = ("off", "on", "shadow")
 
 
@@ -177,6 +178,7 @@ def min_sweep_bps_for(coin: str, spec: float | str | dict | None) -> float:
 # How close a failed side got to an arm. Used only when NONE tries both
 # sides and neither arms, so the log still carries one reason.
 _FAIL_RANK = {
+    MACRO_UNKNOWN: 0.4,
     MACRO_SIDE: 0.5,
     NO_SWING: 1,
     "NO_SWEEP": 2,
@@ -1103,7 +1105,15 @@ class ModelBEngine:
         def _macro_blocked(side: str) -> bool:
             return macro is not None and not macro.allows(side, self.macro_range_policy)
 
+        def _macro_unknown() -> bool:
+            return macro is not None and macro.macro == "unknown"
+
         def _side_try(side: str, pool) -> Decision:
+            # Candles not loaded yet is not a range. on and shadow both
+            # refuse the arm until 1h and 4h have a real read. off does
+            # not consult macro at all.
+            if self.macro_side_only != "off" and _macro_unknown():
+                return replace(_done(MACRO_UNKNOWN), side=side, macro=macro_label)
             if self.macro_side_only == "on" and _macro_blocked(side):
                 return replace(_done(MACRO_SIDE), side=side, macro=macro_label)
             d = replace(attempt(side, pool), side=side)
@@ -1159,14 +1169,20 @@ class ModelBEngine:
         """1h/4h ADX macro, recomputed (and logged) once per coin per 1h bar."""
         bucket = int(float(now) // 3600)
         hit = self._macro_cache.get(coin)
-        if hit is not None and hit[0] == bucket:
+        # An unknown read is not cached for the hour. The next pass, once
+        # 1h/4h candles have loaded, has to be allowed to arm.
+        if (
+            hit is not None
+            and hit[0] == bucket
+            and getattr(hit[1], "macro", None) != "unknown"
+        ):
             return hit[1]
         try:
             read = read_macro(bars, now, adx_min=self.macro_adx_min, mode=self.macro_mode)
         except Exception:
             logger.exception("MODEL_B MACRO read failed for %s", coin)
             read = MacroRead(
-                AdxTrend("1h", "unknown"), AdxTrend("4h", "unknown"), "range", self.macro_mode
+                AdxTrend("1h", "unknown"), AdxTrend("4h", "unknown"), "unknown", self.macro_mode
             )
         self._macro_cache[coin] = (bucket, read)
         logger.info(
