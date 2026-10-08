@@ -216,6 +216,9 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
         cap_includes_fees=bool(getattr(settings, "model_b_cap_includes_fees", True)),
         two_sided=bool(getattr(settings, "model_b_two_sided", True)),
+        tp_min_pool_r=float(getattr(settings, "model_b_tp_min_pool_r", 1.5)),
+        tp_max_pool_r=float(getattr(settings, "model_b_tp_max_pool_r", 3.0)),
+        tp_far_skip_countertrend=bool(getattr(settings, "model_b_tp_far_skip_countertrend", True)),
     )
 
 
@@ -457,7 +460,7 @@ def _run_model_b(
             guard.start(float(getattr(settings, "model_b_guard_sec", 3.0)))
     logger.info(
         "MODEL_B FILTERS structure=%s counter_flow=%s(usdc=%s sec=%s flip=%s hold=%ss) "
-        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s",
+        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s tp_min_pool_r=%s tp_max_pool_r=%s tp_far_skip_countertrend=%s",
         getattr(settings, "model_b_structure_mode", "on"),
         "on" if getattr(settings, "model_b_counter_flow", True) else "off",
         getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0),
@@ -468,6 +471,9 @@ def _run_model_b(
         getattr(settings, "model_b_min_sweep_bps", "0.3"),
         int(bool(getattr(settings, "model_b_sweep_require_htf", False))),
         int(bool(getattr(settings, "model_b_two_sided", True))),
+        getattr(settings, "model_b_tp_min_pool_r", 1.5),
+        getattr(settings, "model_b_tp_max_pool_r", 3.0),
+        int(bool(getattr(settings, "model_b_tp_far_skip_countertrend", True))),
     )
     if _crash_ctx is not None:
         _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
@@ -1710,6 +1716,8 @@ _CLOSE_FAILS = frozenset(
         "NO_ALO",
         "BAD_STOP",
         "BAD_TP",
+        "TP_TOO_FAR_COUNTERTREND",
+        "TP_UNDER_1_5R_COUNTERTREND",
     }
 )
 
