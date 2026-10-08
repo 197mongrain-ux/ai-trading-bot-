@@ -98,7 +98,7 @@ from hl_bot.strategy.model_b.structure import (
     structure_states,
 )
 from hl_bot.strategy.model_b.thesis import ThesisBook
-from hl_bot.strategy.model_b.trend import TfTrend, TrendRead, read_trend
+from hl_bot.strategy.model_b.trend import AdxTrend, MacroRead, TfTrend, TrendRead, read_macro, read_trend
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
 from hl_bot.strategy.model_b.vp_log import vp_error_fields, vp_log_fields
@@ -113,6 +113,8 @@ STOP_TOO_TIGHT = "STOP_TOO_TIGHT"
 SHALLOW_SWEEP = "SHALLOW_SWEEP"
 TP_TOO_FAR_COUNTERTREND = "TP_TOO_FAR_COUNTERTREND"
 TP_UNDER_1_5R_COUNTERTREND = "TP_UNDER_1_5R_COUNTERTREND"
+MACRO_SIDE = "MACRO_SIDE"
+MACRO_MODES_ALLOWED = ("off", "on", "shadow")
 
 
 def min_sweep_bps_for(coin: str, spec: float | str | dict | None) -> float:
@@ -146,6 +148,7 @@ def min_sweep_bps_for(coin: str, spec: float | str | dict | None) -> float:
 # How close a failed side got to an arm. Used only when NONE tries both
 # sides and neither arms, so the log still carries one reason.
 _FAIL_RANK = {
+    MACRO_SIDE: 0.5,
     NO_SWING: 1,
     "NO_SWEEP": 2,
     "NO_RECLAIM": 3,
@@ -198,6 +201,10 @@ class ModelBEngine:
         tp_min_pool_r: float = 0.0,
         tp_max_pool_r: float = 3.0,
         tp_far_skip_countertrend: bool = True,
+        macro_side_only: str = "off",
+        macro_range_policy: str = "both",
+        macro_adx_min: float = 20.0,
+        macro_mode: str = "4h_lead",
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -261,6 +268,21 @@ class ModelBEngine:
             raise ValueError("tp_max_pool_r must be >= 0")
         self.tp_max_pool_r = float(tp_max_pool_r)
         self.tp_far_skip_countertrend = bool(tp_far_skip_countertrend)
+        # MODEL_B_MACRO_SIDE_ONLY: off | on (only the macro side is evaluated)
+        # | shadow (both evaluated; an arm the macro would block is logged
+        # "MODEL_B SHADOW reason=MACRO_SIDE would_block=1"). Macro = ADX(14)
+        # +DI/-DI on 1h and 4h (trend.read_macro). Range -> MACRO_RANGE_POLICY.
+        mode = str(macro_side_only).strip().lower()
+        if mode not in MACRO_MODES_ALLOWED:
+            raise ValueError("macro_side_only must be off|on|shadow")
+        if macro_range_policy not in ("both", "none"):
+            raise ValueError("macro_range_policy must be both|none")
+        self.macro_side_only = mode
+        self.macro_range_policy = macro_range_policy
+        self.macro_adx_min = float(macro_adx_min)
+        self.macro_mode = macro_mode
+        # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
+        self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
 
     def evaluate(
         self,
@@ -277,6 +299,7 @@ class ModelBEngine:
         score: int | None = None,
         mark: float | None = None,
         leverage: int = 20,
+        htf_bars: list[dict] | None = None,
     ) -> Decision:
         """Decide an arm or a single fail reason.
 
@@ -805,11 +828,35 @@ class ModelBEngine:
         if last_px is None:
             return _done(THIN_TAPE)
 
+        macro: MacroRead | None = None
+        macro_label: str | None = None
+        if self.macro_side_only != "off":
+            macro = self._macro_read(coin_u, htf_bars if htf_bars else bars, now)
+            macro_label = macro.label(self.macro_range_policy)
+
+        def _macro_blocked(side: str) -> bool:
+            return macro is not None and not macro.allows(side, self.macro_range_policy)
+
+        def _side_try(side: str, pool) -> Decision:
+            if self.macro_side_only == "on" and _macro_blocked(side):
+                return replace(_done(MACRO_SIDE), side=side, macro=macro_label)
+            d = replace(attempt(side, pool), side=side)
+            if macro is not None and d.armed:
+                if self.macro_side_only == "shadow" and _macro_blocked(side):
+                    logger.info(
+                        "MODEL_B SHADOW %s reason=MACRO_SIDE would_block=1 side=%s %s",
+                        coin_u, side, macro_label,
+                    )
+                    d = replace(d, macro=f"would_block {macro_label}")
+                else:
+                    d = replace(d, macro=macro_label)
+            return d
+
         if self.two_sided:
             return self._pick_two_sided(
                 [
-                    replace(attempt("long", bias.pool_above), side="long"),
-                    replace(attempt("short", bias.pool_below), side="short"),
+                    _side_try("long", bias.pool_above),
+                    _side_try("short", bias.pool_below),
                 ],
                 _structure,
             )
@@ -823,7 +870,11 @@ class ModelBEngine:
             # untaken pool on that side when one exists.
             sides = [("long", bias.pool_above), ("short", bias.pool_below)]
 
-        results = [attempt(side, pool) for side, pool in sides]
+        if self.macro_side_only == "off":
+            results = [attempt(side, pool) for side, pool in sides]
+        else:
+            # side= is set by _side_try; one-sided mode keeps its old log shape.
+            results = [replace(_side_try(side, pool), side=None) for side, pool in sides]
         armed = [item for item in results if item.armed and item.intent is not None]
         if len(armed) == 1:
             return armed[0]
@@ -837,6 +888,27 @@ class ModelBEngine:
                 ),
             )
         return max(results, key=lambda item: _FAIL_RANK.get(item.fail_reason or "", 0))
+
+    def _macro_read(self, coin: str, bars: list[dict], now: float) -> MacroRead:
+        """1h/4h ADX macro, recomputed (and logged) once per coin per 1h bar."""
+        bucket = int(float(now) // 3600)
+        hit = self._macro_cache.get(coin)
+        if hit is not None and hit[0] == bucket:
+            return hit[1]
+        try:
+            read = read_macro(bars, now, adx_min=self.macro_adx_min, mode=self.macro_mode)
+        except Exception:
+            logger.exception("MODEL_B MACRO read failed for %s", coin)
+            read = MacroRead(
+                AdxTrend("1h", "unknown"), AdxTrend("4h", "unknown"), "range", self.macro_mode
+            )
+        self._macro_cache[coin] = (bucket, read)
+        logger.info(
+            "MODEL_B MACRO %s %s mode=%s adx_min=%s policy=%s filter=%s",
+            coin, read.label(self.macro_range_policy), self.macro_mode,
+            self.macro_adx_min, self.macro_range_policy, self.macro_side_only,
+        )
+        return read
 
     @staticmethod
     def _pick_two_sided(results: list[Decision], structure) -> Decision:

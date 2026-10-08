@@ -36,11 +36,11 @@ from dataclasses import dataclass
 from hl_bot.strategy.model_b.structure import resample
 
 TREND_TIMEFRAMES: tuple[str, ...] = ("15m", "1h")
-_TF_SEC = {"15m": 900, "1h": 3600}
+_TF_SEC = {"15m": 900, "1h": 3600, "4h": 14400}
 PIVOT = 2
 SWINGS = 2
 # Candles read per timeframe: 24h of 15m, 3 days of 1h.
-LOOKBACK = {"15m": 96, "1h": 72}
+LOOKBACK = {"15m": 96, "1h": 72, "4h": 90}
 EMA_LEN = 50
 
 
@@ -179,3 +179,154 @@ def read_trend(
         tuple(tf_trend(bars, tf, now) for tf in timeframes),
         ema_slope(bars, now),
     )
+
+
+# --- Macro side filter (Chris, Oct 8 11:05 / 11:07 ET: "trend identification
+# 1h and 4h. trade only on the side of macro" / "average directional index to
+# use for trend id"). ADX (Wilder, 14) with +DI / -DI on 1h and 4h candles
+# resampled from whatever bars are passed (the loop passes ~40 days of 1h
+# candles; 1m bars also work with less history -> "unknown" when too short).
+ADX_PERIOD = 14
+DEFAULT_ADX_MIN = 20.0
+MACRO_MODES = ("4h_lead", "both", "4h_only", "4h_lead_1h_fill")
+DEFAULT_MACRO_MODE = "4h_lead"
+_MACRO_TF_SEC = {"1h": 3600, "4h": 14400}
+
+
+@dataclass(frozen=True)
+class AdxTrend:
+    tf: str
+    state: str  # up | down | range | unknown
+    adx: float | None = None
+    plus_di: float | None = None
+    minus_di: float | None = None
+
+    def label(self) -> str:
+        if self.adx is None:
+            return f"{self.tf}={self.state}"
+        return (
+            f"{self.tf}={self.state}(adx={self.adx:.1f} +di={self.plus_di:.1f} "
+            f"-di={self.minus_di:.1f})"
+        )
+
+
+def adx_series(candles: list[dict], period: int = ADX_PERIOD) -> list[tuple[float, float, float] | None]:
+    """Wilder ADX / +DI / -DI per candle (None until there is enough history)."""
+    n = len(candles)
+    out: list[tuple[float, float, float] | None] = [None] * n
+    if n < 2 * period + 1:
+        return out
+    tr_s = pdm_s = mdm_s = 0.0
+    dx_hist: list[float] = []
+    adx: float | None = None
+    for i in range(1, n):
+        h, l, pc = candles[i]["h"], candles[i]["l"], candles[i - 1]["c"]
+        ph, pl = candles[i - 1]["h"], candles[i - 1]["l"]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        up, dn = h - ph, pl - l
+        pdm = up if (up > dn and up > 0) else 0.0
+        mdm = dn if (dn > up and dn > 0) else 0.0
+        if i <= period:
+            tr_s += tr
+            pdm_s += pdm
+            mdm_s += mdm
+            if i < period:
+                continue
+        else:
+            tr_s = tr_s - tr_s / period + tr
+            pdm_s = pdm_s - pdm_s / period + pdm
+            mdm_s = mdm_s - mdm_s / period + mdm
+        if tr_s <= 0:
+            continue
+        pdi = 100.0 * pdm_s / tr_s
+        mdi = 100.0 * mdm_s / tr_s
+        dx = 100.0 * abs(pdi - mdi) / (pdi + mdi) if (pdi + mdi) > 0 else 0.0
+        if adx is None:
+            dx_hist.append(dx)
+            if len(dx_hist) == period:
+                adx = sum(dx_hist) / period
+        else:
+            adx = (adx * (period - 1) + dx) / period
+        if adx is not None:
+            out[i] = (adx, pdi, mdi)
+    return out
+
+
+def adx_state(adx: float, pdi: float, mdi: float, adx_min: float) -> str:
+    if adx < adx_min:
+        return "range"
+    if pdi > mdi:
+        return "up"
+    if mdi > pdi:
+        return "down"
+    return "range"
+
+
+def tf_adx(
+    bars: list[dict],
+    tf: str,
+    now: float,
+    *,
+    adx_min: float = DEFAULT_ADX_MIN,
+    period: int = ADX_PERIOD,
+) -> AdxTrend:
+    candles = resample(bars, _MACRO_TF_SEC[tf], now)
+    series = adx_series(candles, period)
+    last = series[-1] if series else None
+    if last is None:
+        return AdxTrend(tf, "unknown")
+    adx, pdi, mdi = last
+    return AdxTrend(tf, adx_state(adx, pdi, mdi, adx_min), adx, pdi, mdi)
+
+
+def combine_macro(h1: str, h4: str, mode: str = DEFAULT_MACRO_MODE) -> str:
+    """1h + 4h -> up | down | range.
+
+    4h_lead (default): 4h trending that way and 1h not trending against it.
+    both: both trending the same way. 4h_only: the 4h read alone.
+    4h_lead_1h_fill: 4h_lead, and a 4h range takes a trending 1h direction.
+    """
+    if mode == "both":
+        return h1 if h1 == h4 and h1 in ("up", "down") else "range"
+    if mode == "4h_only":
+        return h4 if h4 in ("up", "down") else "range"
+    opposite = {"up": "down", "down": "up"}
+    if h4 in ("up", "down"):
+        return h4 if h1 != opposite[h4] else "range"
+    if mode == "4h_lead_1h_fill" and h1 in ("up", "down"):
+        return h1
+    return "range"
+
+
+@dataclass(frozen=True)
+class MacroRead:
+    h1: AdxTrend
+    h4: AdxTrend
+    macro: str  # up | down | range
+    mode: str = DEFAULT_MACRO_MODE
+
+    def allowed(self, range_policy: str = "both") -> tuple[str, ...]:
+        if self.macro == "up":
+            return ("long",)
+        if self.macro == "down":
+            return ("short",)
+        return ("long", "short") if range_policy == "both" else ()
+
+    def allows(self, side: str, range_policy: str = "both") -> bool:
+        return side in self.allowed(range_policy)
+
+    def label(self, range_policy: str = "both") -> str:
+        allowed = ",".join(self.allowed(range_policy)) or "none"
+        return f"{self.h1.label()} {self.h4.label()} macro={self.macro} allowed={allowed}"
+
+
+def read_macro(
+    bars: list[dict],
+    now: float,
+    *,
+    adx_min: float = DEFAULT_ADX_MIN,
+    mode: str = DEFAULT_MACRO_MODE,
+) -> MacroRead:
+    h1 = tf_adx(bars, "1h", now, adx_min=adx_min)
+    h4 = tf_adx(bars, "4h", now, adx_min=adx_min)
+    return MacroRead(h1, h4, combine_macro(h1.state, h4.state, mode), mode)

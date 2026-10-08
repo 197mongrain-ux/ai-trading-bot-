@@ -219,7 +219,45 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         tp_min_pool_r=float(getattr(settings, "model_b_tp_min_pool_r", 1.5)),
         tp_max_pool_r=float(getattr(settings, "model_b_tp_max_pool_r", 3.0)),
         tp_far_skip_countertrend=bool(getattr(settings, "model_b_tp_far_skip_countertrend", True)),
+        macro_side_only=str(getattr(settings, "model_b_macro_side_only", "off")),
+        macro_range_policy=str(getattr(settings, "model_b_macro_range_policy", "both")),
+        macro_adx_min=float(getattr(settings, "model_b_macro_adx_min", 20.0)),
+        macro_mode=str(getattr(settings, "model_b_macro_mode", "4h_lead")),
     )
+
+
+MACRO_BARS_DAYS = 40
+MACRO_REFRESH_SEC = 600.0
+
+
+def _macro_bars(info, coin: str, now: float, cache: dict) -> list:
+    """~40 days of 1h candles for the 1h/4h ADX macro read.
+
+    Refetched only on a new 1h bar or every 10 min, so
+    the macro adds at most a few candle calls per coin per hour (no 429 spin).
+    A failure keeps the last good copy; empty -> the engine falls back to the
+    1m bars (less history).
+    """
+    bucket = int(float(now) // 3600)
+    hit = cache.get(coin)
+    if hit is not None:
+        fetched_at, hb, bars = hit
+        # Refetch at once on a new 1h bar: the engine reads the macro once per
+        # bar, so it must see the just-closed bar's final candle.
+        if now - fetched_at < MACRO_REFRESH_SEC and hb == bucket:
+            return bars
+    try:
+        end_ms = int(now * 1000)
+        bars = info.get_candles(
+            coin, interval="1h", start_ms=end_ms - MACRO_BARS_DAYS * 86_400_000, end_ms=end_ms
+        ) or []
+    except Exception:
+        logger.exception("macro 1h candles failed for %s", coin)
+        bars = hit[2] if hit is not None else []
+    if not bars and hit is not None:
+        bars = hit[2]
+    cache[coin] = (float(now), bucket, bars)
+    return bars
 
 
 def _fail_closed(exc: BaseException, *, book, live, guard, journal) -> None:
@@ -460,7 +498,8 @@ def _run_model_b(
             guard.start(float(getattr(settings, "model_b_guard_sec", 3.0)))
     logger.info(
         "MODEL_B FILTERS structure=%s counter_flow=%s(usdc=%s sec=%s flip=%s hold=%ss) "
-        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s tp_min_pool_r=%s tp_max_pool_r=%s tp_far_skip_countertrend=%s",
+        "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s tp_min_pool_r=%s tp_max_pool_r=%s tp_far_skip_countertrend=%s "
+        "macro_side_only=%s macro_range_policy=%s macro_adx_min=%s macro_mode=%s",
         getattr(settings, "model_b_structure_mode", "on"),
         "on" if getattr(settings, "model_b_counter_flow", True) else "off",
         getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0),
@@ -474,6 +513,10 @@ def _run_model_b(
         getattr(settings, "model_b_tp_min_pool_r", 1.5),
         getattr(settings, "model_b_tp_max_pool_r", 3.0),
         int(bool(getattr(settings, "model_b_tp_far_skip_countertrend", True))),
+        getattr(settings, "model_b_macro_side_only", "off"),
+        getattr(settings, "model_b_macro_range_policy", "both"),
+        getattr(settings, "model_b_macro_adx_min", 20.0),
+        getattr(settings, "model_b_macro_mode", "4h_lead"),
     )
     if _crash_ctx is not None:
         _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
@@ -483,6 +526,7 @@ def _run_model_b(
     announced_stale: set[str] = set()
     used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
     risked_fill_ids: set[str] = set()
+    macro_bars_cache: dict[str, tuple[float, int, list]] = {}
     session_started_at: float | None = None
     last_margin_sig: tuple | None = None
 
@@ -1062,6 +1106,9 @@ def _run_model_b(
 
             meta_lev = lev_map.get(canon_coin(coin))
             coin_lev = usable_leverage(meta_lev, None)
+            extra: dict = {}
+            if getattr(engine, "macro_side_only", "off") != "off":
+                extra["htf_bars"] = _macro_bars(info, coin, now, macro_bars_cache)
             decision = engine.evaluate(
                 coin,
                 now=now,
@@ -1073,6 +1120,7 @@ def _run_model_b(
                 equity=risk_base,
                 tick=tick,
                 leverage=coin_lev,
+                **extra,
             )
             hunts.append(
                 {

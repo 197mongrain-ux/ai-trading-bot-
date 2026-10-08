@@ -29,6 +29,16 @@ def _dotenv_skipped() -> bool:
     }
 
 
+def _macro_side_mode() -> str:
+    """MODEL_B_MACRO_SIDE_ONLY: 1/on (only the macro side), shadow (log), 0/off."""
+    raw = (os.getenv("MODEL_B_MACRO_SIDE_ONLY") or "shadow").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return "on"
+    if raw in ("0", "false", "no", "off", ""):
+        return "off"
+    return raw  # "shadow" or invalid (validated below)
+
+
 def _structure_mode() -> str:
     """MODEL_B_STRUCTURE_FILTER: 1/on (gate), shadow (log only), 0/off."""
     raw = (os.getenv("MODEL_B_STRUCTURE_FILTER") or "").strip().lower()
@@ -232,6 +242,13 @@ class Settings:
     # min R, and not with the 15m/1h trend -> skip (when the knob below is 1).
     model_b_tp_max_pool_r: float = 3.0
     model_b_tp_far_skip_countertrend: bool = True
+    # Macro side filter: ADX(14) +DI/-DI on 1h and 4h. macro up -> longs only,
+    # down -> shorts only, range -> MODEL_B_MACRO_RANGE_POLICY (both | none).
+    # on | shadow (log "would_block", never block) | off. Default shadow.
+    model_b_macro_side_only: str = "shadow"
+    model_b_macro_range_policy: str = "both"
+    model_b_macro_adx_min: float = 20.0
+    model_b_macro_mode: str = "4h_lead"
     # Protection guard: cadence (s), loss kill at N x planned risk (2% of
     # spot when the plan is unknown), oversize cut above N x ticket size.
     model_b_guard_sec: float = 3.0
@@ -355,6 +372,20 @@ class Settings:
         if not (0.0 <= self.model_b_tp_min_pool_r <= 10.0):
             raise ValueError(
                 f"MODEL_B_TP_MIN_POOL_R={self.model_b_tp_min_pool_r} must be in [0, 10] (0 = off)."
+            )
+        if self.model_b_macro_side_only not in ("on", "off", "shadow"):
+            raise ValueError(
+                f"MODEL_B_MACRO_SIDE_ONLY={self.model_b_macro_side_only!r} must be 1|0|shadow."
+            )
+        if self.model_b_macro_range_policy not in ("both", "none"):
+            raise ValueError(
+                f"MODEL_B_MACRO_RANGE_POLICY={self.model_b_macro_range_policy!r} must be both|none."
+            )
+        if not (5.0 <= self.model_b_macro_adx_min <= 60.0):
+            raise ValueError(f"MODEL_B_MACRO_ADX_MIN={self.model_b_macro_adx_min} must be in [5, 60].")
+        if self.model_b_macro_mode not in ("4h_lead", "both", "4h_only", "4h_lead_1h_fill"):
+            raise ValueError(
+                f"MODEL_B_MACRO_MODE={self.model_b_macro_mode!r} must be 4h_lead|both|4h_only|4h_lead_1h_fill."
             )
         if not (0.0 <= self.model_b_tp_max_pool_r <= 20.0):
             raise ValueError(
@@ -539,6 +570,10 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_tp_min_pool_r=_float("MODEL_B_TP_MIN_POOL_R", 1.5),
         model_b_tp_max_pool_r=_float("MODEL_B_TP_MAX_POOL_R", 3.0),
         model_b_tp_far_skip_countertrend=_bool("MODEL_B_TP_FAR_SKIP_COUNTERTREND", True),
+        model_b_macro_side_only=_macro_side_mode(),
+        model_b_macro_range_policy=(os.getenv("MODEL_B_MACRO_RANGE_POLICY") or "both").strip().lower(),
+        model_b_macro_adx_min=_float("MODEL_B_MACRO_ADX_MIN", 20.0),
+        model_b_macro_mode=(os.getenv("MODEL_B_MACRO_MODE") or "4h_lead").strip().lower(),
         model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
         model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
         model_b_max_loss_pct=_float("MODEL_B_MAX_LOSS_PCT", 0.02),
