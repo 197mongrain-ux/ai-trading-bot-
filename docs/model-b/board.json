@@ -2,7 +2,7 @@
   "title": "Model B \u00b7 Mainnet performance",
   "model": "model_b",
   "since_et": "2026-10-06T21:34:00-04:00",
-  "generated_et": "2026-10-08T12:04:25.281670-04:00",
+  "generated_et": "2026-10-08T12:15:27.227544-04:00",
   "network": "mainnet",
   "framing": "Hyperliquid MAINNET \u2014 Model B closed trades since flip",
   "starting_fund": 14.8,
@@ -76,7 +76,7 @@
     "net_flows": 277.293786,
     "total_deposited": 292.093786,
     "spot_usdc": 255.707252,
-    "spot_hold": 0.0,
+    "spot_hold": 73.405399,
     "unrealized_pnl": 0.0,
     "margin_used": 0.0,
     "total_funds": 255.707252,
@@ -86,6 +86,107 @@
     "total_vs_starting_pct": -12.457,
     "expected_equity": 255.707252,
     "recon_residual": 0.0
+  },
+  "bot_performance": {
+    "title": "Bot performance (trade #7 loss capped at risk)",
+    "trades": 11,
+    "wins": 7,
+    "losses": 4,
+    "breakeven": 0,
+    "win_rate_pct": 63.6,
+    "gross_pnl": 5.79809,
+    "fees": 6.305908,
+    "net_pnl": -0.507818,
+    "net_on_capital_pct": -0.174,
+    "twr_pct": 3.577,
+    "avg_win_pct": 1.9193,
+    "avg_loss_pct": -1.8395,
+    "win_loss_ratio": 1.043,
+    "expectancy_pct": 0.5525,
+    "avg_win_r": 1.139,
+    "avg_loss_r": -1.25,
+    "win_loss_ratio_r": 0.911,
+    "expectancy_r": 0.27,
+    "n_pct": 11,
+    "n_r": 11,
+    "daily": [
+      {
+        "date": "2026-10-07",
+        "trades": 7,
+        "wins": 4,
+        "losses": 3,
+        "breakeven": 0,
+        "win_rate_pct": 57.1,
+        "gross_pnl": -4.62141,
+        "fees": 0.264069,
+        "net_pnl": -4.885479,
+        "deposits": 277.293786,
+        "withdrawals": 0.0,
+        "net_flows": 277.293786,
+        "equity_start": 14.8,
+        "capital": 292.093786,
+        "equity_end": 287.208307,
+        "daily_pct": 2.022,
+        "daily_pct_on_capital": -1.673,
+        "avg_win_pct": 2.5116,
+        "avg_loss_pct": -1.8349,
+        "win_loss_ratio": 1.369,
+        "expectancy_pct": 0.6488,
+        "avg_win_r": 1.357,
+        "avg_loss_r": -1.192,
+        "win_loss_ratio_r": 1.138,
+        "expectancy_r": 0.264,
+        "n_pct": 7,
+        "n_r": 7
+      },
+      {
+        "date": "2026-10-08",
+        "trades": 4,
+        "wins": 3,
+        "losses": 1,
+        "breakeven": 0,
+        "win_rate_pct": 75.0,
+        "gross_pnl": 10.4195,
+        "fees": 6.041839,
+        "net_pnl": 4.377661,
+        "deposits": 0.0,
+        "withdrawals": 0.0,
+        "net_flows": 0.0,
+        "equity_start": 287.208307,
+        "capital": 287.208307,
+        "equity_end": 291.585968,
+        "daily_pct": 1.524,
+        "daily_pct_on_capital": 1.524,
+        "avg_win_pct": 1.2909,
+        "avg_loss_pct": -2.1158,
+        "win_loss_ratio": 0.61,
+        "expectancy_pct": 0.4392,
+        "avg_win_r": 0.848,
+        "avg_loss_r": -1.426,
+        "win_loss_ratio_r": 0.595,
+        "expectancy_r": 0.28,
+        "n_pct": 4,
+        "n_r": 4
+      }
+    ],
+    "normalized_trade_nos": [
+      7
+    ],
+    "normalized_count": 1,
+    "normalized_actual_net": -41.746097,
+    "normalized_bot_net": -5.861394,
+    "normalized": [
+      {
+        "trade_no": 7,
+        "symbol": "BTC",
+        "actual_net": -41.746097,
+        "bot_net": -5.861394,
+        "normalize_loss_pct": 2.0,
+        "equity_at_open": 293.069701,
+        "normalize_reason": "bug: PR #8 removed 20x size cap",
+        "note": "actual $-41.75, counted as -2.00% ($-5.86) in bot performance \u2014 bug: PR #8 removed 20x size cap"
+      }
+    ]
   },
   "daily": [
     {
@@ -287,7 +388,12 @@
       "r_multiple": -12.946,
       "entry_px": 83106.0,
       "planned_stop": 83083.0,
-      "note": "PR #8 incident: 40x size, no stop placed (bot bug), closed manually"
+      "note": "actual $-41.75, counted as -2.00% ($-5.86) in bot performance \u2014 bug: PR #8 removed 20x size cap",
+      "note_detail": "PR #8 incident: 40x size, no stop placed (bot bug), closed manually",
+      "normalize_loss_pct": 2.0,
+      "normalize_reason": "bug: PR #8 removed 20x size cap",
+      "bot_net": -5.861394,
+      "bot_pct_of_account": -2.0
     },
     {
       "symbol": "xyz:GOLD",
@@ -308,7 +414,8 @@
       "r_multiple": 0.47,
       "entry_px": 4138.5,
       "planned_stop": 4145.7,
-      "note": "First two-sided (PR #12) short; TP ~1.0R (below 1.67R target); fees >50% of gross"
+      "note": "First two-sided (PR #12) short; TP ~1.0R (below 1.67R target); fees >50% of gross",
+      "note_detail": "First two-sided (PR #12) short; TP ~1.0R (below 1.67R target); fees >50% of gross"
     },
     {
       "symbol": "ETH",
@@ -329,7 +436,8 @@
       "r_multiple": 0.715,
       "entry_px": 2530.1,
       "planned_stop": 2534.5,
-      "note": "armed pre-PR13, TP ~1.1R"
+      "note": "armed pre-PR13, TP ~1.1R",
+      "note_detail": "armed pre-PR13, TP ~1.1R"
     },
     {
       "symbol": "BTC",
@@ -350,7 +458,8 @@
       "r_multiple": -1.426,
       "entry_px": 82618.0,
       "planned_stop": 82476.0,
-      "note": "PR13 TP walked to 1.63R; two-sided long against trend (1h/4h ADX down, PR14 would block); exchange stop hit, fill 82463 vs trigger 82476 (-13 slip) -> loss >2%"
+      "note": "PR13 TP walked to 1.63R; two-sided long against trend (1h/4h ADX down, PR14 would block); exchange stop hit, fill 82463 vs trigger 82476 (-13 slip) -> loss >2%",
+      "note_detail": "PR13 TP walked to 1.63R; two-sided long against trend (1h/4h ADX down, PR14 would block); exchange stop hit, fill 82463 vs trigger 82476 (-13 slip) -> loss >2%"
     },
     {
       "symbol": "BTC",
@@ -380,7 +489,8 @@
     "Trade #10 BTC (2026-10-08 11:04:35 ET, net $-5.35, -2.12% of acct): PR13 TP walked to 1.63R; two-sided long against trend (1h/4h ADX down, PR14 would block); exchange stop hit, fill 82463 vs trigger 82476 (-13 slip) -> loss >2%",
     "Trade #9 ETH (2026-10-08 11:03:11 ET, net $+2.69, +1.06% of acct): armed pre-PR13, TP ~1.1R",
     "Trade #8 xyz:GOLD (2026-10-08 10:41:00 ET, net $+1.76, +0.70% of acct): First two-sided (PR #12) short; TP ~1.0R (below 1.67R target); fees >50% of gross",
-    "Trade #7 BTC (2026-10-07 23:16:13 ET, net $-41.75, -14.24% of acct): PR #8 incident: 40x size, no stop placed (bot bug), closed manually",
+    "Trade #7 BTC (2026-10-07 23:16:13 ET, net $-41.75, -14.24% of acct): actual $-41.75, counted as -2.00% ($-5.86) in bot performance \u2014 bug: PR #8 removed 20x size cap",
+    "Bot performance counts trades with normalize_loss_pct in reports/model_b_trade_notes.json as a -N% loss of equity at open (risk cap); All trades (actual) below keeps raw exchange PnL.",
     "Mainnet-only. Window starts at Model B flip (~2026-10-06 21:34 ET). Testnet book is excluded.",
     "Win rate = W / (W+L) on closed round-trips (HL Close-fill clusters). BE excluded from WR.",
     "Trade PnL column = HL closedPnl; Fees = open+close fees attributed to that close; Net = PnL \u2212 fees.",
