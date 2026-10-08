@@ -68,6 +68,14 @@ from hl_bot.strategy.model_b.alo import (
 )
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
+from hl_bot.strategy.model_b.tp_select import (
+    level_spent,
+    restore_plan,
+    runner_target,
+    significant_levels,
+    split_runner_size,
+    trail_stop,
+)
 from hl_bot.strategy.model_b.risk import (
     HARD_MAX_LOSS_PCT,
     LEVERAGE,
@@ -223,6 +231,10 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         macro_range_policy=str(getattr(settings, "model_b_macro_range_policy", "both")),
         macro_adx_min=float(getattr(settings, "model_b_macro_adx_min", 20.0)),
         macro_mode=str(getattr(settings, "model_b_macro_mode", "4h_lead")),
+        tp_untaken_only=str(getattr(settings, "model_b_tp_untaken_only", "on")),
+        tp_runner=str(getattr(settings, "model_b_tp_runner", "shadow")),
+        tp_runner_frac=float(getattr(settings, "model_b_tp_runner_frac", 0.5)),
+        tp_runner_max_r=float(getattr(settings, "model_b_tp_runner_max_r", 5.0)),
     )
 
 
@@ -499,7 +511,8 @@ def _run_model_b(
     logger.info(
         "MODEL_B FILTERS structure=%s counter_flow=%s(usdc=%s sec=%s flip=%s hold=%ss) "
         "min_stop_bps=%s min_sweep_bps=%s sweep_require_htf=%s two_sided=%s tp_min_pool_r=%s tp_max_pool_r=%s tp_far_skip_countertrend=%s "
-        "macro_side_only=%s macro_range_policy=%s macro_adx_min=%s macro_mode=%s",
+        "macro_side_only=%s macro_range_policy=%s macro_adx_min=%s macro_mode=%s "
+        "tp_untaken_only=%s tp_refresh_on_fill=%s tp_runner=%s",
         getattr(settings, "model_b_structure_mode", "on"),
         "on" if getattr(settings, "model_b_counter_flow", True) else "off",
         getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0),
@@ -517,6 +530,9 @@ def _run_model_b(
         getattr(settings, "model_b_macro_range_policy", "both"),
         getattr(settings, "model_b_macro_adx_min", 20.0),
         getattr(settings, "model_b_macro_mode", "4h_lead"),
+        getattr(settings, "model_b_tp_untaken_only", "on"),
+        getattr(settings, "model_b_tp_refresh_on_fill", "on"),
+        getattr(settings, "model_b_tp_runner", "shadow"),
     )
     if _crash_ctx is not None:
         _crash_ctx.update(book=book, live=live, guard=guard, journal=journal)
@@ -734,22 +750,64 @@ def _run_model_b(
                     direction=getattr(fill, "direction", None),
                 )
                 if isinstance(applied, OpenPosition):
-                    if applied.just_opened:
-                        summary["opens"] += 1
+                    handled_tp1 = applied.runner_event == "tp1"
+                    if handled_tp1:
+                        applied.runner_event = ""
                         journal.log(
-                            "open",
+                            "model_b_tp1",
                             symbol=applied.coin,
                             side=applied.side,
                             size=applied.size,
                             price=applied.entry,
                             stop=applied.stop,
                             tp=applied.take_profit,
+                            runner_px=applied.runner_px,
                             entry_mode="model_b",
-                            reason="alo_fill",
                             network=settings.network,
                             account=settings.account_address or "",
                         )
-                    if applied.remainder_kept:
+                        logger.info(
+                            "MODEL_B TP_RUNNER tp1 %s %s size=%s stop=%s tp=%s",
+                            applied.coin,
+                            applied.side,
+                            applied.size,
+                            applied.stop,
+                            applied.take_profit,
+                        )
+                        if live is not None and not applied.adopted:
+                            try:
+                                _runner_after_tp1(live, applied)
+                            except Exception:
+                                logger.exception(
+                                    "LIVE runner stop failed for %s; previous stop left resting",
+                                    applied.coin,
+                                )
+                    else:
+                        if applied.just_opened:
+                            summary["opens"] += 1
+                            try:
+                                _prepare_fill_targets(engine, info, settings, applied, now)
+                            except Exception:
+                                logger.exception(
+                                    "TP refresh failed for %s; planned TP kept and stop still placed",
+                                    applied.coin,
+                                )
+                            journal.log(
+                                "open",
+                                symbol=applied.coin,
+                                side=applied.side,
+                                size=applied.size,
+                                price=applied.entry,
+                                stop=applied.stop,
+                                tp=applied.take_profit,
+                                runner_px=applied.runner_px,
+                                runner_on=bool(applied.runner_on),
+                                entry_mode="model_b",
+                                reason="alo_fill",
+                                network=settings.network,
+                                account=settings.account_address or "",
+                            )
+                    if applied.runner_event == "" and applied.remainder_kept:
                         journal.log(
                             "model_b_partial",
                             symbol=applied.coin,
@@ -767,15 +825,27 @@ def _run_model_b(
                             applied.size,
                             applied.remainder_size,
                         )
-                    if live is not None and guard is None and not applied.adopted:
+                    if (
+                        live is not None
+                        and guard is None
+                        and not applied.adopted
+                        and not handled_tp1
+                    ):
                         # Brackets stay in this process. An amend that fails
                         # is logged. It does not end the hunt. An adopted
                         # position already has exchange brackets; a stop of 0
-                        # must not be sent.
+                        # must not be sent. TP1 already rested the new stop
+                        # before cancelling the old one.
                         try:
                             if applied.just_opened:
                                 _place_brackets(live, applied)
                             else:
+                                if applied.runner_on and not applied.tp1_filled:
+                                    t1, rn = split_runner_size(
+                                        applied.size,
+                                        float(getattr(settings, "model_b_tp_runner_frac", 0.5)),
+                                    )
+                                    applied.tp1_size, applied.runner_size = t1, rn
                                 _resize_brackets(live, applied)
                         except Exception:
                             logger.exception(
@@ -851,6 +921,7 @@ def _run_model_b(
                         )
                         continue
                     if kind == "position":
+                        _restore_adopted(book, journal, item, settings)
                         logger.info(
                             "MODEL_B ADOPT %s %s size=%s entry=%s margin=%.4f",
                             item.coin,
@@ -1103,6 +1174,9 @@ def _run_model_b(
             else:
                 bid, ask = feed.bbo(coin)
             tick = tick_for(coin) if tick_for is not None else _default_tick(coin, last)
+            held = book.position(coin)
+            if held is not None:
+                _trail_runner(held, bars, now, tick, live, settings)
 
             meta_lev = lev_map.get(canon_coin(coin))
             coin_lev = usable_leverage(meta_lev, None)
@@ -2142,20 +2216,269 @@ def _default_tick(coin: str, last: float | None) -> float:
     return max(tick, 1e-6)
 
 
-def _place_brackets(live, pos) -> None:
-    """Place reduce-only stop and TP at the position's prices.
+def _r_multiple(entry: float, stop: float, tp: float | None) -> float:
+    dist = abs(float(entry) - float(stop))
+    if dist <= 0 or tp is None:
+        return 0.0
+    return abs(float(tp) - float(entry)) / dist
 
-    The trigger is the liquidity target already stored on the position.
-    This does not recompute 2R. A failure is logged and does not raise.
+
+def _prepare_fill_targets(engine, info, settings, pos, now: float) -> None:
+    """Re-pick a spent TP, then split the runner off the final TP1.
+
+    The stop is never written. A failed re-pick keeps the planned TP, and
+    a failure here must not skip the stop the caller places next.
+    """
+    refresh = str(getattr(settings, "model_b_tp_refresh_on_fill", "on") or "off")
+    runner_mode = str(getattr(settings, "model_b_tp_runner", "shadow") or "off")
+    planned = float(pos.take_profit)
+    stop = float(pos.stop)
+    bars: list = []
+    if refresh != "off" or runner_mode != "off":
+        try:
+            end_ms = int(float(now) * 1000)
+            start_ms = end_ms - 14 * 24 * 3600 * 1000
+            bars = info.get_candles(
+                pos.coin, interval="1m", start_ms=start_ms, end_ms=end_ms
+            ) or []
+        except Exception:
+            logger.exception("TP refresh candles failed for %s; planned TP kept", pos.coin)
+            bars = []
+    if refresh != "off":
+        try:
+            spent = level_spent(
+                pos.side,
+                planned,
+                bars,
+                float(now),
+                pos.entry,
+                since_ts=float(getattr(pos, "armed_at", 0) or 0) or None,
+                until_ts=float(now),
+            )
+        except Exception:
+            logger.exception("TP spent check failed for %s", pos.coin)
+            spent = False
+        if spent:
+            new_tp = planned
+            try:
+                pools = (
+                    pools_from_bars(bars, float(now), last_price=pos.entry) if bars else []
+                )
+                tick = float(getattr(pos, "tick", 0) or 0) or _default_tick(pos.coin, pos.entry)
+                walk = engine.pick_target(
+                    pos.side,
+                    pos.entry,
+                    stop,
+                    tick,
+                    bars,
+                    pools,
+                    float(now),
+                    pos.entry,
+                    coin=pos.coin,
+                )
+                if walk.fail is None and walk.target is not None and float(walk.target) > 0:
+                    new_tp = float(walk.target)
+            except Exception:
+                logger.exception("TP refresh pick failed for %s; planned TP kept", pos.coin)
+                new_tp = planned
+            logger.info(
+                "MODEL_B TP_REFRESH %s %s old=%s new=%s r_old=%.4f r_new=%.4f reason=spent mode=%s",
+                pos.coin,
+                pos.side,
+                planned,
+                new_tp,
+                _r_multiple(pos.entry, stop, planned),
+                _r_multiple(pos.entry, stop, new_tp),
+                refresh,
+            )
+            if refresh == "on":
+                pos.take_profit = new_tp
+            else:
+                pos.take_profit = planned
+    if runner_mode == "off":
+        pos.runner_on = False
+        pos.runner_shadow = False
+        return
+    try:
+        tick = float(getattr(pos, "tick", 0) or 0) or _default_tick(pos.coin, pos.entry)
+        sig = significant_levels(pos.side, pos.entry, bars, float(now), pos.entry, tick)
+        frac = float(getattr(settings, "model_b_tp_runner_frac", 0.5))
+        max_r = float(getattr(settings, "model_b_tp_runner_max_r", 5.0))
+        px = runner_target(
+            pos.side, pos.entry, stop, float(pos.take_profit), sig, max_r=max_r
+        )
+        t1, rn = split_runner_size(pos.size, frac)
+        logger.info(
+            "MODEL_B TP_RUNNER fill %s %s mode=%s tp1=%s tp1_size=%s tp2=%s runner_size=%s",
+            pos.coin,
+            pos.side,
+            runner_mode,
+            pos.take_profit,
+            t1,
+            px,
+            rn,
+        )
+        if runner_mode == "on" and t1 > 0 and rn > 0:
+            pos.runner_on = True
+            pos.runner_shadow = False
+            pos.runner_px = px
+            pos.tp1_size = t1
+            pos.runner_size = rn
+        else:
+            pos.runner_on = False
+            pos.runner_shadow = runner_mode == "shadow"
+            pos.runner_px = px
+            pos.tp1_size = 0.0
+            pos.runner_size = 0.0
+    except Exception:
+        logger.exception("TP runner plan failed for %s; single TP kept", pos.coin)
+        pos.runner_on = False
+
+
+def _restore_adopted(book, journal, item, settings) -> None:
+    """A restarted position keeps its journalled stop and TP.
+
+    No matching open stays adopted, so the guard's 2% fallback still
+    covers it. A ``model_b_tp1`` after the open restores breakeven.
+    """
+    try:
+        rows = journal.read_all()
+    except Exception:
+        logger.exception("TP runner restore read failed for %s", getattr(item, "coin", "?"))
+        return
+    plan = restore_plan(rows, item.coin)
+    if plan is None:
+        return
+    pos = book.position(item.coin)
+    if pos is None:
+        return
+    if plan.get("side") and plan["side"] != pos.side:
+        return
+    pos.stop = float(plan["stop"])
+    pos.take_profit = float(plan["tp"])
+    pos.planned_stop = float(plan["planned_stop"])
+    pos.runner_px = plan.get("runner_px")
+    pos.tp1_filled = bool(plan.get("tp1_filled"))
+    pos.runner_on = bool(plan.get("runner_on"))
+    pos.adopted = False
+    ticket = float(plan.get("size") or 0.0) or float(pos.size)
+    pos.intended_size = ticket
+    pos.planned_risk = abs(float(pos.entry) - float(plan["planned_stop"])) * ticket
+    if pos.runner_on and not pos.tp1_filled and pos.runner_px:
+        pos.tp1_size, pos.runner_size = split_runner_size(
+            pos.size, float(getattr(settings, "model_b_tp_runner_frac", 0.5))
+        )
+        if pos.runner_size <= 0:
+            pos.runner_on = False
+    elif pos.tp1_filled:
+        pos.tp1_size = 0.0
+        pos.runner_size = float(pos.size)
+    logger.info(
+        "MODEL_B TP_RUNNER restore %s stop=%s tp=%s tp1_filled=%s",
+        pos.coin,
+        pos.stop,
+        pos.take_profit,
+        int(pos.tp1_filled),
+    )
+
+
+def _trail_runner(pos, bars, now, tick, live, settings) -> None:
+    """After TP1, ratchet the stop behind the latest confirmed 1m swing.
+
+    Shadow logs the level and leaves the stop. The stop only moves tighter.
+    """
+    mode = str(getattr(settings, "model_b_tp_runner", "off") or "off")
+    if mode == "off" or pos is None or getattr(pos, "adopted", False):
+        return
+    if not getattr(pos, "tp1_filled", False):
+        return
+    if mode != "on" and not getattr(pos, "runner_shadow", False) and not pos.runner_on:
+        return
+    new = trail_stop(pos.side, bars, float(now), float(tick), float(pos.stop))
+    if new is None:
+        return
+    if mode == "on" and pos.runner_on:
+        if live is not None:
+            if _replace_stop(live, pos, new):
+                logger.info(
+                    "MODEL_B TP_RUNNER trail %s %s stop=%s", pos.coin, pos.side, pos.stop
+                )
+        else:
+            pos.stop = float(new)
+            logger.info(
+                "MODEL_B TP_RUNNER trail %s %s stop=%s", pos.coin, pos.side, pos.stop
+            )
+        return
+    logger.info(
+        "MODEL_B TP_RUNNER trail shadow %s %s would=%s stop=%s",
+        pos.coin,
+        pos.side,
+        new,
+        pos.stop,
+    )
+
+
+def _runner_after_tp1(live, pos) -> None:
+    """Rest the remaining size at breakeven before the old stop is cancelled."""
+    _replace_stop(live, pos, float(pos.stop))
+
+
+def _replace_stop(live, pos, new_stop: float) -> bool:
+    """Place a full-size stop at ``new_stop``, then cancel the previous one.
+
+    A reject leaves the old stop resting.
+    """
+    old = getattr(pos, "stop_oid", None)
+    is_close_buy = pos.side == "short"
+    try:
+        resp = live.set_stop_loss(
+            pos.coin, is_buy=is_close_buy, size=pos.size, trigger_px=float(new_stop)
+        )
+    except Exception:
+        logger.exception("LIVE stop replace failed for %s; old stop kept", pos.coin)
+        return False
+    err = _order_error(resp)
+    oid = _extract_oid(resp)
+    if err or oid is None:
+        logger.warning(
+            "MODEL_B TP_RUNNER stop replace rejected %s new=%s err=%s; old stop kept",
+            pos.coin,
+            new_stop,
+            err,
+        )
+        return False
+    pos.stop = float(new_stop)
+    pos.stop_oid = oid
+    if old is not None and old != oid:
+        try:
+            live.cancel_order(pos.coin, old)
+        except Exception:
+            logger.exception("LIVE old stop cancel failed for %s oid=%s", pos.coin, old)
+    return True
+
+
+def _place_brackets(live, pos) -> None:
+    """Place a full-size reduce-only stop, then the TP (or TP1 and the runner).
+
+    The stop goes out first. A runner never replaces that full-size stop
+    with two half stops. A failure is logged and does not raise.
     """
     try:
         is_close_buy = pos.side == "short"
+        runner = (
+            bool(getattr(pos, "runner_on", False))
+            and not bool(getattr(pos, "tp1_filled", False))
+            and float(getattr(pos, "tp1_size", 0) or 0) > 0
+            and float(getattr(pos, "runner_size", 0) or 0) > 0
+            and float(getattr(pos, "runner_px", 0) or 0) > 0
+        )
         logger.info(
-            "MODEL_B BRACKET %s stop=%s tp=%s size=%s",
+            "MODEL_B BRACKET %s stop=%s tp=%s size=%s runner=%s",
             pos.coin,
             pos.stop,
             pos.take_profit,
             pos.size,
+            pos.runner_px if runner else None,
         )
         try:
             resp = live.set_stop_loss(
@@ -2164,17 +2487,40 @@ def _place_brackets(live, pos) -> None:
             pos.stop_oid = _extract_oid(resp)
         except Exception:
             logger.exception("LIVE stop failed for %s", pos.coin)
-        if hasattr(live, "set_take_profit"):
+        if not hasattr(live, "set_take_profit"):
+            return
+        if runner:
             try:
                 resp = live.set_take_profit(
                     pos.coin,
                     is_buy=is_close_buy,
-                    size=pos.size,
+                    size=pos.tp1_size,
                     trigger_px=pos.take_profit,
                 )
                 pos.tp_oid = _extract_oid(resp)
             except Exception:
-                logger.exception("LIVE tp failed for %s", pos.coin)
+                logger.exception("LIVE tp1 failed for %s", pos.coin)
+            try:
+                resp = live.set_take_profit(
+                    pos.coin,
+                    is_buy=is_close_buy,
+                    size=pos.runner_size,
+                    trigger_px=pos.runner_px,
+                )
+                pos.tp2_oid = _extract_oid(resp)
+            except Exception:
+                logger.exception("LIVE tp2 failed for %s", pos.coin)
+            return
+        try:
+            resp = live.set_take_profit(
+                pos.coin,
+                is_buy=is_close_buy,
+                size=pos.size,
+                trigger_px=pos.take_profit,
+            )
+            pos.tp_oid = _extract_oid(resp)
+        except Exception:
+            logger.exception("LIVE tp failed for %s", pos.coin)
     except Exception:
         logger.exception(
             "LIVE brackets failed for %s tp=%s; hunt continues",
@@ -2188,10 +2534,11 @@ def _resize_brackets(live, pos) -> None:
 
     The trigger prices stay. Only the size changes. The resting entry Alo
     is not one of these oids, so a drip does not cancel it. A failure is
-    logged and does not raise.
+    logged and does not raise. This is not the post-TP1 stop path: that
+    one places the new stop before cancelling the old.
     """
     try:
-        for oid in (pos.stop_oid, pos.tp_oid):
+        for oid in (pos.stop_oid, pos.tp_oid, getattr(pos, "tp2_oid", None)):
             if oid is None:
                 continue
             try:
@@ -2202,6 +2549,7 @@ def _resize_brackets(live, pos) -> None:
                 )
         pos.stop_oid = None
         pos.tp_oid = None
+        pos.tp2_oid = None
         _place_brackets(live, pos)
     except Exception:
         logger.exception(

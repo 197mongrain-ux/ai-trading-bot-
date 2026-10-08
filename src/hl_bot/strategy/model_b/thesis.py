@@ -75,6 +75,10 @@ class WorkingOrder:
     # Dollar risk at the arm: size x |limit - stop|. The guard's loss kill
     # uses it.
     planned_risk: float = 0.0
+    # Second target when MODEL_B_TP_RUNNER is on or shadow. ``off`` places
+    # one full-size TP. The fill path turns ``on`` into a real split.
+    runner_px: float | None = None
+    runner_mode: str = "off"
 
 
 @dataclass
@@ -110,6 +114,23 @@ class OpenPosition:
     # ``size`` is what is still open; the final close reports the sum.
     closed_size: float = 0.0
     closed_pnl: float = 0.0
+    # Runner (MODEL_B_TP_RUNNER=1). Shadow/off leave these empty and the
+    # position keeps one full-size TP. ``planned_stop`` is the arm stop;
+    # ``stop`` moves to breakeven and then the 1m trail after TP1.
+    runner_px: float | None = None
+    runner_on: bool = False
+    runner_size: float = 0.0
+    tp1_size: float = 0.0
+    tp2_oid: object | None = None
+    tp1_filled: bool = False
+    planned_stop: float = 0.0
+    armed_at: float = 0.0
+    runner_event: str = ""
+    # Price increment from the arm, so a fill-time re-pick and the trail
+    # use the same tick the stop was built with.
+    tick: float = 0.0
+    # Shadow runner: log the trail, do not move the stop or split the TP.
+    runner_shadow: bool = False
 
 
 @dataclass
@@ -200,6 +221,8 @@ class ThesisBook:
             leverage=lev,
             orig_size=float(intent.size),
             planned_risk=float(intent.size) * abs(float(intent.limit_px) - float(intent.stop)),
+            runner_px=getattr(intent, "runner_px", None),
+            runner_mode=str(getattr(intent, "runner_mode", "off") or "off"),
         )
         self._state(intent.coin).working = order
         return order
@@ -513,6 +536,11 @@ class ThesisBook:
                 leverage=int(getattr(order, "leverage", 20) or 20),
                 intended_size=float(order.orig_size or 0.0),
                 planned_risk=float(order.planned_risk or 0.0),
+                runner_px=getattr(order, "runner_px", None),
+                runner_on=str(getattr(order, "runner_mode", "off") or "off") == "on",
+                planned_stop=float(stop),
+                armed_at=float(order.posted_at),
+                tick=float(order.tick or 0.0),
             )
             st.position = pos
         else:
@@ -662,6 +690,8 @@ class ThesisBook:
             if d.startswith("open"):
                 return None
             pos = st.position
+            if self._take_runner_tp1(pos, price, size):
+                return pos
             dust = max(1e-12, abs(pos.size) * 1e-6)
             if (
                 d.startswith("close")
@@ -701,6 +731,50 @@ class ThesisBook:
             ts,
             size=size,
         )
+
+    def _take_runner_tp1(self, pos: OpenPosition, price: float, size: float | None) -> bool:
+        """A partial fill at TP1. Stop goes to breakeven; the runner stays open.
+
+        A fill of the whole position, a trim that has not reached TP1, or a
+        reduce on the stop side is left to the normal close / drip path.
+        The exchange stop is not cancelled here — the loop rests the new
+        one first.
+        """
+        if not pos.runner_on or pos.tp1_filled or price <= 0 or size is None:
+            return False
+        part = float(size)
+        if part <= 0:
+            return False
+        dust = max(1e-12, abs(pos.size) * 1e-6)
+        if part >= pos.size - dust:
+            return False
+        tol = max(abs(pos.take_profit) * 1e-4, 1e-8)
+        if pos.side == "long":
+            on_tp = price + tol >= pos.take_profit > pos.entry and price > pos.stop
+        elif pos.side == "short":
+            on_tp = price - tol <= pos.take_profit < pos.entry and price < pos.stop
+        else:
+            return False
+        if not on_tp:
+            return False
+        if pos.side == "long":
+            pos.closed_pnl += (float(price) - pos.entry) * part
+        else:
+            pos.closed_pnl += (pos.entry - float(price)) * part
+        pos.closed_size += part
+        pos.size -= part
+        if pos.planned_stop <= 0:
+            pos.planned_stop = float(pos.stop)
+        pos.stop = float(pos.entry)
+        if pos.runner_px:
+            pos.take_profit = float(pos.runner_px)
+        pos.tp1_filled = True
+        pos.tp_oid = None
+        pos.tp1_size = 0.0
+        pos.runner_size = float(pos.size)
+        pos.runner_event = "tp1"
+        pos.just_opened = False
+        return True
 
     def try_exit(self, coin: str, price: float) -> CloseEvent | None:
         """Stop or TP only. Flow / delta is not consulted."""

@@ -16,6 +16,7 @@ from hl_bot.strategy.model_b.tape import (
     MIN_PRINTS,
     density_min_prints,
 )
+from hl_bot.strategy.model_b.tp_select import parse_tri_mode
 from hl_bot.strategy.model_b.universe import canon_coin
 
 
@@ -37,6 +38,11 @@ def _macro_side_mode() -> str:
     if raw in ("0", "false", "no", "off", ""):
         return "off"
     return raw  # "shadow" or invalid (validated below)
+
+
+def _tp_mode(name: str, default: str) -> str:
+    """1/on, 0/off, or shadow. Empty keeps ``default``."""
+    return parse_tri_mode(os.getenv(name), default)
 
 
 def _structure_mode() -> str:
@@ -242,6 +248,17 @@ class Settings:
     # min R, and not with the 15m/1h trend -> skip (when the knob below is 1).
     model_b_tp_max_pool_r: float = 3.0
     model_b_tp_far_skip_countertrend: bool = True
+    # Spent 1m swings are not TP targets. shadow logs the untaken pick and
+    # keeps today's. 0 restores the PR #14 level list.
+    model_b_tp_untaken_only: str = "on"
+    # At the fill, if the planned TP was traded through while the Alo
+    # rested, re-pick. The stop and the size stay. 0 keeps the arm TP.
+    model_b_tp_refresh_on_fill: str = "on"
+    # Partial TP. shadow logs TP1/TP2/trail and changes no order. 1 places
+    # both reduce-only TPs and trails after TP1. 0 is one full-size TP.
+    model_b_tp_runner: str = "shadow"
+    model_b_tp_runner_frac: float = 0.5
+    model_b_tp_runner_max_r: float = 5.0
     # Macro side filter: ADX(14) +DI/-DI on 1h and 4h. macro up -> longs only,
     # down -> shorts only, range -> MODEL_B_MACRO_RANGE_POLICY (both | none).
     # on | shadow (log "would_block", never block) | off. Default shadow.
@@ -390,6 +407,21 @@ class Settings:
         if not (0.0 <= self.model_b_tp_max_pool_r <= 20.0):
             raise ValueError(
                 f"MODEL_B_TP_MAX_POOL_R={self.model_b_tp_max_pool_r} must be in [0, 20] (0 = no limit)."
+            )
+        for label, mode in (
+            ("MODEL_B_TP_UNTAKEN_ONLY", self.model_b_tp_untaken_only),
+            ("MODEL_B_TP_REFRESH_ON_FILL", self.model_b_tp_refresh_on_fill),
+            ("MODEL_B_TP_RUNNER", self.model_b_tp_runner),
+        ):
+            if mode not in ("on", "off", "shadow"):
+                raise ValueError(f"{label}={mode!r} must be 1|0|shadow.")
+        if not (0.0 < self.model_b_tp_runner_frac < 1.0):
+            raise ValueError(
+                f"MODEL_B_TP_RUNNER_FRAC={self.model_b_tp_runner_frac} must be in (0, 1)."
+            )
+        if not (0.0 < self.model_b_tp_runner_max_r <= 20.0):
+            raise ValueError(
+                f"MODEL_B_TP_RUNNER_MAX_R={self.model_b_tp_runner_max_r} must be in (0, 20]."
             )
         if self.model_b_alo_timeout_sec < 0:
             raise ValueError(
@@ -570,6 +602,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_tp_min_pool_r=_float("MODEL_B_TP_MIN_POOL_R", 1.5),
         model_b_tp_max_pool_r=_float("MODEL_B_TP_MAX_POOL_R", 3.0),
         model_b_tp_far_skip_countertrend=_bool("MODEL_B_TP_FAR_SKIP_COUNTERTREND", True),
+        model_b_tp_untaken_only=_tp_mode("MODEL_B_TP_UNTAKEN_ONLY", "on"),
+        model_b_tp_refresh_on_fill=_tp_mode("MODEL_B_TP_REFRESH_ON_FILL", "on"),
+        model_b_tp_runner=_tp_mode("MODEL_B_TP_RUNNER", "shadow"),
+        model_b_tp_runner_frac=_float("MODEL_B_TP_RUNNER_FRAC", 0.5),
+        model_b_tp_runner_max_r=_float("MODEL_B_TP_RUNNER_MAX_R", 5.0),
         model_b_macro_side_only=_macro_side_mode(),
         model_b_macro_range_policy=(os.getenv("MODEL_B_MACRO_RANGE_POLICY") or "both").strip().lower(),
         model_b_macro_adx_min=_float("MODEL_B_MACRO_ADX_MIN", 20.0),

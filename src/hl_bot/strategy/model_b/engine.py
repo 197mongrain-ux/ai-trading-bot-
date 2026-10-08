@@ -98,6 +98,14 @@ from hl_bot.strategy.model_b.structure import (
     structure_states,
 )
 from hl_bot.strategy.model_b.thesis import ThesisBook
+from hl_bot.strategy.model_b.tp_select import (
+    filter_spent_swing_prices,
+    runner_target,
+    significant_levels,
+    split_runner_size,
+    walk_liquidity_tp,
+    TpWalk,
+)
 from hl_bot.strategy.model_b.trend import AdxTrend, MacroRead, TfTrend, TrendRead, read_macro, read_trend
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
@@ -205,6 +213,10 @@ class ModelBEngine:
         macro_range_policy: str = "both",
         macro_adx_min: float = 20.0,
         macro_mode: str = "4h_lead",
+        tp_untaken_only: str = "on",
+        tp_runner: str = "shadow",
+        tp_runner_frac: float = 0.5,
+        tp_runner_max_r: float = 5.0,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -281,8 +293,76 @@ class ModelBEngine:
         self.macro_range_policy = macro_range_policy
         self.macro_adx_min = float(macro_adx_min)
         self.macro_mode = macro_mode
+        untaken = str(tp_untaken_only).strip().lower()
+        if untaken not in ("off", "on", "shadow"):
+            raise ValueError("tp_untaken_only must be off|on|shadow")
+        runner = str(tp_runner).strip().lower()
+        if runner not in ("off", "on", "shadow"):
+            raise ValueError("tp_runner must be off|on|shadow")
+        if not (0.0 < float(tp_runner_frac) < 1.0):
+            raise ValueError("tp_runner_frac must be in (0, 1)")
+        if float(tp_runner_max_r) <= 0:
+            raise ValueError("tp_runner_max_r must be > 0")
+        self.tp_untaken_only = untaken
+        self.tp_runner = runner
+        self.tp_runner_frac = float(tp_runner_frac)
+        self.tp_runner_max_r = float(tp_runner_max_r)
         # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
         self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
+
+    def pick_target(
+        self,
+        side: str,
+        entry: float,
+        stop: float,
+        tick: float,
+        bars: list[dict],
+        pools: list[Pool],
+        now: float,
+        last: float | None,
+        *,
+        coin: str = "",
+    ) -> TpWalk:
+        """Same TP walk the arm uses, from a fill price and the planned stop.
+
+        The stop is not an output. Callers that re-pick at the fill keep
+        the planned stop even when this returns no target.
+        """
+        kind = "high" if side == "long" else "low"
+        swings = confirmed_swings(bars, kind=kind, now=now)
+        levels = [item.price for item in swings]
+        for item in pools:
+            if item.taken or item.price <= 0:
+                continue
+            if side == "long" and item.price > entry:
+                levels.append(item.price)
+            elif side == "short" and item.price < entry:
+                levels.append(item.price)
+        if self.tp_untaken_only == "on":
+            spent = filter_spent_swing_prices(side, swings, bars, now, last)
+            levels = [px for px in levels if px not in spent]
+
+        def _trend():
+            try:
+                return read_trend(bars, now)
+            except Exception:
+                return TrendRead((TfTrend("15m", "unknown"), TfTrend("1h", "unknown")))
+
+        return walk_liquidity_tp(
+            side,
+            entry,
+            stop,
+            tick,
+            levels,
+            coin=coin or side,
+            tp_r=self.tp_r,
+            min_pool_r=self.tp_min_pool_r,
+            max_pool_r=self.tp_max_pool_r,
+            far_skip=self.tp_far_skip_countertrend,
+            moved_floor=None,
+            trend_fn=_trend,
+            distance_fn=min_tp_distance,
+        )
 
     def evaluate(
         self,
@@ -558,9 +638,8 @@ class ModelBEngine:
             further.extend(
                 item.price for item in confirmed_swings(bars, kind=stop_kind, now=now)
             )
-            tp_levels = [
-                item.price for item in confirmed_swings(bars, kind=tp_kind, now=now)
-            ]
+            tp_swings = confirmed_swings(bars, kind=tp_kind, now=now)
+            tp_levels = [item.price for item in tp_swings]
             for item in pools:
                 if item.taken or item.price <= 0:
                     continue
@@ -676,81 +755,91 @@ class ModelBEngine:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
 
-            # Nearest liquidity that clears fees and 1R. A closer pool is
-            # skipped so the next real level can win, including past 2R.
-            # No level past that floor: 1.5R of the stop the size just used.
-            # That fallback fails closed when it still cannot clear the band.
-            floor = min_tp_distance(limit, stop)
-            if moved_tp_floor is not None:
-                # Moved stop: the target must be a real pool at >= tp_r.
-                target = next_liquidity(
-                    side, limit, tick, tp_levels, min_dist=moved_tp_floor
+            # Nearest liquidity that clears fees and 1R, then the 1.5R
+            # next-pool walk. Untaken-only drops 1m swings price has already
+            # traded through. Shadow logs that pick and keeps today's level.
+            # The stop and the size above are not touched.
+            levels_all = list(tp_levels)
+            if self.tp_untaken_only == "off":
+                levels = levels_all
+                levels_untaken = levels_all
+            else:
+                spent = filter_spent_swing_prices(side, tp_swings, bars, now, last_px)
+                levels_untaken = [px for px in levels_all if px not in spent]
+                levels = levels_untaken if self.tp_untaken_only == "on" else levels_all
+            floor = moved_tp_floor if moved_tp_floor is not None else min_tp_distance(limit, stop)
+            walked = walk_liquidity_tp(
+                side,
+                limit,
+                stop,
+                tick,
+                levels,
+                coin=coin_u,
+                tp_r=self.tp_r,
+                min_pool_r=self.tp_min_pool_r,
+                max_pool_r=self.tp_max_pool_r,
+                far_skip=self.tp_far_skip_countertrend,
+                moved_floor=moved_tp_floor,
+                trend_fn=_trend,
+                distance_fn=min_tp_distance,
+            )
+            for fmt, args in walked.logs:
+                logger.info(fmt, *args)
+            trend_label = walked.trend_label
+            if walked.fail:
+                return replace(
+                    _done(walked.fail, pool_r=walked.pool_r, **fields),
+                    trend=trend_label,
                 )
-                if target is None:
-                    return _done(STOP_TOO_TIGHT, **fields)
-                floor = moved_tp_floor
-            target = next_liquidity(side, limit, tick, tp_levels, min_dist=floor)
-            trend_label: str | None = None
-            if (
-                target is not None
-                and moved_tp_floor is None
-                and self.tp_min_pool_r > 0
-            ):
-                # Chris Oct 8 10:47 / 10:48: nearest pool under 1.5R -> next
-                # pool; a next pool past MODEL_B_TP_MAX_POOL_R (or no pool at
-                # 1.5R at all) is taken only on the trend side. Same R math as
-                # the 1R floor (max of R x stop, round-trip fee). The stop and
-                # size above are untouched.
-                want = min_tp_distance(limit, stop, min_r=self.tp_min_pool_r)
-                dist = abs(limit - stop)
-                gap = abs(target - limit)
-                if gap + 1e-12 < want:
-                    trend = _trend()
-                    trend_label = trend.label()
-                    with_trend = trend.is_with(side)
-                    logger.info("MODEL_B TREND %s %s side=%s", coin_u, trend_label, side)
-                    farther = next_liquidity(
-                        side, limit, tick, tp_levels, min_dist=want
+            target = walked.target
+            if self.tp_untaken_only == "shadow":
+                alt = walk_liquidity_tp(
+                    side,
+                    limit,
+                    stop,
+                    tick,
+                    levels_untaken,
+                    coin=coin_u,
+                    tp_r=self.tp_r,
+                    min_pool_r=self.tp_min_pool_r,
+                    max_pool_r=self.tp_max_pool_r,
+                    far_skip=self.tp_far_skip_countertrend,
+                    moved_floor=moved_tp_floor,
+                    trend_fn=_trend,
+                    distance_fn=min_tp_distance,
+                )
+                logger.info(
+                    "MODEL_B TP_UNTAKEN shadow %s %s kept=%s would=%s",
+                    coin_u,
+                    side,
+                    target,
+                    alt.fail or alt.target,
+                )
+            elif self.tp_untaken_only == "on" and levels is not levels_all:
+                plain = walk_liquidity_tp(
+                    side,
+                    limit,
+                    stop,
+                    tick,
+                    levels_all,
+                    coin=coin_u,
+                    tp_r=self.tp_r,
+                    min_pool_r=self.tp_min_pool_r,
+                    max_pool_r=self.tp_max_pool_r,
+                    far_skip=self.tp_far_skip_countertrend,
+                    moved_floor=moved_tp_floor,
+                    trend_fn=_trend,
+                    distance_fn=min_tp_distance,
+                )
+                if plain.target != target:
+                    logger.info(
+                        "MODEL_B TP_UNTAKEN %s %s tp=%s was=%s",
+                        coin_u,
+                        side,
+                        target,
+                        plain.fail or plain.target,
                     )
-                    near_r = gap / dist if dist > 0 else 0.0
-                    if farther is not None:
-                        far_r = abs(farther - limit) / dist if dist > 0 else 0.0
-                        too_far = (
-                            self.tp_max_pool_r > 0
-                            and far_r > self.tp_max_pool_r + 1e-9
-                        )
-                        if too_far and not with_trend and self.tp_far_skip_countertrend:
-                            logger.info(
-                                "MODEL_B TP_TOO_FAR_COUNTERTREND %s %s nearest=%s r=%.2f next=%s r=%.2f max_r=%s %s",
-                                coin_u, side, target, near_r, farther, far_r,
-                                self.tp_max_pool_r, trend_label,
-                            )
-                            return replace(
-                                _done(TP_TOO_FAR_COUNTERTREND, pool_r=round(far_r, 4), **fields),
-                                trend=trend_label,
-                            )
-                        logger.info(
-                            "MODEL_B TP_NEXT_POOL %s %s nearest=%s r=%.2f -> tp=%s r=%.2f min_r=%s%s",
-                            coin_u, side, target, near_r, farther, far_r,
-                            self.tp_min_pool_r,
-                            " far_with_trend=1" if too_far else "",
-                        )
-                        target = farther
-                    else:
-                        if not with_trend and self.tp_far_skip_countertrend:
-                            logger.info(
-                                "MODEL_B TP_UNDER_1_5R_COUNTERTREND %s %s r=%.2f tp=%s min_r=%s %s",
-                                coin_u, side, near_r, target, self.tp_min_pool_r, trend_label,
-                            )
-                            return replace(
-                                _done(TP_UNDER_1_5R_COUNTERTREND, pool_r=round(near_r, 4), **fields),
-                                trend=trend_label,
-                            )
-                        logger.info(
-                            "MODEL_B TP_UNDER_1_5R %s %s r=%.2f tp=%s min_r=%s (no pool >= min_r; nearest kept)",
-                            coin_u, side, near_r, target, self.tp_min_pool_r,
-                        )
-            nearest = next_liquidity(side, limit, tick, tp_levels)
+            nearest = next_liquidity(side, limit, tick, levels)
             logged_pool = target if target is not None else nearest
             if logged_pool is None and pool is not None:
                 logged_pool = pool.price
@@ -782,6 +871,26 @@ class ModelBEngine:
                     **fields,
                 )
 
+            runner_px = None
+            if self.tp_runner != "off":
+                sig = significant_levels(side, limit, bars, now, last_px, tick)
+                runner_px = runner_target(
+                    side, limit, stop, tp, sig, max_r=self.tp_runner_max_r
+                )
+                tp1_sz, run_sz = split_runner_size(size, self.tp_runner_frac)
+                logger.info(
+                    "MODEL_B TP_RUNNER %s %s mode=%s tp1=%s tp1_size=%s tp2=%s "
+                    "runner_size=%s frac=%s max_r=%s trail=1m_after_be",
+                    coin_u,
+                    side,
+                    self.tp_runner,
+                    tp,
+                    tp1_sz,
+                    runner_px,
+                    run_sz,
+                    self.tp_runner_frac,
+                    self.tp_runner_max_r,
+                )
             intent = AloIntent(
                 coin=coin_u,
                 side=side,
@@ -798,6 +907,8 @@ class ModelBEngine:
                 tick=tick,
                 pool_px=target,
                 tp_r=self.tp_r,
+                runner_px=runner_px,
+                runner_mode=self.tp_runner if runner_px is not None else "off",
             )
             armed_decision = _done(
                 None,
