@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -26,9 +27,23 @@ class TradeJournal:
         if not self.path.exists():
             return []
         rows: list[dict[str, Any]] = []
-        with self.path.open(encoding="utf-8") as f:
+        bad = 0
+        with self.path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    # One torn line (a crash mid-write, a disk hiccup) must
+                    # not crash every later read and the bot with it.
+                    bad += 1
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+        if bad:
+            logging.getLogger(__name__).warning(
+                "JOURNAL %s skipped %d unreadable line(s)", self.path, bad
+            )
         return rows

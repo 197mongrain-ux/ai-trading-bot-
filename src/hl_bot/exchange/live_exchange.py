@@ -8,6 +8,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Seconds before an order / cancel / trigger HTTP call gives up.
+HTTP_TIMEOUT_SEC = 10.0
+
 
 class LiveExchange:
     """Wraps hyperliquid.exchange.Exchange for authenticated order placement.
@@ -39,11 +42,24 @@ class LiveExchange:
         }
         if perp_dexs:
             exchange_kwargs["perp_dexs"] = list(perp_dexs)
-        self._exchange: Any = Exchange(
-            self._wallet,
-            base_url,
-            **exchange_kwargs,
-        )
+        # Without a timeout a stalled HTTP call blocks the order path (and the
+        # guard thread sharing this client) forever: no stop, no loss kill.
+        exchange_kwargs["timeout"] = HTTP_TIMEOUT_SEC
+        try:
+            self._exchange: Any = Exchange(
+                self._wallet,
+                base_url,
+                **exchange_kwargs,
+            )
+        except TypeError:
+            # Older SDK without the ``timeout`` keyword.
+            exchange_kwargs.pop("timeout", None)
+            logger.warning("LIVE Exchange SDK has no timeout kwarg: HTTP calls may hang")
+            self._exchange = Exchange(
+                self._wallet,
+                base_url,
+                **exchange_kwargs,
+            )
         logger.warning(
             "LIVE Exchange initialized for %s — real orders will be sent",
             self.account_address,

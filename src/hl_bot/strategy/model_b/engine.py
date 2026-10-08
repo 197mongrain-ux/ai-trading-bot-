@@ -178,6 +178,7 @@ class ModelBEngine:
         counter_flow_hold_sec: float = HOLD_SEC,
         min_sweep_bps: float | str | dict | None = 0.3,
         sweep_require_htf: bool = False,
+        cap_includes_fees: bool = True,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -223,6 +224,8 @@ class ModelBEngine:
         self.counter_flow_hold_sec = float(counter_flow_hold_sec)
         self.min_sweep_bps = min_sweep_bps
         self.sweep_require_htf = bool(sweep_require_htf)
+        # 2% cap counts the maker entry + taker exit fee (stop and TP unchanged).
+        self.cap_includes_fees = bool(cap_includes_fees)
 
     def evaluate(
         self,
@@ -589,11 +592,14 @@ class ModelBEngine:
                     leverage=lev,
                     notional_leverage=self.max_notional_leverage,
                     min_stop_bps=self.min_stop_bps,
+                    include_fees=self.cap_includes_fees,
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
             # Hard 2% cap on the loss at the stop (Chris's absolute rule).
-            size = cap_size_to_loss(size, limit, stop, equity)
+            size = cap_size_to_loss(
+                size, limit, stop, equity, include_fees=self.cap_includes_fees
+            )
             if size <= 0:
                 return _done(BAD_STOP, **fields)
             adjust = size_adjust_tag(limit, stop)
