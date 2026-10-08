@@ -133,6 +133,13 @@ class Decision:
     pool_distance: float | None = None
     pool_r: float | None = None
     bad_tp_why: str | None = None
+    # 15m / 1h structure label (``15m:bear,1h:range``) and the counter-flow
+    # read. STRUCTURE / COUNTER_FLOW are gates; these are their log fields.
+    structure: str | None = None
+    counter_flow: str | None = None
+    # Sizing brake read: notional cap leverage and the stop distance the
+    # size was computed from (>= the real stop distance).
+    sizing_dist: float | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -179,4 +186,7 @@ class Decision:
             "pool_distance": _num(self.pool_distance),
             "pool_r": _num(self.pool_r),
             "bad_tp_why": self.bad_tp_why,
+            "structure": self.structure,
+            "counter_flow": self.counter_flow,
+            "sizing_dist": _num(self.sizing_dist),
         }

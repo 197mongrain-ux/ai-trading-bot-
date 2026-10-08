@@ -210,7 +210,14 @@ def _decide(prints, bars, pools, **kw):
     now = kw.pop("now", _now())
     risk_pct = kw.pop("risk_pct", 0.02)
     tp_r = kw.pop("tp_r", 1.5)
-    engine = kw.pop("engine", None) or ModelBEngine(tp_r=tp_r, risk_pct=risk_pct)
+    min_stop_bps = kw.pop("min_stop_bps", 15.0)
+    min_sweep_bps = kw.pop("min_sweep_bps", 0.3)
+    engine = kw.pop("engine", None) or ModelBEngine(
+        tp_r=tp_r,
+        risk_pct=risk_pct,
+        min_stop_bps=min_stop_bps,
+        min_sweep_bps=min_sweep_bps,
+    )
     return engine.evaluate(
         kw.pop("coin", "BTC"),
         now=now,
@@ -890,6 +897,10 @@ def test_btc_flat_band_keeps_the_coin_floor():
         ask=85997.0,
         tick=1.0,
         equity=10_000.0,
+        # Delta-band geometry test: a 1-tick sweep and a stop inside 15 bps.
+        # SHALLOW_SWEEP / STOP_TOO_TIGHT are covered in test_model_b_protection.
+        min_stop_bps=0.0,
+        min_sweep_bps=0.0,
     )
     assert saved.armed is True
     assert saved.intent is not None and saved.intent.side == "short"
@@ -1668,7 +1679,10 @@ def test_live_arm_sets_injected_coin_max_before_entry(tmp_path, caplog):
         )
     assert summary["arms"] == 1
     assert fake.calls == [("alo", "BTC", 40)]
-    assert any("MODEL_B LEVERAGE BTC max=40 used=40 cap=coin" in rec.message for rec in caplog.records)
+    assert any(
+        "MODEL_B LEVERAGE BTC max=40 used=40 notional_cap=20x" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_posted_leverage_is_copied_onto_the_fill_and_adopted_entries_stay_20():
@@ -2005,6 +2019,8 @@ def test_btc_1026_sweep_arms_from_structural_stop_instead_of_bad_stop():
         ask=86121.0,
         tick=tick,
         equity=equity,
+        # Stop-geometry test (9.5 bps stop); min-stop handling has its own tests.
+        min_stop_bps=0.0,
     )
     assert tight.armed is True
     assert tight.fail_reason is None
@@ -2837,11 +2853,12 @@ def test_entry_mode_model_b_is_selectable_and_rejects_40x(monkeypatch):
         load_settings()
     monkeypatch.delenv("MODEL_B_CLOSE_MARGIN_RESERVE")
     assert load_settings().model_b_close_margin_reserve == pytest.approx(0.60)
-    assert load_settings().model_b_max_leverage is None
+    # The 20x notional brake is on by default; empty / 0 cannot remove it.
+    assert load_settings().model_b_max_leverage == 20
     monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "0")
-    assert load_settings().model_b_max_leverage is None
+    assert load_settings().model_b_max_leverage == 20
     monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "")
-    assert load_settings().model_b_max_leverage is None
+    assert load_settings().model_b_max_leverage == 20
     monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "25")
     assert load_settings().model_b_max_leverage == 25
     monkeypatch.setenv("MODEL_B_MAX_LEVERAGE", "51")

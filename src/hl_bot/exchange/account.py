@@ -32,6 +32,10 @@ class PerpPosition:
     szi: float
     entry: float
     margin_used: float
+    # Mark from ``positionValue / |szi|`` and the exchange ``unrealizedPnl``.
+    # 0 / None when the body did not carry them (tests, old payloads).
+    mark: float = 0.0
+    unrealized_pnl: float | None = None
 
     @property
     def side(self) -> str:
@@ -74,6 +78,29 @@ class EntryOrder:
         return initial_margin(self.size, self.limit_px)
 
 
+@dataclass(frozen=True)
+class ProtectiveOrder:
+    """A reduce-only trigger (stop or take-profit) resting on the exchange.
+
+    ``side`` is the order side: ``sell`` protects a long, ``buy`` a short.
+    ``full_position`` is a position TP/SL (``isPositionTpsl`` with size 0):
+    it closes whatever size is open, so it covers the whole position.
+    """
+
+    coin: str
+    oid: object
+    kind: str  # "sl" | "tp"
+    side: str  # "buy" | "sell"
+    trigger_px: float
+    size: float
+    full_position: bool = False
+
+    def protects(self, position_side: str) -> bool:
+        return (position_side == "long" and self.side == "sell") or (
+            position_side == "short" and self.side == "buy"
+        )
+
+
 @dataclass
 class AccountSnapshot:
     """One pass over the dexes this hunt can trade.
@@ -89,6 +116,11 @@ class AccountSnapshot:
     fills: tuple[UserFill, ...] = ()
     reported_margin: float = 0.0
     dexs: tuple[str, ...] = ()
+    protective_orders: tuple[ProtectiveOrder, ...] = ()
+
+    def protection(self, coin: str) -> list[ProtectiveOrder]:
+        name = canon_coin(coin)
+        return [order for order in self.protective_orders if order.coin == name]
 
     def position(self, coin: str) -> PerpPosition | None:
         name = canon_coin(coin)
@@ -169,8 +201,18 @@ def parse_clearinghouse(payload: object) -> tuple[list[PerpPosition], float]:
             continue
         entry = _as_float(pos.get("entryPx")) or 0.0
         margin = _as_float(pos.get("marginUsed")) or 0.0
+        value = _as_float(pos.get("positionValue"))
+        mark = abs(value) / abs(float(szi)) if value else 0.0
+        upnl = _as_float(pos.get("unrealizedPnl"))
         positions.append(
-            PerpPosition(coin=coin, szi=float(szi), entry=float(entry), margin_used=float(margin))
+            PerpPosition(
+                coin=coin,
+                szi=float(szi),
+                entry=float(entry),
+                margin_used=float(margin),
+                mark=float(mark),
+                unrealized_pnl=upnl,
+            )
         )
     return positions, reported
 
@@ -184,6 +226,52 @@ def _is_reduce_only(raw: dict) -> bool:
     if "stop" in text or "take" in text or "trigger" in text:
         return True
     return False
+
+
+def parse_protective_orders(payload: object) -> list[ProtectiveOrder]:
+    """Reduce-only stop / take-profit triggers from ``frontendOpenOrders``."""
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise ValueError("open orders body is not a list")
+    out: list[ProtectiveOrder] = []
+    for raw in payload:
+        if not isinstance(raw, dict) or not _is_reduce_only(raw):
+            continue
+        coin = canon_coin(raw.get("coin"))
+        if not coin:
+            continue
+        text = str(raw.get("orderType") or raw.get("order_type") or "").lower()
+        tpsl = str(raw.get("tpsl") or "").lower()
+        if "take" in text or tpsl == "tp":
+            kind = "tp"
+        elif "stop" in text or tpsl == "sl":
+            kind = "sl"
+        else:
+            # A plain reduce-only limit is not a stop.
+            continue
+        side_raw = str(raw.get("side") or "").strip().upper()
+        if side_raw in {"B", "BUY", "BID"}:
+            side = "buy"
+        elif side_raw in {"A", "SELL", "ASK", "S"}:
+            side = "sell"
+        else:
+            continue
+        trigger = _as_float(raw.get("triggerPx")) or _as_float(raw.get("limitPx")) or 0.0
+        size = _as_float(raw.get("sz", raw.get("size"))) or 0.0
+        full = bool(raw.get("isPositionTpsl")) and size <= 0
+        out.append(
+            ProtectiveOrder(
+                coin=coin,
+                oid=raw.get("oid"),
+                kind=kind,
+                side=side,
+                trigger_px=float(trigger),
+                size=float(size),
+                full_position=full,
+            )
+        )
+    return out
 
 
 def parse_entry_orders(payload: object) -> list[EntryOrder]:

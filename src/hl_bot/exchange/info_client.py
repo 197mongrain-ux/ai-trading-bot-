@@ -430,6 +430,8 @@ class InfoClient:
         dexs: tuple[str, ...] | list[str] | None = None,
         *,
         fills_start_ms: int | None = None,
+        include_fills: bool = True,
+        orders_when_positions_only: bool = False,
     ) -> AccountSnapshot:
         """Positions, resting entries, and recent fills for every perp dex.
 
@@ -448,6 +450,7 @@ class InfoClient:
             return AccountSnapshot(ok=False, dexs=tuple(names))
         positions = []
         orders = []
+        protective = []
         reported = 0.0
         ok = True
         for dex in names:
@@ -470,6 +473,10 @@ class InfoClient:
                 continue
             positions.extend(parsed_pos)
             reported += margin
+            if orders_when_positions_only and not parsed_pos:
+                # Guard fast path: a flat dex has nothing to protect, and
+                # frontendOpenOrders is the heavy (weight 20) read.
+                continue
             order_body = {"type": "frontendOpenOrders", "user": user, "dex": dex}
             try:
                 order_status, order_raw = _post_info(self.base_url, order_body)
@@ -485,10 +492,20 @@ class InfoClient:
                 continue
             try:
                 orders.extend(parse_entry_orders(order_raw))
+                protective.extend(parse_protective_orders(order_raw))
             except ValueError as exc:
                 logger.warning("frontendOpenOrders dex=%s unreadable: %s", dex or "default", exc)
                 ok = False
         fills: list = []
+        if not include_fills:
+            return AccountSnapshot(
+                ok=ok,
+                positions=tuple(positions),
+                entry_orders=tuple(orders),
+                reported_margin=reported,
+                dexs=tuple(names),
+                protective_orders=tuple(protective),
+            )
         start_ms = fills_start_ms
         if start_ms is None:
             start_ms = int(self._now() * 1000) - 24 * 3600 * 1000
@@ -511,6 +528,7 @@ class InfoClient:
             fills=tuple(fills),
             reported_margin=reported,
             dexs=tuple(names),
+            protective_orders=tuple(protective),
         )
 
     def inject_max_leverages(self, mapping: dict | None) -> None:

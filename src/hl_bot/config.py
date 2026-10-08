@@ -162,10 +162,34 @@ class Settings:
     # (highest score, then closer limit in bps). An unarmed close setup
     # does not hold it. 0 turns the reserve off. Not hard-coded to BTC.
     model_b_close_margin_reserve: float = CLOSE_MARGIN_RESERVE
-    # Optional cap on the exchange max leverage used for margin. None
-    # (unset or 0) uses the coin max. It only lowers that max. It does
-    # not change the stop, the target, or the 2% size. Env LEVERAGE stays 20.
-    model_b_max_leverage: int | None = None
+    # Size brake: per-ticket notional never exceeds this many times the
+    # spot USDC sizing balance (the old 20x brake). The exchange leverage
+    # set before the Alo is still the coin max (PR #8 margin). It does not
+    # move the stop or the target. Unset / empty / 0 keeps 20.
+    model_b_max_leverage: int = 20
+    # Sizing floor on stop distance, in bps of the entry. A liquidity stop
+    # closer than this stays at its price; only the size is computed from
+    # this distance, so a 0.05% stop cannot become a 40x ticket.
+    model_b_min_stop_bps: float = 15.0
+    # Entry filters (Oct 7 22:56 BTC review). STRUCTURE: no long into
+    # 15m/1h LH+LL, no short into HH+HL. COUNTER_FLOW: most adverse rolling
+    # 90s delta over the last N seconds, band = max(USDC / mid, coin eps).
+    model_b_structure_filter: bool = True
+    model_b_counter_flow: bool = True
+    model_b_counter_flow_sec: float = 300.0
+    model_b_counter_flow_usdc: float = 1_000_000.0
+    model_b_counter_flow_eps: float = 0.0
+    model_b_counter_flow_flip: float = 1.0
+    model_b_counter_flow_hold_sec: float = 30.0
+    # SHALLOW_SWEEP: bps past the swing (number or ``BTC:5,default:0.3``),
+    # and optionally require the swept level to be a 15m swing / pool.
+    model_b_min_sweep_bps: str = "0.3"
+    model_b_sweep_require_htf: bool = False
+    # Protection guard: cadence (s), loss kill at N x planned risk (2% of
+    # spot when the plan is unknown), oversize cut above N x ticket size.
+    model_b_guard_sec: float = 3.0
+    model_b_loss_kill_r: float = 1.0
+    model_b_oversize_ratio: float = 1.1
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -293,12 +317,22 @@ class Settings:
                 f"MODEL_B_CLOSE_MARGIN_RESERVE={self.model_b_close_margin_reserve} "
                 "must be in [0, 1] (0 = off)."
             )
-        if self.model_b_max_leverage is not None and not (
-            1 <= int(self.model_b_max_leverage) <= 50
-        ):
+        if not (1 <= int(self.model_b_max_leverage) <= 50):
             raise ValueError(
                 f"MODEL_B_MAX_LEVERAGE={self.model_b_max_leverage} must be "
-                "in [1, 50], or unset / 0 to use the coin max."
+                "in [1, 50] (unset / 0 keeps the 20x notional brake)."
+            )
+        if self.model_b_loss_kill_r <= 0:
+            raise ValueError(f"MODEL_B_LOSS_KILL_R={self.model_b_loss_kill_r} must be > 0.")
+        if self.model_b_oversize_ratio < 1.0:
+            raise ValueError(
+                f"MODEL_B_OVERSIZE_RATIO={self.model_b_oversize_ratio} must be >= 1."
+            )
+        if self.model_b_guard_sec < 0:
+            raise ValueError(f"MODEL_B_GUARD_SEC={self.model_b_guard_sec} must be >= 0.")
+        if self.model_b_min_stop_bps < 0:
+            raise ValueError(
+                f"MODEL_B_MIN_STOP_BPS={self.model_b_min_stop_bps} must be >= 0."
             )
         if self.ote_lookback_bars < 3:
             raise ValueError(
@@ -423,7 +457,20 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_close_margin_reserve=_float(
             "MODEL_B_CLOSE_MARGIN_RESERVE", CLOSE_MARGIN_RESERVE
         ),
-        model_b_max_leverage=_optional_int_unset("MODEL_B_MAX_LEVERAGE"),
+        model_b_max_leverage=_optional_int_unset("MODEL_B_MAX_LEVERAGE") or 20,
+        model_b_min_stop_bps=_float("MODEL_B_MIN_STOP_BPS", 15.0),
+        model_b_structure_filter=_bool("MODEL_B_STRUCTURE_FILTER", True),
+        model_b_counter_flow=_bool("MODEL_B_COUNTER_FLOW", True),
+        model_b_counter_flow_sec=_float("MODEL_B_COUNTER_FLOW_SEC", 300.0),
+        model_b_counter_flow_usdc=_float("MODEL_B_COUNTER_FLOW_USDC", 1_000_000.0),
+        model_b_counter_flow_eps=_float("MODEL_B_COUNTER_FLOW_EPS", 0.0),
+        model_b_counter_flow_flip=_float("MODEL_B_COUNTER_FLOW_FLIP", 1.0),
+        model_b_counter_flow_hold_sec=_float("MODEL_B_COUNTER_FLOW_HOLD_SEC", 30.0),
+        model_b_min_sweep_bps=(os.getenv("MODEL_B_MIN_SWEEP_BPS") or "0.3").strip(),
+        model_b_sweep_require_htf=_bool("MODEL_B_SWEEP_REQUIRE_HTF", False),
+        model_b_guard_sec=_float("MODEL_B_GUARD_SEC", 3.0),
+        model_b_loss_kill_r=_float("MODEL_B_LOSS_KILL_R", 1.0),
+        model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

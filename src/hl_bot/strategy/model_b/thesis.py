@@ -68,6 +68,13 @@ class WorkingOrder:
     # timer and stale-print path must not invent a cancel. A user fill is
     # recorded as an adopted position instead of a stop at 0.
     external: bool = False
+    # Size at post. A position grown from this order's drips is never
+    # tracked above it (a snapshot plus a websocket copy of the same fill
+    # double counted 0.08887 BTC on Oct 7).
+    orig_size: float = 0.0
+    # Dollar risk at the arm: size x |limit - stop|. The guard's loss kill
+    # uses it.
+    planned_risk: float = 0.0
 
 
 @dataclass
@@ -95,6 +102,10 @@ class OpenPosition:
     # Leverage this process set before the entry. Adopted positions keep
     # the exchange margin figure and do not assume the coin max.
     leverage: int = 20
+    # Ticket this position came from: size posted and dollar risk at the
+    # arm. 0 for an adopted position (unknown plan).
+    intended_size: float = 0.0
+    planned_risk: float = 0.0
 
 
 @dataclass
@@ -183,6 +194,8 @@ class ThesisBook:
             tp_r=intent.tp_r,
             score=None if score is None else int(score),
             leverage=lev,
+            orig_size=float(intent.size),
+            planned_risk=float(intent.size) * abs(float(intent.limit_px) - float(intent.stop)),
         )
         self._state(intent.coin).working = order
         return order
@@ -255,7 +268,15 @@ class ThesisBook:
             return None
         st = self._state(coin)
         if st.position is not None and not st.position.adopted:
-            return st.position
+            # The exchange size is the truth. Drips counted twice (snapshot
+            # and websocket) are corrected here every pass. Stop / TP stay.
+            pos = st.position
+            if pos.side == side:
+                pos.size = float(size)
+                pos.entry = float(entry)
+                if margin_used is not None and float(margin_used) > 0:
+                    pos.margin_used = float(margin_used)
+            return pos
         if st.position is not None:
             pos = st.position
             pos.size = float(size)
@@ -278,6 +299,47 @@ class ThesisBook:
         )
         st.position = pos
         return pos
+
+    def claim_fill(
+        self,
+        *,
+        coin: str,
+        side: str,
+        size: float,
+        entry: float,
+        now: float,
+        margin_used: float | None = None,
+    ) -> OpenPosition | None:
+        """An exchange position that is a fill of this process's own Alo.
+
+        Oct 7 23:02: the snapshot saw the BTC fill before the websocket
+        delivered it, so the position was "adopted" with stop 0 / TP 0 and
+        brackets were skipped. Here the resting ticket's stop and TP are
+        kept (same path as a websocket fill) and the size is the exchange
+        size. Returns ``None`` when there is no matching managed ticket.
+        """
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.position is not None or st.working is None:
+            return None
+        order = st.working
+        if order.external or order.side != side or size <= 0 or entry <= 0:
+            return None
+        pos = self._fill(order, float(entry), float(now), size=float(size))
+        pos.size = float(size)
+        pos.entry = float(entry)
+        if margin_used is not None and float(margin_used) > 0:
+            pos.margin_used = float(margin_used)
+        return pos
+
+    def drop_filled_entry(self, coin: str) -> WorkingOrder | None:
+        """Forget a managed resting entry the exchange no longer has while a
+        position is open (it filled out, or was cancelled). No exchange call."""
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.working is None or st.position is None:
+            return None
+        order = st.working
+        st.working = None
+        return order
 
     def adopt_entry(
         self,
@@ -445,13 +507,23 @@ class ThesisBook:
                 swing_id=order.swing_id,
                 opened_at=ts,
                 leverage=int(getattr(order, "leverage", 20) or 20),
+                intended_size=float(order.orig_size or 0.0),
+                planned_risk=float(order.planned_risk or 0.0),
             )
             st.position = pos
         else:
             pos = st.position
             assert pos is not None
-            pos.entry = (pos.entry * pos.size + price * added) / (pos.size + added)
-            pos.size = pos.size + added
+            grown = pos.size + added
+            cap = float(getattr(order, "orig_size", 0.0) or 0.0)
+            if cap > 0 and pos.swing_id == order.swing_id and grown > cap:
+                # Never track more than the ticket. The snapshot sync sets
+                # the exchange size every pass anyway.
+                added = max(0.0, cap - pos.size)
+                grown = pos.size + added
+            if grown > 0:
+                pos.entry = (pos.entry * pos.size + price * added) / grown
+            pos.size = grown
             # A drip changes size only. Recomputing R here is what put a
             # liquidity TP back at 2R on every partial fill.
         pos.remainder_kept = remainder_kept

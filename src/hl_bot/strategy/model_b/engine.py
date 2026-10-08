@@ -28,6 +28,8 @@ Those tags do not arm, block, or move the stop.
 
 from __future__ import annotations
 
+import math
+
 from hl_bot.strategy.model_b.alo import alo_limit, market_ref
 from hl_bot.strategy.model_b.bias import format_pool, resolve_bias
 from hl_bot.strategy.model_b.risk import (
@@ -42,6 +44,7 @@ from hl_bot.strategy.model_b.risk import (
     place_stop,
     size_adjust_tag,
     size_from_stop,
+    stop_buffer,
     stop_is_valid,
     tp_fail_detail,
 )
@@ -65,6 +68,22 @@ from hl_bot.strategy.model_b.tape import (
     missing_side,
     window_prints,
 )
+from hl_bot.strategy.model_b.flow import (
+    COUNTER_FLOW,
+    COUNTER_FLOW_EPS,
+    COUNTER_FLOW_USDC,
+    FLIP_RATIO,
+    HOLD_SEC,
+    LOOKBACK_SEC,
+    counter_flow,
+)
+from hl_bot.strategy.model_b.structure import (
+    DEFAULT_TIMEFRAMES,
+    STRUCTURE,
+    structure_blocks,
+    structure_label,
+    structure_states,
+)
 from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.types import AloIntent, Decision, Pool, TradePrint
 from hl_bot.strategy.model_b.universe import canon_coin, resolve_hunt_coins
@@ -76,6 +95,37 @@ NO_SWING = "NO_SWING"
 NO_ALO = "NO_ALO"
 BAD_STOP = "BAD_STOP"
 BAD_TP = "BAD_TP"
+STOP_TOO_TIGHT = "STOP_TOO_TIGHT"
+SHALLOW_SWEEP = "SHALLOW_SWEEP"
+
+
+def min_sweep_bps_for(coin: str, spec: float | str | dict | None) -> float:
+    """``MODEL_B_MIN_SWEEP_BPS``: a number, or ``BTC:5,ETH:3,default:0.3``."""
+    if spec is None:
+        return 0.0
+    if isinstance(spec, (int, float)):
+        return max(0.0, float(spec))
+    table: dict[str, float] = {}
+    if isinstance(spec, dict):
+        table = {canon_coin(k) if k != "default" else "default": float(v) for k, v in spec.items()}
+    else:
+        text = str(spec).strip()
+        if not text:
+            return 0.0
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            pass
+        for part in text.split(","):
+            if ":" not in part:
+                continue
+            key, _, val = part.rpartition(":")
+            key = key.strip()
+            try:
+                table["default" if key.lower() == "default" else canon_coin(key)] = float(val)
+            except ValueError:
+                continue
+    return max(0.0, table.get(canon_coin(coin), table.get("default", 0.0)))
 
 # How close a failed side got to an arm. Used only when NONE tries both
 # sides and neither arms, so the log still carries one reason.
@@ -86,9 +136,13 @@ _FAIL_RANK = {
     "ABSORB": 4,
     "DELTA": 5,
     "LAST_15s": 6,
+    SHALLOW_SWEEP: 6.4,
+    COUNTER_FLOW: 6.5,
+    STRUCTURE: 6.6,
     NO_ALO: 7,
     BAD_STOP: 8,
     BAD_TP: 8,
+    STOP_TOO_TIGHT: 8,
     "THESIS_DONE": 9,
     "SECOND_ALO": 9,
     "AVERAGE_DOWN": 9,
@@ -106,6 +160,18 @@ class ModelBEngine:
         delta_flat_eps: float = DELTA_FLAT_EPS,
         delta_flat_usdc: float = DELTA_FLAT_USDC,
         coins: tuple[str, ...] | list[str] | None = None,
+        max_notional_leverage: int = 20,
+        min_stop_bps: float = 15.0,
+        structure_filter: bool = True,
+        structure_timeframes: tuple[str, ...] | list[str] = DEFAULT_TIMEFRAMES,
+        counter_flow_filter: bool = True,
+        counter_flow_sec: float = LOOKBACK_SEC,
+        counter_flow_usdc: float = COUNTER_FLOW_USDC,
+        counter_flow_eps: float = COUNTER_FLOW_EPS,
+        counter_flow_flip: float = FLIP_RATIO,
+        counter_flow_hold_sec: float = HOLD_SEC,
+        min_sweep_bps: float | str | dict | None = 0.3,
+        sweep_require_htf: bool = False,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -135,6 +201,20 @@ class ModelBEngine:
         self.delta_flat_usdc = float(delta_flat_usdc)
         # Same list in NY hours and after hours. ``None`` is the default universe.
         self.coins = resolve_hunt_coins(coins)
+        # Size brakes (MODEL_B_MAX_LEVERAGE, MODEL_B_MIN_STOP_BPS). They only
+        # shrink size; the stop and target prices are untouched.
+        self.max_notional_leverage = int(max_notional_leverage)
+        self.min_stop_bps = float(min_stop_bps)
+        self.structure_filter = bool(structure_filter)
+        self.structure_timeframes = tuple(structure_timeframes)
+        self.counter_flow_filter = bool(counter_flow_filter)
+        self.counter_flow_sec = float(counter_flow_sec)
+        self.counter_flow_usdc = float(counter_flow_usdc)
+        self.counter_flow_eps = float(counter_flow_eps)
+        self.counter_flow_flip = float(counter_flow_flip)
+        self.counter_flow_hold_sec = float(counter_flow_hold_sec)
+        self.min_sweep_bps = min_sweep_bps
+        self.sweep_require_htf = bool(sweep_require_htf)
 
     def evaluate(
         self,
@@ -201,6 +281,9 @@ class ModelBEngine:
             pool_distance: float | None = None,
             pool_r: float | None = None,
             bad_tp_why: str | None = None,
+            structure: str | None = None,
+            counter_flow: str | None = None,
+            sizing_dist: float | None = None,
         ) -> Decision:
             ctx_side = vp_ctx.get("side")
             log_side = ctx_side if ctx_side in ("long", "short") else (
@@ -253,7 +336,22 @@ class ModelBEngine:
                 pool_distance=pool_distance,
                 pool_r=pool_r,
                 bad_tp_why=bad_tp_why,
+                structure=structure,
+                counter_flow=counter_flow,
+                sizing_dist=sizing_dist,
             )
+
+        structure_cache: dict[str, object] = {}
+
+        def _structure():
+            if "states" not in structure_cache:
+                try:
+                    structure_cache["states"] = structure_states(
+                        bars, now, last_px, self.structure_timeframes
+                    )
+                except Exception:
+                    structure_cache["states"] = []
+            return structure_cache["states"]
 
         def attempt(side: str, pool: Pool | None) -> Decision:
             vp_ctx["side"] = side
@@ -307,6 +405,43 @@ class ModelBEngine:
             blocked = self.thesis.block_reason(coin_u, sid)
             if blocked:
                 return _done(blocked, **fields)
+
+            # Sweep depth past the swing, in bps (per coin), and optionally
+            # the swept level must be a 15m swing or an untaken pool rather
+            # than a micro 1m low/high.
+            assert metrics.sweep_price is not None
+            depth_bps = abs(swing.price - metrics.sweep_price) / swing.price * 10_000.0
+            need_bps = min_sweep_bps_for(coin_u, self.min_sweep_bps)
+            if need_bps > 0 and depth_bps + 1e-9 < need_bps:
+                return _done(SHALLOW_SWEEP, **fields)
+            if self.sweep_require_htf and not _meaningful_level(
+                bars, now, side, swing.price, pools, tick
+            ):
+                return _done(SHALLOW_SWEEP, **fields)
+
+            # Market structure (15m + 1h) must not fight the side, and the
+            # sweep window must not be heavy one-sided flow against it.
+            # Both run only on a setup the tape already cleared.
+            states = _structure()
+            fields["structure"] = structure_label(states)
+            if self.structure_filter and structure_blocks(side, states):
+                return _done(STRUCTURE, **fields)
+            if self.counter_flow_filter:
+                flow = counter_flow(
+                    side,
+                    prints,
+                    coin=coin_u,
+                    now=now,
+                    mid=ref_px,
+                    lookback_sec=self.counter_flow_sec,
+                    usdc=self.counter_flow_usdc,
+                    eps=self.counter_flow_eps,
+                    flip_ratio=self.counter_flow_flip,
+                    hold_sec=self.counter_flow_hold_sec,
+                )
+                fields["counter_flow"] = flow.label()
+                if flow.blocked:
+                    return _done(COUNTER_FLOW, **fields)
 
             assert metrics.sweep_price is not None
             limit = alo_limit(
@@ -367,6 +502,60 @@ class ModelBEngine:
             ):
                 return _done(BAD_STOP, **fields)
 
+            # Min stop distance (MODEL_B_MIN_STOP_BPS). A liquidity stop
+            # tighter than that (BTC 22:56 Oct 7: 23 pts / 2.8 bps) is moved
+            # out to the next real opposing liquidity -- a confirmed swing
+            # or an untaken pool -- past the min distance, with the usual
+            # buffer beyond it, the way the Oct 7 winners (17-22 bps) sat.
+            # No such level, or no pool target at tp_r (1.67R) of the moved
+            # stop: skip as STOP_TOO_TIGHT. A stop already past the min is
+            # untouched.
+            moved_tp_floor: float | None = None
+            min_dist = limit * self.min_stop_bps / 10_000.0 if self.min_stop_bps > 0 else 0.0
+            if min_dist > 0 and abs(limit - stop) + 1e-12 < min_dist:
+                structural = [
+                    item.price
+                    for item in confirmed_swings(bars, kind=stop_kind, now=now)
+                ]
+                for item in pools:
+                    if item.taken or item.price <= 0:
+                        continue
+                    structural.append(item.price)
+                buf = stop_buffer(limit, tick, atr14(bars, now=now))
+                moved: float | None = None
+                for level in structural:
+                    if side == "long":
+                        cand = level - buf
+                        if level >= limit or limit - cand + 1e-12 < min_dist:
+                            continue
+                        if moved is None or cand > moved:
+                            moved = cand
+                    else:
+                        cand = level + buf
+                        if level <= limit or cand - limit + 1e-12 < min_dist:
+                            continue
+                        if moved is None or cand < moved:
+                            moved = cand
+                if moved is not None and tick > 0:
+                    steps = moved / tick
+                    moved = (
+                        math.floor(steps + 1e-9) * tick
+                        if side == "long"
+                        else math.ceil(steps - 1e-9) * tick
+                    )
+                    moved = float(f"{moved:.10g}")
+                if (
+                    moved is None
+                    or moved <= 0
+                    or not stop_is_valid(side, limit, moved)
+                    or collides_with_fill(limit, moved, tick)
+                ):
+                    return _done(STOP_TOO_TIGHT, **fields)
+                stop = moved
+                moved_tp_floor = max(
+                    min_tp_distance(limit, stop), self.tp_r * abs(limit - stop)
+                )
+
             try:
                 lev = int(leverage)
             except (TypeError, ValueError):
@@ -380,6 +569,8 @@ class ModelBEngine:
                     stop,
                     risk_pct=self.risk_pct,
                     leverage=lev,
+                    notional_leverage=self.max_notional_leverage,
+                    min_stop_bps=self.min_stop_bps,
                 )
             except ValueError:
                 return _done(BAD_STOP, **fields)
@@ -390,6 +581,14 @@ class ModelBEngine:
             # No level past that floor: 1.5R of the stop the size just used.
             # That fallback fails closed when it still cannot clear the band.
             floor = min_tp_distance(limit, stop)
+            if moved_tp_floor is not None:
+                # Moved stop: the target must be a real pool at >= tp_r.
+                target = next_liquidity(
+                    side, limit, tick, tp_levels, min_dist=moved_tp_floor
+                )
+                if target is None:
+                    return _done(STOP_TOO_TIGHT, **fields)
+                floor = moved_tp_floor
             target = next_liquidity(side, limit, tick, tp_levels, min_dist=floor)
             nearest = next_liquidity(side, limit, tick, tp_levels)
             logged_pool = target if target is not None else nearest
@@ -446,6 +645,7 @@ class ModelBEngine:
                 intent=intent,
                 size_adjust=adjust,
                 delta_flat=metrics.delta_flat,
+                sizing_dist=max(abs(limit - stop), limit * self.min_stop_bps / 10_000.0),
                 **fields,
             )
 
@@ -485,3 +685,17 @@ class ModelBEngine:
                 ),
             )
         return max(results, key=lambda item: _FAIL_RANK.get(item.fail_reason or "", 0))
+
+
+def _meaningful_level(bars, now, side, level, pools, tick) -> bool:
+    """True when ``level`` sits on a 15m swing (3-bar pivot) or an untaken pool."""
+    from hl_bot.strategy.model_b.structure import _pivots, resample
+
+    tol = max(2.0 * float(tick), abs(float(level)) * 2.0 / 10_000.0)
+    for item in pools or []:
+        if not item.taken and item.price > 0 and abs(item.price - level) <= tol:
+            return True
+    candles = resample(bars, 900, now)[-48:]
+    field = "l" if side == "long" else "h"
+    return any(abs(px - level) <= tol for px in _pivots(candles, field, 1)[-8:])
+
