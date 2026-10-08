@@ -37,6 +37,7 @@ amend that fails is logged; the hunt keeps running.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import time
@@ -55,6 +56,7 @@ from hl_bot.exchange.account import (
 )
 from hl_bot.exchange.hl_trades import HyperliquidTradeFeed, MemoryFeed, UserFill
 from hl_bot.exchange.info_client import InfoClient
+from hl_bot.execution.guard import LockedJournal, PositionGuard, plans_from_book
 from hl_bot.execution.loop import killswitch_active
 from hl_bot.journal import TradeJournal
 from hl_bot.risk.manager import RiskManager
@@ -67,8 +69,10 @@ from hl_bot.strategy.model_b.alo import (
 from hl_bot.strategy.model_b.engine import ModelBEngine
 from hl_bot.strategy.model_b.pools import pools_from_bars
 from hl_bot.strategy.model_b.risk import (
+    HARD_MAX_LOSS_PCT,
     LEVERAGE,
     assert_leverage,
+    cap_size_to_loss,
     initial_margin,
     leaves_reserve_headroom,
     other_margin_cap,
@@ -127,6 +131,8 @@ def format_model_b_fail(decision) -> str:
     )
     if decision.fail_reason == "THIN_TAPE":
         text += f" prints={decision.print_count}/{decision.min_prints}"
+    if decision.fail_reason in ("STRUCTURE", "COUNTER_FLOW", "SHALLOW_SWEEP", "STOP_TOO_TIGHT"):
+        text += f" structure={decision.structure} flow=[{decision.counter_flow}]"
     if decision.fail_reason == "BAD_TP":
         text += (
             f" r={decision.r_distance} pool_dist={decision.pool_distance} "
@@ -253,6 +259,17 @@ def run_model_b(
         delta_flat_eps=settings.model_b_delta_flat_eps,
         delta_flat_usdc=settings.model_b_delta_flat_usdc,
         coins=hunt_coins,
+        max_notional_leverage=int(getattr(settings, "model_b_max_leverage", 20) or 20),
+        min_stop_bps=float(getattr(settings, "model_b_min_stop_bps", 15.0)),
+        structure_filter=bool(getattr(settings, "model_b_structure_filter", True)),
+        counter_flow_filter=bool(getattr(settings, "model_b_counter_flow", True)),
+        counter_flow_sec=float(getattr(settings, "model_b_counter_flow_sec", 300.0)),
+        counter_flow_usdc=float(getattr(settings, "model_b_counter_flow_usdc", 1_000_000.0)),
+        counter_flow_eps=float(getattr(settings, "model_b_counter_flow_eps", 0.0)),
+        counter_flow_flip=float(getattr(settings, "model_b_counter_flow_flip", 1.0)),
+        counter_flow_hold_sec=float(getattr(settings, "model_b_counter_flow_hold_sec", 30.0)),
+        min_sweep_bps=getattr(settings, "model_b_min_sweep_bps", "0.3"),
+        sweep_require_htf=bool(getattr(settings, "model_b_sweep_require_htf", False)),
     )
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
@@ -269,7 +286,7 @@ def run_model_b(
         max_open_positions=0,
         max_positions_per_symbol=1,
     )
-    journal = TradeJournal(settings.journal_path)
+    journal = LockedJournal(TradeJournal(settings.journal_path))
     journal.log(
         "start",
         mode=mode,
@@ -313,6 +330,62 @@ def run_model_b(
         "on" if settings.model_b_closer_score_guard else "off",
         settings.model_b_close_margin_reserve,
     )
+    guard: PositionGuard | None = None
+    guard_user = (settings.account_address or getattr(live, "account_address", "") or "").strip()
+    # Startup assertion: Chris's absolute rule. No position may lose more than
+    # 2% of the account. Refuse to run if any setting could allow more.
+    max_loss_pct = float(getattr(settings, "model_b_max_loss_pct", HARD_MAX_LOSS_PCT))
+    if not (0 < max_loss_pct <= HARD_MAX_LOSS_PCT <= 0.02):
+        raise RuntimeError(f"MODEL_B LOSS_CAP {max_loss_pct} above 2% of the account")
+    if float(settings.risk_per_trade) > max_loss_pct + 1e-12:
+        raise RuntimeError(
+            f"MODEL_B LOSS_CAP risk_per_trade={settings.risk_per_trade} above cap {max_loss_pct}"
+        )
+    if settings.is_live and exchange is None and live is not None and not guard_user:
+        raise RuntimeError("MODEL_B LOSS_CAP live run without an account: guard cannot run")
+    logger.info(
+        "MODEL_B LOSS_CAP hard=%.2f%% of account per position: ticket shrunk to it before "
+        "placement; LOSS_KILL at min(%.2fx planned risk, %.2f%% of account at open); "
+        "cap stop on every position (bot, adopted, manual)",
+        max_loss_pct * 100,
+        float(getattr(settings, "model_b_loss_kill_r", 1.0)),
+        max_loss_pct * 100,
+    )
+
+    if live is not None and (guard_user or getattr(info, "has_injected_account", False)):
+
+        def _last_print(coin: str) -> float | None:
+            try:
+                prints_now = feed.prints(coin)
+            except Exception:
+                return None
+            return prints_now[-1].price if prints_now else None
+
+        guard = PositionGuard(
+            live,
+            info,
+            user=guard_user,
+            dexs=dexs_for_coins(hunt_coins),
+            journal=journal,
+            risk_pct=settings.risk_per_trade,
+            max_leverage=int(getattr(settings, "model_b_max_leverage", 20) or 20),
+            loss_kill_r=float(getattr(settings, "model_b_loss_kill_r", 1.0)),
+            oversize_ratio=float(getattr(settings, "model_b_oversize_ratio", 1.1)),
+            max_loss_pct=max_loss_pct,
+            price_for=_last_print,
+            clock=clock,
+        )
+        logger.info(
+            "MODEL_B GUARD on max_leverage=%sx min_stop_bps=%s loss_kill_r=%s "
+            "oversize_ratio=%s every=%ss",
+            guard.max_leverage,
+            getattr(settings, "model_b_min_stop_bps", 15.0),
+            guard.loss_kill_r,
+            guard.oversize_ratio,
+            getattr(settings, "model_b_guard_sec", 3.0),
+        )
+        if max_iterations is None:
+            guard.start(float(getattr(settings, "model_b_guard_sec", 3.0)))
     announced_adopts: set[str] = set()
     announced_stale: set[str] = set()
     used_fill_ids: set[str] = set(consumed_fill_ids(journal.read_all()))
@@ -508,61 +581,9 @@ def run_model_b(
 
         snapshot: AccountSnapshot | None = None
         ws_fills: list[UserFill] = []
-        if settings.is_live and (
-            getattr(info, "has_injected_account", False)
-            or (settings.account_address or getattr(live, "account_address", "") or "").strip()
-        ):
-            user = settings.account_address or getattr(live, "account_address", "") or ""
-            try:
-                snapshot = info.load_account_snapshot(user, dexs_for_coins(hunt_coins))
-            except Exception:
-                logger.exception("MODEL_B account snapshot failed")
-                snapshot = None
-            if snapshot is not None and snapshot.ok:
-                for kind, item in sync_exchange_book(book, snapshot, now):
-                    key = f"{kind}:{canon_coin(item.coin)}"
-                    if key in announced_adopts:
-                        continue
-                    announced_adopts.add(key)
-                    if kind == "position":
-                        logger.info(
-                            "MODEL_B ADOPT %s %s size=%s entry=%s margin=%.4f",
-                            item.coin,
-                            item.side,
-                            item.size,
-                            item.entry,
-                            item.held_margin(),
-                        )
-                        journal.log(
-                            "model_b_margin",
-                            entry_mode="model_b",
-                            coin=item.coin,
-                            action="adopt_position",
-                            side=item.side,
-                            size=item.size,
-                            entry=item.entry,
-                            margin=item.held_margin(),
-                        )
-                    else:
-                        logger.info(
-                            "MODEL_B ADOPT %s resting entry side=%s size=%s px=%s oid=%s",
-                            item.coin,
-                            item.side,
-                            item.size,
-                            item.limit_px,
-                            item.oid,
-                        )
-                        journal.log(
-                            "model_b_margin",
-                            entry_mode="model_b",
-                            coin=item.coin,
-                            action="adopt_entry",
-                            side=item.side,
-                            size=item.size,
-                            limit_px=item.limit_px,
-                            oid=item.oid,
-                        )
-
+        # Fills first, then the exchange snapshot: the snapshot is newer
+        # than every fill applied here, so its size is the truth and the
+        # guard below brackets exactly what is open.
         if settings.is_live:
             ws_fills = list(feed.take_user_fills())
             for fill in ws_fills:
@@ -608,7 +629,7 @@ def run_model_b(
                             applied.size,
                             applied.remainder_size,
                         )
-                    if live is not None and not applied.adopted:
+                    if live is not None and guard is None and not applied.adopted:
                         # Brackets stay in this process. An amend that fails
                         # is logged. It does not end the hunt. An adopted
                         # position already has exchange brackets; a stop of 0
@@ -648,6 +669,106 @@ def run_model_b(
                         _cancel_working(
                             applied.remainder, applied.reason, remainder=True
                         )
+
+        if settings.is_live and (
+            getattr(info, "has_injected_account", False)
+            or (settings.account_address or getattr(live, "account_address", "") or "").strip()
+        ):
+            user = settings.account_address or getattr(live, "account_address", "") or ""
+            try:
+                snapshot = info.load_account_snapshot(user, dexs_for_coins(hunt_coins))
+            except Exception:
+                logger.exception("MODEL_B account snapshot failed")
+                snapshot = None
+            if snapshot is not None and snapshot.ok:
+                for kind, item in sync_exchange_book(book, snapshot, now):
+                    key = f"{kind}:{canon_coin(item.coin)}"
+                    if key in announced_adopts:
+                        continue
+                    announced_adopts.add(key)
+                    if kind == "claimed":
+                        summary["opens"] += 1
+                        logger.info(
+                            "MODEL_B FILL %s %s size=%s @ %s stop=%s tp=%s source=snapshot",
+                            item.coin,
+                            item.side,
+                            item.size,
+                            item.entry,
+                            item.stop,
+                            item.take_profit,
+                        )
+                        journal.log(
+                            "open",
+                            symbol=item.coin,
+                            side=item.side,
+                            size=item.size,
+                            price=item.entry,
+                            stop=item.stop,
+                            tp=item.take_profit,
+                            entry_mode="model_b",
+                            reason="alo_fill",
+                            source="snapshot",
+                            network=settings.network,
+                            account=settings.account_address or "",
+                        )
+                        continue
+                    if kind == "position":
+                        logger.info(
+                            "MODEL_B ADOPT %s %s size=%s entry=%s margin=%.4f",
+                            item.coin,
+                            item.side,
+                            item.size,
+                            item.entry,
+                            item.held_margin(),
+                        )
+                        journal.log(
+                            "model_b_margin",
+                            entry_mode="model_b",
+                            coin=item.coin,
+                            action="adopt_position",
+                            side=item.side,
+                            size=item.size,
+                            entry=item.entry,
+                            margin=item.held_margin(),
+                        )
+                    else:
+                        logger.info(
+                            "MODEL_B ADOPT %s resting entry side=%s size=%s px=%s oid=%s",
+                            item.coin,
+                            item.side,
+                            item.size,
+                            item.limit_px,
+                            item.oid,
+                        )
+                        journal.log(
+                            "model_b_margin",
+                            entry_mode="model_b",
+                            coin=item.coin,
+                            action="adopt_entry",
+                            side=item.side,
+                            size=item.size,
+                            limit_px=item.limit_px,
+                            oid=item.oid,
+                        )
+
+
+        # Protection guard: every open position on every dex gets a stop
+        # covering its full exchange size before any cancel / stale logic
+        # below runs. Loss kill and oversize cut run here too.
+        if guard is not None:
+            guard.set_plans(plans_from_book(book))
+            try:
+                # With the fast thread running, read fresh inside the guard's
+                # lock (the thread may have just placed a stop this older
+                # snapshot cannot see; a second stop would be left behind).
+                use_snap = (
+                    snapshot
+                    if snapshot is not None and snapshot.ok and not guard.threaded
+                    else None
+                )
+                guard.run_once(snapshot=use_snap)
+            except Exception:
+                logger.exception("MODEL_B GUARD pass failed")
 
         if session_started_at is None:
             session_started_at = now
@@ -689,7 +810,9 @@ def run_model_b(
         active = session_coins(now, symbols=hunt_coins)
         hunts: list[dict] = []
         lev_map = _coin_max_leverages(info, hunt_coins)
-        lev_cap = getattr(settings, "model_b_max_leverage", None)
+        # Exchange leverage stays the coin max (PR #8 margin). The 20x
+        # brake is applied to notional inside the engine's sizing.
+        lev_cap = int(getattr(settings, "model_b_max_leverage", 20) or 20)
 
         # Live dollar risk is 2% of spot USDC. A missing read skips new
         # arms. It is not replaced with perp account value or STARTING_EQUITY.
@@ -845,7 +968,7 @@ def run_model_b(
             tick = tick_for(coin) if tick_for is not None else _default_tick(coin, last)
 
             meta_lev = lev_map.get(canon_coin(coin))
-            coin_lev = usable_leverage(meta_lev, lev_cap)
+            coin_lev = usable_leverage(meta_lev, None)
             decision = engine.evaluate(
                 coin,
                 now=now,
@@ -1307,16 +1430,61 @@ def run_model_b(
                 _block_same_coin(intent.coin, exposure_now, decision)
                 continue
 
+            if guard is not None and guard.unprotected:
+                summary["fails"] += 1
+                logger.warning(
+                    "MODEL_B FAIL %s reason=UNPROTECTED_BOOK coins=%s "
+                    "(no new entry while a position lacks a stop)",
+                    coin,
+                    ",".join(sorted(guard.unprotected)),
+                )
+                continue
+            # Last gate before the order: loss at the stop <= hard cap.
+            capped = cap_size_to_loss(
+                intent.size,
+                intent.limit_px,
+                intent.stop,
+                float(risk_base or 0.0),
+                max_loss_pct,
+                round_down=getattr(live, "round_size", None) if live is not None else None,
+            )
+            if capped <= 0:
+                summary["fails"] += 1
+                logger.warning(
+                    "MODEL_B FAIL %s reason=LOSS_CAP size=%s risk=%.4f cap=%.4f",
+                    coin,
+                    intent.size,
+                    intent.size * abs(intent.limit_px - intent.stop),
+                    max_loss_pct * float(risk_base or 0.0),
+                )
+                continue
+            if capped < intent.size:
+                logger.warning(
+                    "MODEL_B LOSS_CAP %s size %s -> %s (risk %.4f -> %.4f, cap %.4f)",
+                    intent.coin,
+                    intent.size,
+                    capped,
+                    intent.size * abs(intent.limit_px - intent.stop),
+                    capped * abs(intent.limit_px - intent.stop),
+                    max_loss_pct * float(risk_base or 0.0),
+                )
+                intent = dataclasses.replace(intent, size=capped)
             meta_txt = hunt.get("lev_meta") if hunt.get("lev_meta") else "-"
-            cap_txt = hunt.get("lev_cap") if hunt.get("lev_cap") else "coin"
+            notional = intent.size * intent.limit_px
+            eff = notional / float(risk_base) if risk_base else 0.0
             logger.info(
-                "MODEL_B LEVERAGE %s max=%s used=%s cap=%s margin=%.4f risk=%.4f",
+                "MODEL_B LEVERAGE %s max=%s used=%s notional_cap=%sx notional=%.2f "
+                "eff=%.1fx margin=%.4f risk=%.4f stop_bps=%.1f sizing_dist=%s",
                 intent.coin,
                 meta_txt,
                 intent.leverage,
-                cap_txt,
+                hunt.get("lev_cap"),
+                notional,
+                eff,
                 _order_margin(intent),
                 intent.size * abs(intent.limit_px - intent.stop),
+                abs(intent.limit_px - intent.stop) / intent.limit_px * 10_000.0,
+                decision.sizing_dist,
             )
             oid = None
             if live is not None:
@@ -1407,6 +1575,8 @@ def run_model_b(
         risk.update_equity(equity_mark)
         sleep_fn(settings.loop_interval_sec)
 
+    if guard is not None:
+        guard.stop()
     journal.log("stop", equity=equity, summary=summary, entry_mode="model_b")
     summary["equity"] = equity
     summary["iterations"] = iterations
@@ -1617,6 +1787,20 @@ def sync_exchange_book(book: ThesisBook, snapshot: AccountSnapshot, now: float) 
         if pos.size <= 0:
             continue
         existed = book.position(pos.coin) is not None
+        if not existed:
+            # A fill of this process's own resting ticket that the snapshot
+            # saw before the websocket: keep the ticket's stop and TP.
+            claimed = book.claim_fill(
+                coin=pos.coin,
+                side=pos.side,
+                size=pos.size,
+                entry=pos.entry,
+                now=now,
+                margin_used=pos.held_margin(),
+            )
+            if claimed is not None:
+                events.append(("claimed", claimed))
+                continue
         adopted = book.adopt_position(
             coin=pos.coin,
             side=pos.side,
@@ -1642,6 +1826,15 @@ def sync_exchange_book(book: ThesisBook, snapshot: AccountSnapshot, now: float) 
         )
         if created is not None:
             events.append(("entry", order))
+    # A managed entry the exchange no longer shows while its position is
+    # open has filled out (or was cancelled): stop counting its margin.
+    for order in list(book.working_orders()):
+        if getattr(order, "external", False) or order.oid is None:
+            continue
+        if order.oid in entry_oids:
+            continue
+        if book.position(order.coin) is not None and snapshot.position(order.coin) is not None:
+            book.drop_filled_entry(order.coin)
     book.margin_floor = max(0.0, float(snapshot.reported_margin))
     return events
 

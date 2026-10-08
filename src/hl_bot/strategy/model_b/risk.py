@@ -38,6 +38,10 @@ from collections.abc import Sequence
 # Locked Model B fraction. Sizing reads the caller's risk_pct (from
 # RISK_PER_TRADE). This constant is the value that setting must be.
 MODEL_B_RISK_PCT = 0.02
+# Chris's absolute rule: no open position may ever lose more than 2% of the
+# account. Ticket sizing, the guard's LOSS_KILL and its cap stop all use this.
+# Settings may lower it (MODEL_B_MAX_LOSS_PCT) but never raise it.
+HARD_MAX_LOSS_PCT = 0.02
 RISK_PCT = MODEL_B_RISK_PCT
 LEVERAGE = 20
 DEFAULT_TP_R = 1.5
@@ -76,6 +80,8 @@ def assert_policy() -> None:
         raise RuntimeError("Model B policy flags must stay off")
     if LEVERAGE != 20 or RISK_PCT != 0.02:
         raise RuntimeError("Model B risk is 2% at 20x only")
+    if HARD_MAX_LOSS_PCT > 0.02 or RISK_PCT > HARD_MAX_LOSS_PCT:
+        raise RuntimeError("Model B loss cap is 2% of the account per position")
 
 
 def assert_leverage(leverage: int) -> int:
@@ -541,6 +547,39 @@ def leaves_reserve_headroom(
     )
 
 
+def cap_size_to_loss(
+    size: float,
+    entry: float,
+    stop: float,
+    account: float,
+    max_loss_pct: float = HARD_MAX_LOSS_PCT,
+    round_down=None,
+) -> float:
+    """Largest size <= ``size`` whose loss at the stop is <= the hard cap.
+
+    ``max_loss_pct`` is clamped to HARD_MAX_LOSS_PCT. ``round_down`` floors
+    to the coin's size step (never rounds up). 0 when nothing fits.
+    """
+    pct = min(float(max_loss_pct), HARD_MAX_LOSS_PCT)
+    dist = abs(float(entry) - float(stop))
+    if size <= 0 or dist <= 0 or account <= 0 or pct <= 0:
+        return 0.0
+    cap = pct * float(account)
+    if size * dist <= cap * (1 + 1e-12):
+        return float(size)
+    out = cap / dist
+    if round_down is not None:
+        try:
+            out = float(round_down(out))
+        except Exception:
+            return 0.0
+    else:
+        out = math.floor(out * 1e8) / 1e8
+    while out > 0 and out * dist > cap * (1 + 1e-12):
+        out = math.floor(out * 0.999999 * 1e8) / 1e8
+    return max(0.0, out)
+
+
 def size_from_stop(
     spot_usdc: float,
     entry: float,
@@ -548,17 +587,27 @@ def size_from_stop(
     *,
     risk_pct: float,
     leverage: int = LEVERAGE,
+    notional_leverage: int | None = None,
+    min_stop_bps: float = 0.0,
 ) -> tuple[float, float]:
     """Return ``(size, dollar_risk)`` from stop distance and ``risk_pct``.
 
     ``spot_usdc`` is the spot USDC balance (paper tests pass that balance
     in directly). It is not perp account value. ``risk_pct`` is
     ``RISK_PER_TRADE`` (0.02 for Model B), so dollar risk is at most 2% of
-    spot USDC. A wider stop returns a smaller size. Notional is capped at
-    ``leverage`` times that same balance, which trims size when the stop
-    is very tight. The trim can only shrink the dollar risk. The fraction
-    is not hard-wired here, and the stop price is not an input this
-    function is allowed to move.
+    spot USDC. A wider stop returns a smaller size.
+
+    Two brakes can only shrink the ticket:
+
+    - ``min_stop_bps``: size is computed from ``max(|entry - stop|,
+      entry * min_stop_bps / 1e4)``. The stop price is not moved; a
+      liquidity stop tighter than the floor just gets a smaller size
+      (Oct 7 23:02: a 23-point BTC stop sized ~0.14 BTC on $293).
+    - Notional is capped at ``min(leverage, notional_leverage)`` times
+      the same balance. ``leverage`` is the coin max the exchange is set
+      to; ``notional_leverage`` is ``MODEL_B_MAX_LEVERAGE`` (20).
+
+    ``dollar_risk`` is the loss if the real stop is hit at the returned size.
     """
     lev = _margin_leverage(leverage)
     if spot_usdc <= 0 or entry <= 0 or stop <= 0:
@@ -568,16 +617,28 @@ def size_from_stop(
     dist = abs(entry - stop)
     if dist <= 0:
         raise ValueError("stop distance is zero")
-    dollar = spot_usdc * float(risk_pct)
-    size = dollar / dist
-    max_notional = spot_usdc * lev
+    floor_dist = float(entry) * max(0.0, float(min_stop_bps or 0.0)) / 10_000.0
+    sizing_dist = max(dist, floor_dist)
+    target = spot_usdc * float(risk_pct)
+    size = target / sizing_dist
+    cap_lev = lev
+    if notional_leverage is not None:
+        try:
+            brake = int(notional_leverage)
+        except (TypeError, ValueError):
+            brake = 0
+        if brake >= 1:
+            cap_lev = min(cap_lev, brake)
+    max_notional = spot_usdc * cap_lev
+    trimmed = sizing_dist > dist
     if size * entry > max_notional:
         size = max_notional / entry
-        dollar = size * dist
+        trimmed = True
     size = math.floor(size * 1_000_000) / 1_000_000
     if size <= 0:
         raise ValueError("size rounded to zero")
-    return size, dollar
+    dollar = size * dist if trimmed else target
+    return size, min(dollar, target)
 
 
 def take_profit(
