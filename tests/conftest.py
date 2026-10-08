@@ -127,6 +127,28 @@ def _isolate_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _short_tapes_are_not_a_macro_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arm tests use a few minutes of tape, not 40 days of 1h candles.
+
+    Production treats that missing 1h/4h read as MACRO_UNKNOWN and does not
+    arm. These tests are about the setup, and they used to see a range
+    (both sides allowed). A test that wants the block replaces ``read_macro``.
+    """
+    import hl_bot.strategy.model_b.engine as engine_mod
+    from hl_bot.strategy.model_b.trend import MacroRead
+
+    real = engine_mod.read_macro
+
+    def _wrapped(bars, now, **kw):
+        read = real(bars, now, **kw)
+        if getattr(read, "macro", None) != "unknown":
+            return read
+        return MacroRead(read.h1, read.h4, "range", getattr(read, "mode", "4h_lead"))
+
+    monkeypatch.setattr(engine_mod, "read_macro", _wrapped)
+
+
+@pytest.fixture(autouse=True)
 def _offline_max_leverage(monkeypatch: pytest.MonkeyPatch) -> None:
     """Uninjected meta stays unknown so the hunt keeps today's 20× margin.
 

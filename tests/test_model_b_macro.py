@@ -110,6 +110,8 @@ def test_adx_threshold_and_not_enough_history():
 
 
 def test_combine_variants():
+    assert combine_macro("unknown", "up", "4h_lead") == "unknown"
+    assert combine_macro("range", "unknown", "4h_only") == "unknown"
     assert combine_macro("range", "up", "4h_lead") == "up"
     assert combine_macro("down", "up", "4h_lead") == "range"
     assert combine_macro("down", "down", "4h_lead") == "down"
@@ -247,6 +249,63 @@ def test_htf_bars_are_used_when_passed(tmp_path, monkeypatch):
     engine.evaluate(coin, now=now, prints=prints, bars=_bars(coin, now), pools=[], best_bid=last - 0.01,
                     best_ask=last + 0.01, equity=EQUITY, tick=0.01, leverage=20, htf_bars=htf)
     assert calls[-1][0] == len(htf)
+
+
+def test_short_history_is_unknown_and_allows_neither_side():
+    """Not enough 1h/4h candles is not a range, so both sides stay closed."""
+    short, t = _line(100, 1.0, 20)
+    read = read_macro(short, t)
+    assert read.macro == "unknown"
+    assert read.h1.state == "unknown" or read.h4.state == "unknown"
+    assert read.allowed() == ()
+    assert read.allows("long") is False and read.allows("short") is False
+    assert "allowed=none" in read.label()
+    ranged = MacroRead(
+        AdxTrend("1h", "range", 10.0, 12.0, 11.0),
+        AdxTrend("4h", "range", 10.0, 12.0, 11.0),
+        "range",
+    )
+    assert ranged.allowed() == ("long", "short")
+
+
+def test_unknown_macro_blocks_the_arm(tmp_path, monkeypatch):
+    """15:35 ET Oct 8: ETH macro was unknown 9s after restart and the arm went out."""
+
+    def fake(bars, now, **kw):
+        return MacroRead(AdxTrend("1h", "unknown"), AdxTrend("4h", "unknown"), "unknown")
+
+    monkeypatch.setattr(engine_mod, "read_macro", fake)
+    for mode in ("1", "shadow"):
+        d = _run(tmp_path, SOL_SHORT, MODEL_B_MACRO_SIDE_ONLY=mode)
+        assert not d.armed and d.intent is None
+        reasons = {d.fail_reason} | {o.fail_reason for o in d.other_sides}
+        assert reasons == {"MACRO_UNKNOWN"}
+        text = format_model_b_fail(d)
+        assert "reason=MACRO_UNKNOWN" in text
+        assert "macro=unknown" in text and "allowed=none" in text
+    off = _run(tmp_path, SOL_SHORT, MODEL_B_MACRO_SIDE_ONLY="0")
+    assert off.armed
+
+
+def test_unknown_macro_is_reread_inside_the_same_hour(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def fake(bars, now, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return MacroRead(AdxTrend("1h", "unknown"), AdxTrend("4h", "unknown"), "unknown")
+        return _macro("down")
+
+    monkeypatch.setattr(engine_mod, "read_macro", fake)
+    engine = build_model_b_engine(_settings(tmp_path), ("ETH",))
+    now = 1_700_000_000.0
+    first = engine._macro_read("ETH", [], now)
+    second = engine._macro_read("ETH", [], now + 30)
+    assert first.macro == "unknown"
+    assert second.macro == "down"
+    assert calls["n"] == 2
+    third = engine._macro_read("ETH", [], now + 90)
+    assert third.macro == "down" and calls["n"] == 2
 
 
 def test_tight_stop_size_cap_unchanged_with_macro_on(tmp_path, monkeypatch):

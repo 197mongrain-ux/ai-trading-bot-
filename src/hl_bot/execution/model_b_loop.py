@@ -79,6 +79,7 @@ from hl_bot.strategy.model_b.tp_select import (
     restore_plan,
     runner_target,
     significant_levels,
+    refresh_runner_split,
     split_runner_size,
     trail_stop,
 )
@@ -155,6 +156,8 @@ def format_model_b_fail(decision) -> str:
             f" r={decision.r_distance} pool_dist={decision.pool_distance} "
             f"pool_r={decision.pool_r} why={decision.bad_tp_why}"
         )
+    if decision.fail_reason == "MACRO_UNKNOWN" and getattr(decision, "macro", None):
+        text += f" {decision.macro}"
     return text
 
 
@@ -832,6 +835,7 @@ def _run_model_b(
                                     now,
                                     maker_fee=maker_fee,
                                     taker_fee=taker_fee,
+                                    size_step=_size_step_for(live, applied.coin),
                                 )
                             except Exception:
                                 logger.exception(
@@ -872,6 +876,17 @@ def _run_model_b(
                             applied.remainder_size,
                         )
                     if (
+                        not handled_tp1
+                        and not applied.adopted
+                        and applied.runner_on
+                        and not applied.tp1_filled
+                    ):
+                        # The first drip is not the position. Re-split from
+                        # the size this fill just grew to. The guard pass
+                        # below does it again after the snapshot sync, which
+                        # is the exchange size.
+                        _sync_runner_sizes(book, settings, live)
+                    if (
                         live is not None
                         and guard is None
                         and not applied.adopted
@@ -886,12 +901,6 @@ def _run_model_b(
                             if applied.just_opened:
                                 _place_brackets(live, applied)
                             else:
-                                if applied.runner_on and not applied.tp1_filled:
-                                    t1, rn = split_runner_size(
-                                        applied.size,
-                                        float(getattr(settings, "model_b_tp_runner_frac", 0.5)),
-                                    )
-                                    applied.tp1_size, applied.runner_size = t1, rn
                                 _resize_brackets(live, applied)
                         except Exception:
                             logger.exception(
@@ -1016,6 +1025,9 @@ def _run_model_b(
         # covering its full exchange size before any cancel / stale logic
         # below runs. Loss kill and oversize cut run here too.
         if guard is not None:
+            # Snapshot sync may have grown the position past the last fill
+            # the book counted. TP1/TP2 follow that size, not the first drip.
+            _sync_runner_sizes(book, settings, live)
             guard.set_plans(plans_from_book(book))
             if guard.threaded:
                 # Hand the hunt's snapshot across so the wake does not
@@ -2515,6 +2527,48 @@ def _r_multiple(entry: float, stop: float, tp: float | None) -> float:
     return abs(float(tp) - float(entry)) / dist
 
 
+def _fmt_size(value: float) -> str:
+    return f"{float(value):.8f}".rstrip("0").rstrip(".")
+
+
+def _size_step_for(live, coin: str) -> float:
+    """One szDecimals lot, or 0 when the exchange client has not said."""
+    if live is None:
+        return 0.0
+    fn = getattr(live, "size_step", None)
+    if not callable(fn):
+        return 0.0
+    try:
+        step = float(fn(coin) or 0.0)
+    except Exception:
+        return 0.0
+    return step if step > 0 else 0.0
+
+
+def _sync_runner_sizes(book, settings, live=None) -> None:
+    """Point every open runner's TP1/TP2 at the current position size.
+
+    No-op after TP1, when the runner is off, and when the sizes already
+    match. A change is one log line the desk can check against the fill.
+    """
+    if str(getattr(settings, "model_b_tp_runner", "off") or "off") != "on":
+        return
+    frac = float(getattr(settings, "model_b_tp_runner_frac", 0.5) or 0.5)
+    for pos in book.open_positions():
+        step = _size_step_for(live, pos.coin)
+        if not refresh_runner_split(pos, frac, step):
+            continue
+        logger.info(
+            "MODEL_B TP_RUNNER resize %s size=%s tp1=%s tp1_size=%s tp2=%s runner_size=%s",
+            pos.coin,
+            _fmt_size(pos.size),
+            _fmt_size(pos.take_profit),
+            _fmt_size(pos.tp1_size),
+            _fmt_size(pos.runner_px),
+            _fmt_size(pos.runner_size),
+        )
+
+
 def _prepare_fill_targets(
     engine,
     info,
@@ -2524,6 +2578,7 @@ def _prepare_fill_targets(
     *,
     maker_fee: float | None = None,
     taker_fee: float | None = None,
+    size_step: float = 0.0,
 ) -> None:
     """Re-pick a spent TP, then split the runner off the final TP1.
 
@@ -2610,7 +2665,7 @@ def _prepare_fill_targets(
         px = runner_target(
             pos.side, pos.entry, stop, float(pos.take_profit), sig, max_r=max_r
         )
-        t1, rn = split_runner_size(pos.size, frac)
+        t1, rn = split_runner_size(pos.size, frac, size_step)
         logger.info(
             "MODEL_B TP_RUNNER fill %s %s mode=%s tp1=%s tp1_size=%s tp2=%s runner_size=%s",
             pos.coin,
@@ -2671,6 +2726,7 @@ def _restore_adopted(book, journal, item, settings) -> None:
         pos.tp1_size, pos.runner_size = split_runner_size(
             pos.size, float(getattr(settings, "model_b_tp_runner_frac", 0.5))
         )
+        # The hunt pass re-floors this onto szDecimals once the client is known.
         if pos.runner_size <= 0:
             pos.runner_on = False
     elif pos.tp1_filled:

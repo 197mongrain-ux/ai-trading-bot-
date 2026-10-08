@@ -280,12 +280,16 @@ def tf_adx(
 
 
 def combine_macro(h1: str, h4: str, mode: str = DEFAULT_MACRO_MODE) -> str:
-    """1h + 4h -> up | down | range.
+    """1h + 4h -> up | down | range | unknown.
 
     4h_lead (default): 4h trending that way and 1h not trending against it.
     both: both trending the same way. 4h_only: the 4h read alone.
     4h_lead_1h_fill: 4h_lead, and a 4h range takes a trending 1h direction.
+    Either timeframe still ``unknown`` (candles not loaded) stays unknown.
+    That is not a range, and it does not allow both sides.
     """
+    if h1 == "unknown" or h4 == "unknown":
+        return "unknown"
     if mode == "both":
         return h1 if h1 == h4 and h1 in ("up", "down") else "range"
     if mode == "4h_only":
@@ -302,10 +306,13 @@ def combine_macro(h1: str, h4: str, mode: str = DEFAULT_MACRO_MODE) -> str:
 class MacroRead:
     h1: AdxTrend
     h4: AdxTrend
-    macro: str  # up | down | range
+    macro: str  # up | down | range | unknown
     mode: str = DEFAULT_MACRO_MODE
 
     def allowed(self, range_policy: str = "both") -> tuple[str, ...]:
+        # Missing candles are not a range. A real range still follows policy.
+        if self.macro == "unknown":
+            return ()
         if self.macro == "up":
             return ("long",)
         if self.macro == "down":
