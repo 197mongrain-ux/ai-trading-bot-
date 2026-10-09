@@ -280,6 +280,12 @@ def _macro_bars(info, coin: str, now: float, cache: dict) -> list:
         bars = hit[2] if hit is not None else []
     if not bars and hit is not None:
         bars = hit[2]
+    if not bars:
+        # Nothing yet (e.g. the cold 40-day backfill was deferred by the
+        # shared cold-start gap). Don't cache the miss for MACRO_REFRESH_SEC:
+        # drop the slot so this coin retries on the next pass.
+        cache.pop(coin, None)
+        return []
     cache[coin] = (float(now), bucket, bars)
     return bars
 
