@@ -78,6 +78,23 @@ I_UNDERSTAND_LIVE_TRADING=true
 python -m hl_bot run
 ```
 
+Swing is a separate style of that same hunt. `MODEL_B_STYLE=scalp` (the default) does not change the book above. Swing stays in paper until `MODEL_B_PAPER=0`.
+
+```bash
+# Laptop paper. Live mainnet prices and trades, simulated fills, own journal.
+# No real orders. Going live later is MODEL_B_PAPER=0 plus the live gate.
+TRADING_MODE=paper
+HL_NETWORK=mainnet
+ENTRY_MODE=model_b
+MODEL_B_STYLE=swing
+MODEL_B_PAPER=1
+LEVERAGE=20
+RISK_PER_TRADE=0.01
+python -m hl_bot run
+```
+
+The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100.
+
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 
 BTC, ETH, SOL, NEAR, PUMP, LIT, AAVE, ONDO, WLD, TAO, xyz:GOLD, xyz:SP500, xyz:XYZ100

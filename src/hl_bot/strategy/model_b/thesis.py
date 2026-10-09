@@ -117,6 +117,10 @@ class OpenPosition:
     # ``size`` is what is still open; the final close reports the sum.
     closed_size: float = 0.0
     closed_pnl: float = 0.0
+    # Stop quantity. Updated on every fill and every partial reduce so a
+    # position is never protected for a size it no longer has.
+    stop_size: float = 0.0
+    needs_stop_resize: bool = False
     # Runner (MODEL_B_TP_RUNNER=1). Shadow/off leave these empty and the
     # position keeps one full-size TP. ``planned_stop`` is the arm stop;
     # ``stop`` moves to breakeven and then the 1m trail after TP1.
@@ -567,6 +571,9 @@ class ThesisBook:
         pos.remainder_size = remainder
         pos.fill_added = added
         pos.just_opened = just_opened
+        pos.stop_size = float(pos.size)
+        if not just_opened:
+            pos.needs_stop_resize = True
         return pos
 
     def _fill_external(
@@ -620,7 +627,9 @@ class ThesisBook:
         pos.just_opened = just_opened
         return pos
 
-    def try_fill_from_prints(self, prints: list[TradePrint]) -> OpenPosition | None:
+    def try_fill_from_prints(
+        self, prints: list[TradePrint], *, partial: bool = False
+    ) -> OpenPosition | None:
         """Paper fill. A resting buy fills on a later sell at or through the bid.
 
         A resting sell fills on a later buy at or through the ask. Prints
@@ -631,7 +640,9 @@ class ThesisBook:
             return None
         coin = canon_coin(prints[0].coin)
         st = self._coins.get(coin)
-        if st is None or st.working is None or st.position is not None:
+        if st is None or st.working is None:
+            return None
+        if st.position is not None and not partial:
             return None
         order = st.working
         # An adopted exchange order is not filled from the public tape.
@@ -647,14 +658,61 @@ class ThesisBook:
                 and print_.side == "sell"
                 and print_.price <= order.limit_px + 1e-9
             ):
+                if partial:
+                    return self._fill(order, order.limit_px, print_.ts, size=float(print_.size))
                 return self._fill(order, order.limit_px, print_.ts)
             if (
                 order.side == "short"
                 and print_.side == "buy"
                 and print_.price >= order.limit_px - 1e-9
             ):
+                if partial:
+                    return self._fill(order, order.limit_px, print_.ts, size=float(print_.size))
                 return self._fill(order, order.limit_px, print_.ts)
         return None
+
+    def cancel_if_target_traded(self, coin: str, price: float) -> list[WorkingOrder]:
+        """Cancel a resting Alo once price trades the target before it fills.
+
+        The limit is at the level. The target is the opposite level. A print
+        that reaches the target without trading the limit will not fill, so
+        the ticket is stale.
+        """
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.working is None or price <= 0:
+            return []
+        order = st.working
+        if order.external:
+            return []
+        if order.side == "long":
+            hit = price >= float(order.take_profit) - 1e-9 and price > float(order.limit_px) + 1e-9
+        else:
+            hit = price <= float(order.take_profit) + 1e-9 and price < float(order.limit_px) - 1e-9
+        if not hit:
+            return []
+        st.consumed.add(order.swing_id)
+        st.working = None
+        return [order]
+
+    def paper_tp1(self, coin: str, price: float, *, runner_frac: float = 0.5) -> OpenPosition | None:
+        """Paper partial at TP1 when a runner is on. Stop moves to the fill.
+
+        The stop quantity is the size still open. A full exit is left to
+        ``try_exit`` when the runner is off or TP1 already filled.
+        """
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.position is None or price <= 0:
+            return None
+        pos = st.position
+        if not pos.runner_on or pos.tp1_filled or pos.adopted or not pos.runner_px:
+            return None
+        frac = float(runner_frac)
+        part = pos.size * (1.0 - frac)
+        if part <= 0 or part >= pos.size:
+            return None
+        if not self._take_runner_tp1(pos, price, part):
+            return None
+        return pos
 
     def apply_user_fill(
         self,
@@ -711,6 +769,8 @@ class ThesisBook:
                     pos.closed_pnl += (pos.entry - float(price)) * part
                 pos.closed_size += part
                 pos.size -= part
+                pos.stop_size = float(pos.size)
+                pos.needs_stop_resize = True
                 return None
             closed = self.try_exit(coin, price)
             if closed is not None:
@@ -777,6 +837,8 @@ class ThesisBook:
         pos.tp_oid = None
         pos.tp1_size = 0.0
         pos.runner_size = float(pos.size)
+        pos.stop_size = float(pos.size)
+        pos.needs_stop_resize = True
         pos.runner_event = "tp1"
         pos.just_opened = False
         return True

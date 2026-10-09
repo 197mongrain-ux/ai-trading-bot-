@@ -46,7 +46,17 @@ def main(argv: list[str] | None = None) -> int:
         from hl_bot.execution.loop import run_bot
 
         settings = load_settings(args.env_file)
-        if settings.is_live:
+        swing = (settings.entry_mode or "").strip().lower() == "model_b" and (
+            getattr(settings, "model_b_style", "scalp") == "swing"
+        )
+        if swing and getattr(settings, "model_b_paper", False):
+            print(
+                "PAPER mode — MODEL_B_STYLE=swing MODEL_B_PAPER=1. "
+                "Simulated fills on live prices, no real orders. "
+                f"Journal: {settings.journal_path}",
+                file=sys.stderr,
+            )
+        elif settings.is_live:
             print(
                 "WARNING: LIVE TRADING MODE — real orders will be sent. "
                 "Ctrl+C to abort.",
