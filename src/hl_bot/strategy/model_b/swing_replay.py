@@ -43,6 +43,17 @@ class ClosedTrade:
     opened_at: float
     closed_at: float
     hold_hours: float
+    score: float = 0.0
+    touches: int = 0
+    sources: str = ""
+    macro: str = ""
+    target_r: float = 0.0
+    mfe_r: float = 0.0
+    mae_r: float = 0.0
+    exit_close: float = 0.0
+    sweep: float = 0.0
+    sweep_bps: float = 0.0
+    reclaim_bps: float = 0.0
 
 
 @dataclass
@@ -60,6 +71,7 @@ class Summary:
     span_days: float
     per_coin: dict = field(default_factory=dict)
     params: dict = field(default_factory=dict)
+    blotter: list = field(default_factory=list)
 
     def row(self) -> str:
         return (
@@ -154,8 +166,88 @@ def _summarize(name: str, trades: list[ClosedTrade], equity0: float, equity1: fl
             "hold_days": params.hold_days,
             "runner": params.runner,
             "top_n": params.top_n,
+            "level_set": params.level_set,
+            "min_touches": params.min_touches,
+            "min_room_pct": params.min_room_pct,
+            "session": params.session,
+            "side_only": params.side_only,
+            "partial_r": params.partial_r,
+            "atr_frac": params.atr_frac,
         },
+        blotter=list(trades),
     )
+
+
+def _partial_price(plan: Plan, partial_r: float) -> float | None:
+    """Half-scale price. None when it would sit past the real target."""
+    if partial_r <= 0:
+        return None
+    dist = abs(plan.entry - plan.stop)
+    if dist <= 0:
+        return None
+    if plan.side == "long":
+        px = plan.entry + float(partial_r) * dist
+        return px if px < plan.take_profit - 1e-9 else None
+    px = plan.entry - float(partial_r) * dist
+    return px if px > plan.take_profit + 1e-9 else None
+
+
+def _fresh_open(plan: Plan, now: float, partial_r: float) -> dict:
+    return {
+        "mode": "open",
+        "plan": plan,
+        "opened": now,
+        "stop": plan.stop,
+        "tp": plan.take_profit,
+        "size_left": plan.size,
+        "banked": 0.0,
+        "tp1_done": False,
+        "mfe": 0.0,
+        "mae": 0.0,
+        "partial_px": _partial_price(plan, partial_r),
+    }
+
+
+def _scale_half(trades, coin, plan, st, high, low, now, fees, slip, rates, eq) -> tuple[float, bool]:
+    """Bank half at the fixed R and move the stop to entry.
+
+    If that same bar also trades back to entry, the remainder stops there.
+    A same-bar original stop is handled by the caller before this runs.
+    """
+    px = st.get("partial_px")
+    if not px or st.get("tp1_done"):
+        return eq, False
+    if plan.side == "long":
+        hit = high + 1e-9 >= float(px)
+        back = low <= plan.entry + 1e-9
+    else:
+        hit = low - 1e-9 <= float(px)
+        back = high >= plan.entry - 1e-9
+    if not hit:
+        return eq, False
+    part = min(plan.size * 0.5, float(st["size_left"]))
+    if part <= 0:
+        return eq, False
+    banked = exit_net(
+        side=plan.side,
+        size=part,
+        entry=plan.entry,
+        exit_px=float(px),
+        reason="tp",
+        maker_fee=fees.maker,
+        taker_fee=fees.taker,
+        slip_bps=0.0,
+    )
+    st["banked"] = float(st.get("banked") or 0.0) + banked
+    st["size_left"] = float(st["size_left"]) - part
+    st["stop"] = plan.entry
+    st["tp1_done"] = True
+    if back and st["size_left"] > 0:
+        eq = _finish(
+            trades, coin, plan, st, plan.entry, "stop", now, fees, slip, rates, eq, exit_close=plan.entry
+        )
+        return eq, True
+    return eq, False
 
 
 def replay(
@@ -235,32 +327,43 @@ def replay(
                 elif filled:
                     if hit_stop or (hit_stop and hit_tp):
                         _close_full(
-                            trades, coin, plan, plan.stop, "stop", now, now, fees, slip, rates, eq_box := [eq]
+                            trades, coin, plan, plan.stop, "stop", now, now, fees, slip, rates, eq_box := [eq],
+                            high=high, low=low, exit_close=close,
                         )
                         eq = eq_box[0]
                         st["mode"] = "flat"
-                    elif hit_tp and not params.runner:
+                    elif hit_tp and not params.runner and not (params.partial_r > 0 and _partial_price(plan, params.partial_r)):
                         eq = _close_full(
-                            trades, coin, plan, plan.take_profit, "tp", now, now, fees, slip, rates, [eq]
+                            trades, coin, plan, plan.take_profit, "tp", now, now, fees, slip, rates, [eq],
+                            high=high, low=low, exit_close=close,
                         )
                         st["mode"] = "flat"
-                    elif hit_tp and params.runner and plan.runner_px:
+                    elif hit_tp and params.runner and plan.runner_px and params.partial_r <= 0:
                         eq = _open_then_targets(
                             trades, coin, plan, high, low, close, now, params, fees, slip, rates, eq, st
                         )
                         st["mode"] = "flat"
                     else:
-                        st["mode"] = "open"
-                        st["plan"] = plan
-                        st["opened"] = now
-                        st["stop"] = plan.stop
-                        st["tp"] = plan.take_profit
-                        st["size_left"] = plan.size
-                        st["banked"] = 0.0
-                        st["tp1_done"] = False
+                        state[coin] = _fresh_open(plan, now, params.partial_r)
+                        _note_bar(state[coin], plan, high, low)
+                        # Full target on the fill bar already returned above.
+                        # A 1R/2R scale that also trades back to entry scratches the remainder.
+                        if params.partial_r > 0 and not hit_tp:
+                            eq, closed = _scale_half(
+                                trades, coin, plan, state[coin], high, low, now, fees, slip, rates, eq
+                            )
+                            if closed:
+                                state[coin]["mode"] = "flat"
+                        elif hit_tp and params.partial_r > 0:
+                            eq = _close_full(
+                                trades, coin, plan, plan.take_profit, "tp", now, now, fees, slip, rates, [eq],
+                                high=high, low=low, exit_close=close,
+                            )
+                            state[coin]["mode"] = "flat"
 
         elif st["mode"] == "open":
             plan = st["plan"]
+            _note_bar(st, plan, high, low)
             stop = float(st["stop"])
             tp = float(st["tp"])
             hold_limit = float(st["opened"]) + float(params.hold_days) * 86400.0
@@ -272,11 +375,11 @@ def replay(
                 hit_tp = low <= tp + 1e-9
             if hit_stop:
                 eq = _finish(
-                    trades, coin, plan, st, stop, "stop", now, fees, slip, rates, eq
+                    trades, coin, plan, st, stop, "stop", now, fees, slip, rates, eq, exit_close=close
                 )
                 st["mode"] = "flat"
-            elif hit_tp and (not params.runner or st["tp1_done"] or not plan.runner_px):
-                eq = _finish(trades, coin, plan, st, tp, "tp", now, fees, slip, rates, eq)
+            elif hit_tp and (not params.runner or st["tp1_done"] or not plan.runner_px or params.partial_r > 0):
+                eq = _finish(trades, coin, plan, st, tp, "tp", now, fees, slip, rates, eq, exit_close=close)
                 st["mode"] = "flat"
             elif hit_tp and params.runner and plan.runner_px and not st["tp1_done"]:
                 part = plan.size * (1.0 - float(params.runner_frac))
@@ -303,11 +406,25 @@ def replay(
                 )
                 if runner_hit and st["size_left"] > 0:
                     eq = _finish(
-                        trades, coin, plan, st, float(plan.runner_px), "tp", now, fees, slip, rates, eq
+                        trades, coin, plan, st, float(plan.runner_px), "tp", now, fees, slip, rates, eq,
+                        exit_close=close,
+                    )
+                    st["mode"] = "flat"
+            elif params.partial_r > 0 and not st.get("tp1_done"):
+                eq, closed = _scale_half(
+                    trades, coin, plan, st, high, low, now, fees, slip, rates, eq
+                )
+                if closed:
+                    st["mode"] = "flat"
+                elif now >= hold_limit and st["mode"] == "open":
+                    eq = _finish(
+                        trades, coin, plan, st, close, "max_hold", now, fees, slip, rates, eq, exit_close=close
                     )
                     st["mode"] = "flat"
             elif now >= hold_limit:
-                eq = _finish(trades, coin, plan, st, close, "max_hold", now, fees, slip, rates, eq)
+                eq = _finish(
+                    trades, coin, plan, st, close, "max_hold", now, fees, slip, rates, eq, exit_close=close
+                )
                 st["mode"] = "flat"
 
         st = state[coin]
@@ -359,7 +476,70 @@ def replay(
     return _summarize(name, trades, equity, eq, max_dd, params, risk_pct, span_days)
 
 
-def _close_full(trades, coin, plan: Plan, exit_px, reason, opened, closed, fees, slip, rates, eq_box) -> float:
+def _excursion(side: str, entry: float, stop: float, high: float, low: float) -> tuple[float, float]:
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return 0.0, 0.0
+    if side == "long":
+        return (high - entry) / risk, (entry - low) / risk
+    return (entry - low) / risk, (high - entry) / risk
+
+
+def _note_bar(st: dict, plan: Plan, high: float, low: float) -> None:
+    fav, adv = _excursion(plan.side, plan.entry, plan.stop, high, low)
+    st["mfe"] = max(float(st.get("mfe") or 0.0), fav)
+    st["mae"] = max(float(st.get("mae") or 0.0), adv)
+
+
+def _trade_from(
+    coin: str,
+    plan: Plan,
+    exit_px: float,
+    reason: str,
+    opened: float,
+    closed: float,
+    size: float,
+    net: float,
+    *,
+    mfe: float,
+    mae: float,
+    exit_close: float,
+) -> ClosedTrade:
+    risk = plan.size * abs(plan.entry - plan.stop)
+    return ClosedTrade(
+        coin,
+        plan.side,
+        plan.entry,
+        float(exit_px),
+        plan.stop,
+        float(size),
+        net,
+        (net / risk) if risk > 0 else 0.0,
+        reason,
+        opened,
+        closed,
+        max(0.0, (closed - opened) / 3600.0),
+        score=float(plan.score),
+        touches=int(getattr(plan, "touches", 0) or 0),
+        sources=",".join(plan.sources),
+        macro=plan.macro,
+        target_r=float(plan.r_multiple),
+        mfe_r=float(mfe),
+        mae_r=float(mae),
+        exit_close=float(exit_close),
+        sweep=float(plan.sweep),
+        sweep_bps=float(getattr(plan, "sweep_bps", 0.0) or 0.0),
+        reclaim_bps=float(getattr(plan, "reclaim_bps", 0.0) or 0.0),
+    )
+
+
+def _close_full(
+    trades, coin, plan: Plan, exit_px, reason, opened, closed, fees, slip, rates, eq_box,
+    *,
+    high: float | None = None,
+    low: float | None = None,
+    exit_close: float = 0.0,
+) -> float:
     net = exit_net(
         side=plan.side,
         size=plan.size,
@@ -373,19 +553,20 @@ def _close_full(trades, coin, plan: Plan, exit_px, reason, opened, closed, fees,
     net += funding_pnl(
         rates, side=plan.side, size=plan.size, entry=plan.entry, opened_at=opened, closed_at=closed
     )
-    risk = plan.size * abs(plan.entry - plan.stop)
-    r = net / risk if risk > 0 else 0.0
+    fav, adv = (0.0, 0.0)
+    if high is not None and low is not None:
+        fav, adv = _excursion(plan.side, plan.entry, plan.stop, high, low)
     trades.append(
-        ClosedTrade(
-            coin, plan.side, plan.entry, float(exit_px), plan.stop, plan.size, net, r, reason,
-            opened, closed, max(0.0, (closed - opened) / 3600.0),
+        _trade_from(
+            coin, plan, exit_px, reason, opened, closed, plan.size, net,
+            mfe=fav, mae=adv, exit_close=exit_close,
         )
     )
     eq_box[0] = eq_box[0] + net
     return eq_box[0]
 
 
-def _finish(trades, coin, plan, st, exit_px, reason, now, fees, slip, rates, eq) -> float:
+def _finish(trades, coin, plan, st, exit_px, reason, now, fees, slip, rates, eq, *, exit_close: float = 0.0) -> float:
     size = float(st.get("size_left", plan.size))
     net = exit_net(
         side=plan.side,
@@ -409,12 +590,12 @@ def _finish(trades, coin, plan, st, exit_px, reason, now, fees, slip, rates, eq)
         opened_at=float(st["opened"]),
         closed_at=now,
     )
-    risk = plan.size * abs(plan.entry - plan.stop)
-    r = net / risk if risk > 0 else 0.0
     trades.append(
-        ClosedTrade(
-            coin, plan.side, plan.entry, float(exit_px), plan.stop, plan.size, net, r, reason,
-            float(st["opened"]), now, max(0.0, (now - float(st["opened"])) / 3600.0),
+        _trade_from(
+            coin, plan, exit_px, reason, float(st["opened"]), now, plan.size, net,
+            mfe=float(st.get("mfe") or 0.0),
+            mae=float(st.get("mae") or 0.0),
+            exit_close=exit_close,
         )
     )
     return eq + net
@@ -430,6 +611,9 @@ def _open_then_targets(trades, coin, plan, high, low, close, now, params, fees, 
     st["size_left"] = plan.size
     st["banked"] = 0.0
     st["tp1_done"] = False
+    st["mfe"] = 0.0
+    st["mae"] = 0.0
+    _note_bar(st, plan, high, low)
     part = plan.size * (1.0 - float(params.runner_frac))
     banked = exit_net(
         side=plan.side,
@@ -444,7 +628,9 @@ def _open_then_targets(trades, coin, plan, high, low, close, now, params, fees, 
     st["banked"] = banked
     st["size_left"] = plan.size - part
     st["tp1_done"] = True
-    return _finish(trades, coin, plan, st, float(plan.runner_px), "tp", now, fees, slip, rates, eq)
+    return _finish(
+        trades, coin, plan, st, float(plan.runner_px), "tp", now, fees, slip, rates, eq, exit_close=close
+    )
 
 
 def _variant(base: SwingParams, **kw) -> SwingParams:

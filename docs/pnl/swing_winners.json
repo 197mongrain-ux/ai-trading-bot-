@@ -1,0 +1,1016 @@
+{
+  "choice_note": "First-half 1h trades 66, winners 13. Kept: none. Order-flow gates are off in this replay. They are not in the winner profile.",
+  "choice": {
+    "n": 66,
+    "wins": 13,
+    "base_e": -1.1939827145257171,
+    "kept": [],
+    "aligned_win": 0.46153846153846156,
+    "aligned_loss": 0.49056603773584906,
+    "scored": [
+      {
+        "name": "trend-only",
+        "kept": false,
+        "note": "winners were not more aligned than losers",
+        "h1_n": 0,
+        "h1_e": -1.1939827145257171,
+        "params": {}
+      },
+      {
+        "name": "adx-4h",
+        "kept": false,
+        "note": "4h ADX did not separate winners from losers",
+        "h1_n": 0,
+        "h1_e": -1.1939827145257171,
+        "params": {}
+      },
+      {
+        "name": "daily-or-session-3",
+        "kept": false,
+        "note": "Exclusive daily/session rate was 0% of winners and 0% of losers. A mixed 4h cluster that also tagged PDH does not count.",
+        "h1_n": 0,
+        "h1_e": -1.1939827145257171,
+        "params": {
+          "level_set": "swing_htf",
+          "min_touches": 3
+        }
+      },
+      {
+        "name": "session-us",
+        "kept": false,
+        "note": "winners were not more often in the US window",
+        "h1_n": 0,
+        "h1_e": -1.1939827145257171,
+        "params": {}
+      },
+      {
+        "name": "sweep-band",
+        "kept": false,
+        "note": "loser median was inside the winner sweep band, or the band was empty",
+        "h1_n": 0,
+        "h1_e": -1.1939827145257171,
+        "params": {}
+      }
+    ],
+    "adx4_win": 21.8,
+    "adx4_loss": 22.7,
+    "htf3_win": 0.0,
+    "htf3_loss": 0.0,
+    "us_win": 0.38461538461538464,
+    "us_loss": 0.4716981132075472,
+    "sweep_band": [
+      16.086898061888412,
+      27.294715364762546
+    ],
+    "sweep_loss_median": 20.841878873208614
+  },
+  "books": [
+    {
+      "name": "15m-best",
+      "h1": {
+        "n_win": 2,
+        "n_loss": 2,
+        "touches": {
+          "win": 5.5,
+          "loss": 8.0
+        },
+        "adx_4h": {
+          "win": 32.95,
+          "loss": 22.15
+        },
+        "adx_1d": {
+          "win": null,
+          "loss": null
+        },
+        "adx_1h": {
+          "win": 28.1,
+          "loss": 26.0
+        },
+        "stop_bps": {
+          "win": 89.36049213816725,
+          "loss": 23.094587891551214
+        },
+        "stop_atr": {
+          "win": 0.8380344533122974,
+          "loss": 0.8546525297361407
+        },
+        "target_r": {
+          "win": 4.878311730217055,
+          "loss": 4.671305342971075
+        },
+        "sweep_bps": {
+          "win": 41.46726309661461,
+          "loss": 9.414317351096518
+        },
+        "reclaim_bps": {
+          "win": 96.60638012872454,
+          "loss": 13.054690652583446
+        },
+        "hold_hours": {
+          "win": 42.125,
+          "loss": 10.0
+        },
+        "hour": {
+          "win": 16.0,
+          "loss": 12.5
+        },
+        "time_to_tp": {
+          "win": 12.25
+        },
+        "mfe_r": {
+          "win": 3.727782832676164,
+          "loss": 2.031263136210359
+        },
+        "mae_r": {
+          "win": 0.4285153735781512,
+          "loss": 3.154608080703773
+        },
+        "aligned": {
+          "win": 0.5,
+          "loss": 0.5
+        },
+        "us": {
+          "win": 0.5,
+          "loss": 0.5
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.0
+        },
+        "mixed_htf": {
+          "win": 1.0,
+          "loss": 1.0
+        },
+        "range": {
+          "win": 0.5,
+          "loss": 0.5
+        },
+        "families": {
+          "4h+daily": {
+            "win": 1,
+            "loss": 2
+          },
+          "4h+daily+session": {
+            "win": 1,
+            "loss": 0
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 0,
+            "loss": 1
+          },
+          "ETH": {
+            "win": 1,
+            "loss": 0
+          },
+          "SOL": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:GOLD": {
+            "win": 1,
+            "loss": 1
+          },
+          "xyz:SP500": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:XYZ100": {
+            "win": 0,
+            "loss": 0
+          }
+        }
+      },
+      "h2": {
+        "n_win": 4,
+        "n_loss": 6,
+        "touches": {
+          "win": 8.0,
+          "loss": 7.0
+        },
+        "adx_4h": {
+          "win": 18.3,
+          "loss": 17.65
+        },
+        "adx_1d": {
+          "win": null,
+          "loss": null
+        },
+        "adx_1h": {
+          "win": 28.95,
+          "loss": 23.35
+        },
+        "stop_bps": {
+          "win": 48.86346401334966,
+          "loss": 36.16868709575358
+        },
+        "stop_atr": {
+          "win": 1.0788544129711002,
+          "loss": 1.0978009185706685
+        },
+        "target_r": {
+          "win": 3.2055043743161247,
+          "loss": 3.014053619180741
+        },
+        "sweep_bps": {
+          "win": 26.64402879481335,
+          "loss": 20.610664273296756
+        },
+        "reclaim_bps": {
+          "win": 44.60402742737606,
+          "loss": 27.86170370905719
+        },
+        "hold_hours": {
+          "win": 7.0,
+          "loss": 4.375
+        },
+        "hour": {
+          "win": 15.5,
+          "loss": 18.5
+        },
+        "time_to_tp": {
+          "win": 7.0
+        },
+        "mfe_r": {
+          "win": 3.256077612400027,
+          "loss": 0.3809825031911254
+        },
+        "mae_r": {
+          "win": 0.7704531346989635,
+          "loss": 1.0955305855770034
+        },
+        "aligned": {
+          "win": 0.25,
+          "loss": 0.3333333333333333
+        },
+        "us": {
+          "win": 0.75,
+          "loss": 0.5
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.0
+        },
+        "mixed_htf": {
+          "win": 0.75,
+          "loss": 1.0
+        },
+        "range": {
+          "win": 0.75,
+          "loss": 0.6666666666666666
+        },
+        "families": {
+          "4h": {
+            "win": 1,
+            "loss": 0
+          },
+          "4h+daily+session": {
+            "win": 3,
+            "loss": 6
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 0,
+            "loss": 0
+          },
+          "ETH": {
+            "win": 1,
+            "loss": 0
+          },
+          "SOL": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:GOLD": {
+            "win": 2,
+            "loss": 4
+          },
+          "xyz:SP500": {
+            "win": 0,
+            "loss": 1
+          },
+          "xyz:XYZ100": {
+            "win": 1,
+            "loss": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "15m-baseline",
+      "h1": {
+        "n_win": 2,
+        "n_loss": 3,
+        "touches": {
+          "win": 5.5,
+          "loss": 7.0
+        },
+        "adx_4h": {
+          "win": 32.95,
+          "loss": 33.1
+        },
+        "adx_1d": {
+          "win": 41.0,
+          "loss": 21.0
+        },
+        "adx_1h": {
+          "win": null,
+          "loss": null
+        },
+        "stop_bps": {
+          "win": 89.36049213816725,
+          "loss": 31.46204397643304
+        },
+        "stop_atr": {
+          "win": 0.8380344533122974,
+          "loss": 0.7644823980480943
+        },
+        "target_r": {
+          "win": 4.878311730217055,
+          "loss": 3.9791790600836503
+        },
+        "sweep_bps": {
+          "win": 41.46726309661461,
+          "loss": 8.548443725288125
+        },
+        "reclaim_bps": {
+          "win": 96.60638012872454,
+          "loss": 10.761880047016023
+        },
+        "hold_hours": {
+          "win": 42.125,
+          "loss": 4.25
+        },
+        "hour": {
+          "win": 16.0,
+          "loss": 4.0
+        },
+        "time_to_tp": {
+          "win": 12.25
+        },
+        "mfe_r": {
+          "win": 3.727782832676164,
+          "loss": 1.0519308804085759
+        },
+        "mae_r": {
+          "win": 0.4285153735781512,
+          "loss": 1.2736395214202914
+        },
+        "aligned": {
+          "win": 0.5,
+          "loss": 0.3333333333333333
+        },
+        "us": {
+          "win": 0.5,
+          "loss": 0.3333333333333333
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.0
+        },
+        "mixed_htf": {
+          "win": 1.0,
+          "loss": 1.0
+        },
+        "range": {
+          "win": 0.5,
+          "loss": 0.6666666666666666
+        },
+        "families": {
+          "4h+daily": {
+            "win": 1,
+            "loss": 2
+          },
+          "4h+daily+session": {
+            "win": 1,
+            "loss": 1
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 0,
+            "loss": 1
+          },
+          "ETH": {
+            "win": 1,
+            "loss": 0
+          },
+          "SOL": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:GOLD": {
+            "win": 1,
+            "loss": 1
+          },
+          "xyz:SP500": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:XYZ100": {
+            "win": 0,
+            "loss": 1
+          }
+        }
+      },
+      "h2": {
+        "n_win": 4,
+        "n_loss": 7,
+        "touches": {
+          "win": 8.0,
+          "loss": 7.0
+        },
+        "adx_4h": {
+          "win": 18.3,
+          "loss": 17.9
+        },
+        "adx_1d": {
+          "win": 25.6,
+          "loss": 24.4
+        },
+        "adx_1h": {
+          "win": null,
+          "loss": null
+        },
+        "stop_bps": {
+          "win": 48.86346401334966,
+          "loss": 43.45818146781011
+        },
+        "stop_atr": {
+          "win": 1.0788544129711002,
+          "loss": 1.1894479909875317
+        },
+        "target_r": {
+          "win": 3.2055043743161247,
+          "loss": 3.004893449092675
+        },
+        "sweep_bps": {
+          "win": 26.64402879481335,
+          "loss": 21.86199037142042
+        },
+        "reclaim_bps": {
+          "win": 44.60402742737606,
+          "loss": 32.46597085277261
+        },
+        "hold_hours": {
+          "win": 7.0,
+          "loss": 2.5
+        },
+        "hour": {
+          "win": 15.5,
+          "loss": 18.0
+        },
+        "time_to_tp": {
+          "win": 7.0
+        },
+        "mfe_r": {
+          "win": 3.256077612400027,
+          "loss": 0.4533289278043587
+        },
+        "mae_r": {
+          "win": 0.7704531346989635,
+          "loss": 1.09709480122324
+        },
+        "aligned": {
+          "win": 0.25,
+          "loss": 0.14285714285714285
+        },
+        "us": {
+          "win": 0.75,
+          "loss": 0.5714285714285714
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.0
+        },
+        "mixed_htf": {
+          "win": 0.75,
+          "loss": 0.8571428571428571
+        },
+        "range": {
+          "win": 0.75,
+          "loss": 0.8571428571428571
+        },
+        "families": {
+          "4h": {
+            "win": 1,
+            "loss": 1
+          },
+          "4h+daily+session": {
+            "win": 3,
+            "loss": 6
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 0,
+            "loss": 0
+          },
+          "ETH": {
+            "win": 1,
+            "loss": 0
+          },
+          "SOL": {
+            "win": 0,
+            "loss": 0
+          },
+          "xyz:GOLD": {
+            "win": 2,
+            "loss": 5
+          },
+          "xyz:SP500": {
+            "win": 0,
+            "loss": 1
+          },
+          "xyz:XYZ100": {
+            "win": 1,
+            "loss": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "1h-130d",
+      "h1": {
+        "n_win": 13,
+        "n_loss": 53,
+        "touches": {
+          "win": 6.0,
+          "loss": 4.0
+        },
+        "adx_4h": {
+          "win": 21.8,
+          "loss": 22.7
+        },
+        "adx_1d": {
+          "win": null,
+          "loss": null
+        },
+        "adx_1h": {
+          "win": 22.9,
+          "loss": 20.5
+        },
+        "stop_bps": {
+          "win": 39.78472838686611,
+          "loss": 42.3528834169286
+        },
+        "stop_atr": {
+          "win": 1.1723598064332736,
+          "loss": 1.0594137148839615
+        },
+        "target_r": {
+          "win": 2.2773827242158715,
+          "loss": 2.7433264887063653
+        },
+        "sweep_bps": {
+          "win": 22.672472048164455,
+          "loss": 20.841878873208614
+        },
+        "reclaim_bps": {
+          "win": 33.899991913763394,
+          "loss": 61.950381808270755
+        },
+        "hold_hours": {
+          "win": 10.0,
+          "loss": 2.0
+        },
+        "hour": {
+          "win": 16.0,
+          "loss": 14.0
+        },
+        "time_to_tp": {
+          "win": 8.5
+        },
+        "mfe_r": {
+          "win": 2.7587246635770377,
+          "loss": 1.0590513068732135
+        },
+        "mae_r": {
+          "win": 0.4126459143968714,
+          "loss": 1.240423317140874
+        },
+        "aligned": {
+          "win": 0.46153846153846156,
+          "loss": 0.49056603773584906
+        },
+        "us": {
+          "win": 0.38461538461538464,
+          "loss": 0.4716981132075472
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.018867924528301886
+        },
+        "mixed_htf": {
+          "win": 1.0,
+          "loss": 1.0
+        },
+        "range": {
+          "win": 0.5384615384615384,
+          "loss": 0.5094339622641509
+        },
+        "families": {
+          "4h+daily": {
+            "win": 4,
+            "loss": 11
+          },
+          "4h+daily+session": {
+            "win": 3,
+            "loss": 8
+          },
+          "4h+session": {
+            "win": 6,
+            "loss": 33
+          },
+          "session": {
+            "win": 0,
+            "loss": 1
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 3,
+            "loss": 13
+          },
+          "ETH": {
+            "win": 0,
+            "loss": 3
+          },
+          "SOL": {
+            "win": 0,
+            "loss": 10
+          },
+          "xyz:GOLD": {
+            "win": 2,
+            "loss": 5
+          },
+          "xyz:SP500": {
+            "win": 4,
+            "loss": 14
+          },
+          "xyz:XYZ100": {
+            "win": 4,
+            "loss": 8
+          }
+        }
+      },
+      "h2": {
+        "n_win": 6,
+        "n_loss": 13,
+        "touches": {
+          "win": 6.0,
+          "loss": 7.0
+        },
+        "adx_4h": {
+          "win": 18.3,
+          "loss": 23.0
+        },
+        "adx_1d": {
+          "win": null,
+          "loss": null
+        },
+        "adx_1h": {
+          "win": 28.25,
+          "loss": 23.5
+        },
+        "stop_bps": {
+          "win": 56.71228810491402,
+          "loss": 28.97638928565669
+        },
+        "stop_atr": {
+          "win": 1.4653464616388112,
+          "loss": 1.066617429837474
+        },
+        "target_r": {
+          "win": 3.0308586795386887,
+          "loss": 4.147124346442401
+        },
+        "sweep_bps": {
+          "win": 30.66895913060392,
+          "loss": 15.14368511601055
+        },
+        "reclaim_bps": {
+          "win": 70.4408081599494,
+          "loss": 42.12757328169994
+        },
+        "hold_hours": {
+          "win": 11.0,
+          "loss": 2.0
+        },
+        "hour": {
+          "win": 14.5,
+          "loss": 15.0
+        },
+        "time_to_tp": {
+          "win": 10.0
+        },
+        "mfe_r": {
+          "win": 3.609223335995595,
+          "loss": 1.189468666348904
+        },
+        "mae_r": {
+          "win": 0.46071740127778366,
+          "loss": 1.5235684909838818
+        },
+        "aligned": {
+          "win": 0.3333333333333333,
+          "loss": 0.46153846153846156
+        },
+        "us": {
+          "win": 0.5,
+          "loss": 0.46153846153846156
+        },
+        "htf_level": {
+          "win": 0.0,
+          "loss": 0.0
+        },
+        "mixed_htf": {
+          "win": 0.8333333333333334,
+          "loss": 1.0
+        },
+        "range": {
+          "win": 0.6666666666666666,
+          "loss": 0.5384615384615384
+        },
+        "families": {
+          "4h": {
+            "win": 1,
+            "loss": 0
+          },
+          "4h+daily": {
+            "win": 1,
+            "loss": 2
+          },
+          "4h+daily+session": {
+            "win": 2,
+            "loss": 9
+          },
+          "4h+session": {
+            "win": 2,
+            "loss": 2
+          }
+        },
+        "coins": {
+          "BTC": {
+            "win": 0,
+            "loss": 2
+          },
+          "ETH": {
+            "win": 2,
+            "loss": 0
+          },
+          "SOL": {
+            "win": 1,
+            "loss": 1
+          },
+          "xyz:GOLD": {
+            "win": 3,
+            "loss": 5
+          },
+          "xyz:SP500": {
+            "win": 0,
+            "loss": 2
+          },
+          "xyz:XYZ100": {
+            "win": 0,
+            "loss": 3
+          }
+        }
+      }
+    }
+  ],
+  "tests": [
+    {
+      "full": {
+        "trades": 16,
+        "win_rate": 0.375,
+        "avg_win_r": 2.8528689284887787,
+        "avg_loss_r": -2.156024772332569,
+        "expectancy_r": -0.27768963452456347,
+        "net_pct": -1.764160827543726,
+        "max_dd_pct": 4.877434562526013
+      },
+      "half1": {
+        "trades": 5,
+        "win_rate": 0.4,
+        "avg_win_r": 2.3961829521263387,
+        "avg_loss_r": -2.309046937613729,
+        "expectancy_r": -0.42695498171770163,
+        "net_pct": -1.1579182769216656,
+        "max_dd_pct": 2.0047859692612655
+      },
+      "half2": {
+        "trades": 11,
+        "win_rate": 0.36363636363636365,
+        "avg_win_r": 3.0812119166699987,
+        "avg_loss_r": -2.0904438443549287,
+        "expectancy_r": -0.20984174943677336,
+        "net_pct": -0.6062425506220603,
+        "max_dd_pct": 1.9925191861410168
+      },
+      "ref_h1": -0.42695498171770163,
+      "ref_h2": -0.20984174943677336,
+      "coins_better": 0,
+      "thin": true,
+      "improves": false,
+      "profitable": false,
+      "under_20": true,
+      "book": "15m-baseline",
+      "name": "ref"
+    },
+    {
+      "full": {
+        "trades": 3,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -2.298110513577675,
+        "expectancy_r": -2.298110513577675,
+        "net_pct": -2.984145884109146,
+        "max_dd_pct": 3.450626378422745
+      },
+      "half1": {
+        "trades": 2,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -2.3371414523056,
+        "expectancy_r": -2.3371414523056,
+        "net_pct": -2.0110858771782425,
+        "max_dd_pct": 2.011085877178248
+      },
+      "half2": {
+        "trades": 1,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -2.2200486361218252,
+        "expectancy_r": -2.2200486361218252,
+        "net_pct": -0.9730600069309037,
+        "max_dd_pct": 0.9730600069309002
+      },
+      "ref_h1": -0.42695498171770163,
+      "ref_h2": -0.20984174943677336,
+      "coins_better": 1,
+      "thin": true,
+      "improves": false,
+      "profitable": false,
+      "under_20": true,
+      "book": "15m-baseline",
+      "name": "check:daily-or-session-3"
+    },
+    {
+      "full": {
+        "trades": 14,
+        "win_rate": 0.42857142857142855,
+        "avg_win_r": 2.8528689284887787,
+        "avg_loss_r": -2.2316126273230643,
+        "expectancy_r": -0.05254910340370308,
+        "net_pct": 0.26464503872678513,
+        "max_dd_pct": 4.877434358032084
+      },
+      "half1": {
+        "trades": 4,
+        "win_rate": 0.5,
+        "avg_win_r": 2.3961829521263383,
+        "avg_loss_r": -2.5298833439410915,
+        "expectancy_r": -0.06685019590737651,
+        "net_pct": -0.12149025010174119,
+        "max_dd_pct": 1.9669908044840485
+      },
+      "half2": {
+        "trades": 10,
+        "win_rate": 0.4,
+        "avg_win_r": 3.0812119166699987,
+        "avg_loss_r": -2.1321890551170557,
+        "expectancy_r": -0.04682866640223371,
+        "net_pct": 0.3861352888285374,
+        "max_dd_pct": 2.013412260885816
+      },
+      "ref_h1": -0.06685019590737651,
+      "ref_h2": -0.04682866640223371,
+      "coins_better": 0,
+      "thin": true,
+      "improves": false,
+      "profitable": false,
+      "under_20": true,
+      "book": "15m-best",
+      "name": "ref"
+    },
+    {
+      "full": {
+        "trades": 1,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -2.2200486361218252,
+        "expectancy_r": -2.2200486361218252,
+        "net_pct": -0.9930306314067328,
+        "max_dd_pct": 0.9930306314067275
+      },
+      "half1": {
+        "trades": 0,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": 0.0,
+        "expectancy_r": 0.0,
+        "net_pct": 0.0,
+        "max_dd_pct": 0.0
+      },
+      "half2": {
+        "trades": 1,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -2.2200486361218252,
+        "expectancy_r": -2.2200486361218252,
+        "net_pct": -0.9930306314067328,
+        "max_dd_pct": 0.9930306314067275
+      },
+      "ref_h1": -0.06685019590737651,
+      "ref_h2": -0.04682866640223371,
+      "coins_better": 1,
+      "thin": true,
+      "improves": false,
+      "profitable": false,
+      "under_20": true,
+      "book": "15m-best",
+      "name": "check:daily-or-session-3"
+    },
+    {
+      "full": {
+        "trades": 85,
+        "win_rate": 0.2235294117647059,
+        "avg_win_r": 2.3035228580101186,
+        "avg_loss_r": -2.080556608470002,
+        "expectancy_r": -1.1005859041979753,
+        "net_pct": -35.18064685155643,
+        "max_dd_pct": 37.40184481897874
+      },
+      "half1": {
+        "trades": 66,
+        "win_rate": 0.19696969696969696,
+        "avg_win_r": 2.199945784634912,
+        "avg_loss_r": -2.0264557426217205,
+        "expectancy_r": -1.1939827145257171,
+        "net_pct": -32.42745714161946,
+        "max_dd_pct": 32.427457141619456
+      },
+      "half2": {
+        "trades": 19,
+        "win_rate": 0.3157894736842105,
+        "avg_win_r": 2.5279398503230657,
+        "avg_loss_r": -2.301121676928381,
+        "expectancy_r": -0.7761548788489768,
+        "net_pct": -2.7531897099370095,
+        "max_dd_pct": 4.978659433638049
+      },
+      "ref_h1": -1.1939827145257171,
+      "ref_h2": -0.7761548788489768,
+      "coins_better": 0,
+      "thin": false,
+      "improves": false,
+      "profitable": false,
+      "under_20": false,
+      "book": "1h-130d",
+      "name": "ref"
+    },
+    {
+      "full": {
+        "trades": 3,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -1.6335997167346166,
+        "expectancy_r": -1.6335997167346166,
+        "net_pct": -2.9409480466060067,
+        "max_dd_pct": 3.0370041040376425
+      },
+      "half1": {
+        "trades": 2,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -1.6091615182116277,
+        "expectancy_r": -1.6091615182116277,
+        "net_pct": -1.9726566548093794,
+        "max_dd_pct": 1.9726566548093798
+      },
+      "half2": {
+        "trades": 1,
+        "win_rate": 0.0,
+        "avg_win_r": 0.0,
+        "avg_loss_r": -1.6824761137805941,
+        "expectancy_r": -1.6824761137805941,
+        "net_pct": -0.9682913917966274,
+        "max_dd_pct": 0.9682913917966289
+      },
+      "ref_h1": -1.1939827145257171,
+      "ref_h2": -0.7761548788489768,
+      "coins_better": 0,
+      "thin": true,
+      "improves": false,
+      "profitable": false,
+      "under_20": true,
+      "book": "1h-130d",
+      "name": "check:daily-or-session-3"
+    }
+  ],
+  "verdict": "No winner-based filter separated on the first half of the 130-day 1h book under the pre-registered rules (winners had to differ from losers, and the first half had to keep at least 8 trades at a higher expectancy). The daily-or-session level with at least 3 touches was still replayed as a check (rows named check:daily-or-session-3). It was not a chosen filter, and it does not count toward the robustness bar. Combined config: none. Monday paper stays on the spec defaults. Live scalp notes (reports/model_b_trade_notes.json) are not in this repo, so they were not used. Overfitting: five hypotheses were scored on the first half. That half is not evidence, and a second-half pass would still be one look after those screens. MFE, MAE, and time in the trade separate winners from losers only after the trade is open. They were not used as entry filters.",
+  "scalp": "reports/model_b_trade_notes.json is not in this repository. The Oct 6\u20138 scalp expectancy sample cited on PR #17 is 14 trades and is not stored here as a per-trade feature file, so it was not mixed into the filter choice."
+}

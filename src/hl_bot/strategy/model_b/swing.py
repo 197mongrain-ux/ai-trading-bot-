@@ -67,6 +67,16 @@ class SwingParams:
     min_sweep_bps: float = 5.0
     flow: str = "tape"
     fill_hours: float = 24.0
+    # Study filters. Defaults leave the paper book unchanged.
+    level_set: str = "all"  # all | 4h | 1d | session
+    min_touches: int = 0
+    min_room_pct: float = 0.0
+    session: str = "all"  # all | us (13:30–20:00 UTC)
+    side_only: str = "both"  # both | long | short
+    partial_r: float = 0.0  # replay only: scale half off at this R, stop to entry
+    max_sweep_bps: float = 0.0  # 0 = no cap on sweep depth
+    min_adx_gate: float = 0.0  # 0 = no extra ADX floor on the higher timeframe
+    trend_only: bool = False  # drop range; trade only a directional macro
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -121,6 +131,49 @@ class Plan:
     sweep: float
     macro: str
     sources: tuple[str, ...]
+    touches: int = 0
+    sweep_bps: float = 0.0
+    reclaim_bps: float = 0.0
+
+
+def _source_ok(source: str, level_set: str) -> bool:
+    """Keep a raw swing or session print for this level family.
+
+    ``4h`` / ``1d`` / ``session`` drop the other families before clustering,
+    so the top-ranked levels are chosen from that family alone.
+    """
+    if level_set in ("", "all"):
+        return True
+    if level_set == "4h":
+        return source.startswith("4h_")
+    if level_set == "1d":
+        return source.startswith("1d_")
+    if level_set == "session":
+        return source in {"PDH", "PDL", "PWH", "PWL"}
+    if level_set == "swing_htf":
+        return source.startswith("1d_") or source in {"PDH", "PDL", "PWH", "PWL"}
+    return True
+
+
+def _labeled_adx(label: str, tf: str) -> float | None:
+    """Read ``4h=up(adx=23.0)`` out of a macro label. Missing means no gate."""
+    import re
+
+    match = re.search(rf"\b{re.escape(tf)}=(?:up|down|range|unknown)\(adx=([0-9.]+)\)", label or "")
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def session_open(now: float, session: str) -> bool:
+    """US cash session is 13:30–20:00 UTC. Any other value keeps every hour."""
+    if session != "us":
+        return True
+    from datetime import datetime, timezone
+
+    dt = datetime.fromtimestamp(float(now), timezone.utc)
+    minutes = dt.hour * 60 + dt.minute
+    return 13 * 60 + 30 <= minutes < 20 * 60
 
 
 def slip_bps_for(coin: str, params: SwingParams) -> float:
@@ -294,6 +347,8 @@ def build_levels(
         round(float(params.cluster_bps), 4),
         int(params.top_n),
         round(float(params.min_score), 4),
+        str(getattr(params, "level_set", "all") or "all"),
+        int(getattr(params, "min_touches", 0) or 0),
     )
     cached = _LEVEL_CACHE.get(cache_key)
     if cached is not None:
@@ -325,14 +380,21 @@ def build_levels(
         high, low, known = week
         raw_resist.append((high, "PWH", known))
         raw_support.append((low, "PWL", known))
+    level_set = str(getattr(params, "level_set", "all") or "all")
+    raw_support = [row for row in raw_support if _source_ok(row[1], level_set)]
+    raw_resist = [row for row in raw_resist if _source_ok(row[1], level_set)]
+    min_touches = int(getattr(params, "min_touches", 0) or 0)
     bps = float(params.cluster_bps)
     levels: list[Level] = []
     for kind, raw in (("support", raw_support), ("resistance", raw_resist)):
         ranked = []
         for group in _cluster(raw, bps):
             level = _score_group(group, h4, kind, bps)
-            if level is not None and level.score + 1e-9 >= float(params.min_score):
-                ranked.append(level)
+            if level is None or level.score + 1e-9 < float(params.min_score):
+                continue
+            if min_touches and level.touches < min_touches:
+                continue
+            ranked.append(level)
         ranked.sort(key=lambda level: (level.score, level.ts), reverse=True)
         levels.extend(ranked[: max(1, int(params.top_n))])
     if len(_LEVEL_CACHE) > 200_000:
@@ -463,6 +525,28 @@ def find_sweep(candles: list[dict], level: float, side: str, min_bps: float) -> 
     return None
 
 
+def _nearest_room_pct(side: str, entry: float, levels: list[Level]) -> float:
+    """Percent distance from the entry to the nearest opposite level.
+
+    No opposite level is treated as plenty of room so the target rule,
+    not this filter, rejects it.
+    """
+    if entry <= 0:
+        return 0.0
+    nearest: float | None = None
+    for level in levels:
+        if side == "long" and level.kind == "resistance" and level.price > entry:
+            dist = (level.price - entry) / entry * 100.0
+        elif side == "short" and level.kind == "support" and level.price < entry:
+            dist = (entry - level.price) / entry * 100.0
+        else:
+            continue
+        nearest = dist if nearest is None else min(nearest, dist)
+    if nearest is None:
+        return 1e9
+    return nearest
+
+
 def stop_beyond_wick(side: str, wick: float, entry: float, atr: float, frac: float) -> float | None:
     buffer = float(frac) * float(atr)
     if buffer <= 0 or wick <= 0 or entry <= 0:
@@ -581,12 +665,29 @@ def plan_trade(
     macro = read_swing_macro(hourly, now, params)
     if macro.macro == "unknown":
         return "MACRO_UNKNOWN"
+    if not session_open(now, str(getattr(params, "session", "all") or "all")):
+        return "OFF_SESSION"
+    if bool(getattr(params, "trend_only", False)) and macro.macro == "range":
+        return "RANGE"
+    adx_floor = float(getattr(params, "min_adx_gate", 0.0) or 0.0)
+    if adx_floor > 0:
+        higher = params.macro_tfs[-1] if params.macro_tfs else "4h"
+        higher_adx = _labeled_adx(macro.label, higher)
+        if higher_adx is None or higher_adx + 1e-9 < adx_floor:
+            return "ADX_LOW"
     if macro.macro == "up":
         allowed = {"long"}
     elif macro.macro == "down":
         allowed = {"short"}
     else:
         allowed = {"long", "short"}
+    side_only = str(getattr(params, "side_only", "both") or "both")
+    if side_only == "long":
+        allowed &= {"long"}
+    elif side_only == "short":
+        allowed &= {"short"}
+    if not allowed:
+        return "SIDE_FILTER"
     levels = build_levels(hourly, now, params)
     if macro.macro == "range":
         levels = range_edges(levels, hourly, now)
@@ -632,9 +733,18 @@ def plan_trade(
         if swept is None:
             continue
         wick, sweep_ts = swept
+        sweep_bps = abs(level.price - wick) / level.price * 10_000.0
+        cap = float(getattr(params, "max_sweep_bps", 0.0) or 0.0)
+        if cap > 0 and sweep_bps > cap + 1e-9:
+            fail = "SWEEP_DEEP"
+            continue
         stop = stop_beyond_wick(side, wick, level.price, atr, float(params.atr_frac))
         if stop is None:
             fail = "BAD_STOP"
+            continue
+        room = float(getattr(params, "min_room_pct", 0.0) or 0.0)
+        if room > 0 and _nearest_room_pct(side, level.price, levels) + 1e-9 < room:
+            fail = "TOO_CLOSE"
             continue
         target = pick_targets(
             side,
@@ -682,6 +792,9 @@ def plan_trade(
             sweep=float(wick),
             macro=macro.label,
             sources=level.sources,
+            touches=int(level.touches),
+            sweep_bps=float(sweep_bps),
+            reclaim_bps=(float(candles[-1]["h"]) - float(candles[-1]["l"])) / level.price * 10_000.0,
         )
         if best is None or (plan.score, plan.r_multiple) > (best.score, best.r_multiple):
             best = plan

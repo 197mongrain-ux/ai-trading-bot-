@@ -44,6 +44,50 @@ def _hours(days: int, *, step: float, base: float = 100.0, start: float = 1_700_
     return bars
 
 
+def test_study_filters_stay_off_unless_asked():
+    from datetime import datetime, timezone
+
+    from hl_bot.strategy.model_b.swing import (
+        Level,
+        Plan,
+        _nearest_room_pct,
+        _source_ok,
+        session_open,
+    )
+    from hl_bot.strategy.model_b.swing_replay import _partial_price
+
+    inside = datetime(2026, 6, 2, 15, 0, tzinfo=timezone.utc).timestamp()
+    outside = datetime(2026, 6, 2, 3, 0, tzinfo=timezone.utc).timestamp()
+    assert session_open(inside, "us")
+    assert not session_open(outside, "us")
+    assert session_open(outside, "all")
+    assert _source_ok("4h_low", "4h") and not _source_ok("PDL", "4h")
+    assert _source_ok("PDL", "session") and _source_ok("1d_low", "1d")
+    assert _source_ok("4h_low", "all")
+    assert _source_ok("1d_low", "swing_htf") and _source_ok("PWH", "swing_htf")
+    assert not _source_ok("4h_high", "swing_htf")
+    from hl_bot.strategy.model_b.swing import _labeled_adx
+
+    assert _labeled_adx("1h=down(adx=28.5) 4h=up(adx=23.0) macro=range", "4h") == pytest.approx(23.0)
+    assert SwingParams().max_sweep_bps == 0
+    assert SwingParams().trend_only is False
+    levels = [
+        Level(100.0, "support", 4, 2, ("PDL",), 1),
+        Level(101.0, "resistance", 4, 2, ("PDH",), 1),
+        Level(110.0, "resistance", 4, 2, ("4h_high",), 1),
+    ]
+    assert _nearest_room_pct("long", 100.0, levels) == pytest.approx(1.0)
+    plan = Plan(
+        "long", 100.0, 1.0, 100.0, 99.0, 105.0, None, 1.0, 5.0, 4.0, 99.4, "m", ("4h_low",), touches=3
+    )
+    assert _partial_price(plan, 0) is None
+    assert _partial_price(plan, 1) == pytest.approx(101.0)
+    assert _partial_price(plan, 6) is None
+    assert SwingParams().level_set == "all"
+    assert SwingParams().partial_r == 0
+    assert SwingParams().min_touches == 0
+
+
 def test_scalp_style_is_the_default_and_still_requires_two_percent(monkeypatch):
     monkeypatch.delenv("MODEL_B_STYLE", raising=False)
     monkeypatch.setenv("ENTRY_MODE", "model_b")
