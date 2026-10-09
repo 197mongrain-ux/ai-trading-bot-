@@ -77,6 +77,20 @@ class SwingParams:
     max_sweep_bps: float = 0.0  # 0 = no cap on sweep depth
     min_adx_gate: float = 0.0  # 0 = no extra ADX floor on the higher timeframe
     trend_only: bool = False  # drop range; trade only a directional macro
+    # Wide reclaim bar. off leaves the paper book unchanged.
+    # skip drops the setup. retest rests the limit only after price leaves
+    # the level and trades back to it. A bar is wide when its range exceeds
+    # max_reclaim_bps or max_reclaim_atr × ATR(14), whichever cap is set.
+    reclaim_mode: str = "off"  # off | skip | retest
+    max_reclaim_bps: float = 0.0
+    max_reclaim_atr: float = 0.0
+    # Fail-fast scratch. 0 leaves it off. Time scratch exits at the market
+    # when MFE has not reached scratch_mfe_r within scratch_minutes.
+    # MAE scratch exits when adverse excursion reaches scratch_mae_r before
+    # +0.5R favorable. Both pay taker fees and adverse slip.
+    scratch_mfe_r: float = 0.0
+    scratch_minutes: float = 0.0
+    scratch_mae_r: float = 0.0
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -103,6 +117,12 @@ class SwingParams:
             min_sweep_bps=float(getattr(settings, "model_b_swing_min_sweep_bps", 5.0) or 5.0),
             flow=str(getattr(settings, "model_b_swing_flow", "tape") or "tape"),
             fill_hours=float(getattr(settings, "model_b_swing_fill_hours", 24.0) or 24.0),
+            reclaim_mode=str(getattr(settings, "model_b_swing_reclaim_mode", "off") or "off"),
+            max_reclaim_bps=float(getattr(settings, "model_b_swing_reclaim_bps", 0.0) or 0.0),
+            max_reclaim_atr=float(getattr(settings, "model_b_swing_reclaim_atr", 0.0) or 0.0),
+            scratch_mfe_r=float(getattr(settings, "model_b_swing_scratch_mfe_r", 0.0) or 0.0),
+            scratch_minutes=float(getattr(settings, "model_b_swing_scratch_minutes", 0.0) or 0.0),
+            scratch_mae_r=float(getattr(settings, "model_b_swing_scratch_mae_r", 0.0) or 0.0),
         )
 
 
@@ -134,6 +154,7 @@ class Plan:
     touches: int = 0
     sweep_bps: float = 0.0
     reclaim_bps: float = 0.0
+    retest: bool = False
 
 
 def _source_ok(source: str, level_set: str) -> bool:
@@ -647,6 +668,103 @@ def size_swing(
     return capped, loss
 
 
+def reclaim_action(reclaim_bps: float, bar_range: float, atr: float, params: SwingParams) -> str:
+    """``ok``, ``skip``, or ``retest``. Caps at 0 do nothing."""
+    mode = str(getattr(params, "reclaim_mode", "off") or "off")
+    if mode not in ("skip", "retest"):
+        return "ok"
+    bps_cap = float(getattr(params, "max_reclaim_bps", 0.0) or 0.0)
+    atr_cap = float(getattr(params, "max_reclaim_atr", 0.0) or 0.0)
+    if bps_cap <= 0 and atr_cap <= 0:
+        return "ok"
+    wide_bps = bps_cap > 0 and float(reclaim_bps) > bps_cap + 1e-9
+    wide_atr = atr_cap > 0 and atr > 0 and float(bar_range) > atr_cap * float(atr) + 1e-12
+    if wide_bps or wide_atr:
+        return mode
+    return "ok"
+
+
+# MAE scratch is disarmed once favorable excursion has reached this R.
+# It is not a grid knob.
+SCRATCH_ARM_R = 0.5
+
+
+def scratch_trigger(
+    *,
+    side: str,
+    entry: float,
+    stop: float,
+    prior_mfe: float,
+    mfe: float,
+    high: float,
+    low: float,
+    close: float,
+    opened: float,
+    now: float,
+    scratch_mfe_r: float,
+    scratch_minutes: float,
+    scratch_mae_r: float,
+) -> float | None:
+    """Market/trigger price for a scratch, or None.
+
+    Same-bar stop is the caller's job. If this bar prints both the MAE
+    trigger and +0.5R, the scratch wins: the path inside the bar is unknown
+    and the worse fill is the one this rule is allowed to take.
+    """
+    risk = abs(float(entry) - float(stop))
+    if risk <= 0 or entry <= 0:
+        return None
+    if side == "long":
+        bar_adv = (float(entry) - float(low)) / risk
+    else:
+        bar_adv = (float(high) - float(entry)) / risk
+    mae_r = float(scratch_mae_r or 0.0)
+    if mae_r > 0 and float(prior_mfe) < SCRATCH_ARM_R - 1e-12 and bar_adv + 1e-12 >= mae_r:
+        if side == "long":
+            return float(entry) - mae_r * risk
+        return float(entry) + mae_r * risk
+    need = float(scratch_mfe_r or 0.0)
+    minutes = float(scratch_minutes or 0.0)
+    if need > 0 and minutes > 0:
+        elapsed = float(now) - float(opened)
+        if elapsed + 1e-9 >= minutes * 60.0 and float(mfe) + 1e-12 < need:
+            return float(close)
+    return None
+
+
+def paper_scratch_exit(pos, last: float, now: float, params: SwingParams) -> float | None:
+    """Last-price scratch for the paper loop. None when the flags are off.
+
+    A single print cannot be both +0.5R and −0.6R. The running favorable
+    extreme is what disarms the MAE scratch.
+    """
+    mae_r = float(getattr(params, "scratch_mae_r", 0.0) or 0.0)
+    need = float(getattr(params, "scratch_mfe_r", 0.0) or 0.0)
+    minutes = float(getattr(params, "scratch_minutes", 0.0) or 0.0)
+    if mae_r <= 0 and not (need > 0 and minutes > 0):
+        return None
+    entry = float(pos.entry)
+    stop = float(pos.stop)
+    risk = abs(entry - stop)
+    if risk <= 0 or entry <= 0 or last <= 0:
+        return None
+    if pos.side == "long":
+        fav = (float(last) - entry) / risk
+        adv = (entry - float(last)) / risk
+    else:
+        fav = (entry - float(last)) / risk
+        adv = (float(last) - entry) / risk
+    prior = float(getattr(pos, "mfe_r", 0.0) or 0.0)
+    pos.mfe_r = max(prior, fav)
+    pos.mae_r = max(float(getattr(pos, "mae_r", 0.0) or 0.0), adv)
+    if mae_r > 0 and prior < SCRATCH_ARM_R - 1e-12 and adv + 1e-12 >= mae_r:
+        return float(last)
+    if need > 0 and minutes > 0:
+        if float(now) - float(pos.opened_at) + 1e-9 >= minutes * 60.0 and pos.mfe_r + 1e-12 < need:
+            return float(last)
+    return None
+
+
 def plan_trade(
     coin: str,
     now: float,
@@ -778,6 +896,12 @@ def plan_trade(
         if size <= 0:
             fail = SIZE_ZERO
             continue
+        bar_range = float(candles[-1]["h"]) - float(candles[-1]["l"])
+        reclaim_bps = bar_range / level.price * 10_000.0 if level.price else 0.0
+        action = reclaim_action(reclaim_bps, bar_range, atr, params)
+        if action == "skip":
+            fail = "RECLAIM_WIDE"
+            continue
         plan = Plan(
             side=side,
             level=float(level.price),
@@ -794,7 +918,8 @@ def plan_trade(
             sources=level.sources,
             touches=int(level.touches),
             sweep_bps=float(sweep_bps),
-            reclaim_bps=(float(candles[-1]["h"]) - float(candles[-1]["l"])) / level.price * 10_000.0,
+            reclaim_bps=float(reclaim_bps),
+            retest=(action == "retest"),
         )
         if best is None or (plan.score, plan.r_multiple) > (best.score, best.r_multiple):
             best = plan
@@ -838,6 +963,40 @@ def _decision(
     )
 
 
+def _touch_px(prints, mark, bid, ask) -> float | None:
+    if prints:
+        px = float(prints[-1].price)
+        if px > 0:
+            return px
+    if mark is not None and float(mark) > 0:
+        return float(mark)
+    if bid and ask and float(bid) > 0 and float(ask) > 0:
+        return (float(bid) + float(ask)) / 2.0
+    return None
+
+
+def _retest_ready(slot: dict, plan: Plan, now: float, px: float | None) -> str:
+    """``wait``, ``fail``, or ``arm``. The birth timestamp never arms."""
+    if float(now) <= float(slot.get("born", slot["since"])) + 1e-9:
+        return "wait"
+    if px is None or px <= 0:
+        return "wait"
+    if not slot.get("left"):
+        if plan.side == "long":
+            if px <= plan.stop:
+                return "fail"
+            if px > plan.level:
+                slot["left"] = True
+        else:
+            if px >= plan.stop:
+                return "fail"
+            if px < plan.level:
+                slot["left"] = True
+        return "wait"
+    back = px <= plan.level if plan.side == "long" else px >= plan.level
+    return "arm" if back else "wait"
+
+
 def evaluate_swing(
     engine,
     coin: str,
@@ -857,29 +1016,58 @@ def evaluate_swing(
     taker_fee: float | None = None,
 ) -> Decision:
     """Swing arm. ``bars`` are the confirm timeframe. ``htf_bars`` are 1h."""
-    del pools, mark
+    del pools
     coin_u = canon_coin(coin)
     params = getattr(engine, "swing_params", None) or SwingParams()
     min_prints = int(getattr(engine, "min_prints", 30) or 30)
     if coin_u not in set(getattr(engine, "coins", ()) or ()):
         return _decision(coin_u, "OUT_OF_SESSION")
     hourly = htf_bars if htf_bars else (bars if params.confirm_tf == "1h" else None)
-    planned = plan_trade(
-        coin_u,
-        now,
-        bars,
-        hourly,
-        params,
-        float(equity),
-        risk_pct=float(getattr(engine, "risk_pct", 0.01) or 0.01),
-        leverage=int(leverage),
-        maker_fee=maker_fee,
-        taker_fee=taker_fee,
-        max_leverage=int(getattr(engine, "max_notional_leverage", 20) or 20),
-    )
-    if isinstance(planned, str):
-        macro = read_swing_macro(hourly, now, params).label if hourly else "macro=unknown"
-        return _decision(coin_u, planned, extra={"macro": macro})
+    pending_book = getattr(engine, "swing_retest", None)
+    if pending_book is None:
+        engine.swing_retest = {}
+        pending_book = engine.swing_retest
+    slot = pending_book.get(coin_u)
+    if slot is not None and float(now) > float(slot["since"]) + float(params.fill_hours) * 3600.0:
+        pending_book.pop(coin_u, None)
+        slot = None
+    if slot is not None:
+        planned = slot["plan"]
+        step = _retest_ready(slot, planned, now, _touch_px(prints, mark, best_bid, best_ask))
+        if step == "fail":
+            pending_book.pop(coin_u, None)
+            return _decision(coin_u, "RETEST_FAILED", plan=planned)
+        if step != "arm":
+            return _decision(coin_u, "RETEST_WAIT", plan=planned)
+        pending_book.pop(coin_u, None)
+    else:
+        planned = plan_trade(
+            coin_u,
+            now,
+            bars,
+            hourly,
+            params,
+            float(equity),
+            risk_pct=float(getattr(engine, "risk_pct", 0.01) or 0.01),
+            leverage=int(leverage),
+            maker_fee=maker_fee,
+            taker_fee=taker_fee,
+            max_leverage=int(getattr(engine, "max_notional_leverage", 20) or 20),
+        )
+        if isinstance(planned, str):
+            macro = read_swing_macro(hourly, now, params).label if hourly else "macro=unknown"
+            return _decision(coin_u, planned, extra={"macro": macro})
+        if planned.retest:
+            slot = {
+                "key": (planned.side, round(planned.level, 8), int(planned.level_ts)),
+                "left": False,
+                "since": float(now),
+                "plan": planned,
+                "born": float(now),
+            }
+            pending_book[coin_u] = slot
+            # The signal tick is not the retest. Wait for a later price.
+            return _decision(coin_u, "RETEST_WAIT", plan=planned)
     if params.flow != "off":
         flow_sec = float(TF_SEC.get(params.confirm_tf, 900))
         window = window_prints(prints, coin=coin_u, now=now, window_sec=flow_sec)
@@ -988,14 +1176,15 @@ def exit_net(
     ``slip_bps``. ``closed_pnl`` is profit already banked on a partial.
     """
     px = float(exit_px)
-    if reason in ("stop", "max_hold") and slip_bps > 0 and entry > 0:
+    taker_exit = reason in ("stop", "max_hold", "scratch")
+    if taker_exit and slip_bps > 0 and entry > 0:
         slip = abs(float(entry)) * float(slip_bps) / 10_000.0
         px = px - slip if side == "long" else px + slip
     if side == "long":
         gross = (px - float(entry)) * float(size)
     else:
         gross = (float(entry) - px) * float(size)
-    exit_fee = float(taker_fee) if reason in ("stop", "max_hold") else float(maker_fee)
+    exit_fee = float(taker_fee) if taker_exit else float(maker_fee)
     fees = float(size) * float(entry) * float(maker_fee) + float(size) * abs(px) * exit_fee
     return gross + float(closed_pnl) - fees
 

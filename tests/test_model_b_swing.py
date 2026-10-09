@@ -86,6 +86,12 @@ def test_study_filters_stay_off_unless_asked():
     assert SwingParams().level_set == "all"
     assert SwingParams().partial_r == 0
     assert SwingParams().min_touches == 0
+    assert SwingParams().reclaim_mode == "off"
+    assert SwingParams().max_reclaim_bps == 0
+    assert SwingParams().max_reclaim_atr == 0
+    assert SwingParams().scratch_mfe_r == 0
+    assert SwingParams().scratch_minutes == 0
+    assert SwingParams().scratch_mae_r == 0
 
 
 def test_scalp_style_is_the_default_and_still_requires_two_percent(monkeypatch):
@@ -115,6 +121,10 @@ def test_swing_defaults_to_paper_its_own_journal_and_one_percent(monkeypatch, tm
     assert settings.model_b_swing_max_r == pytest.approx(5.0)
     assert settings.model_b_swing_slip_main_bps == pytest.approx(25.0)
     assert settings.model_b_swing_slip_xyz_bps == pytest.approx(30.0)
+    assert settings.model_b_swing_reclaim_mode == "off"
+    assert settings.model_b_swing_reclaim_bps == 0
+    assert settings.model_b_swing_scratch_minutes == 0
+    assert settings.model_b_swing_scratch_mae_r == 0
     Settings(
         entry_mode="model_b",
         model_b_style="swing",
@@ -434,3 +444,83 @@ def test_paper_flag_does_not_touch_the_live_exchange(monkeypatch, tmp_path):
     assert summary["mode"] == "PAPER"
     text = (tmp_path / "paper.jsonl").read_text()
     assert '"style": "swing"' in text or '"style":"swing"' in text
+
+
+def test_reclaim_cap_and_scratch_stay_quantitative():
+    """The pre-registered predicates. Defaults do not fire."""
+    from types import SimpleNamespace
+
+    from hl_bot.strategy.model_b.swing import (
+        SCRATCH_ARM_R,
+        Plan,
+        _retest_ready,
+        paper_scratch_exit,
+        reclaim_action,
+        scratch_trigger,
+    )
+
+    params = SwingParams()
+    assert reclaim_action(80, 1.0, 1.0, params) == "ok"
+    wide = SwingParams(reclaim_mode="skip", max_reclaim_bps=50, max_reclaim_atr=1.0)
+    assert reclaim_action(40, 0.4, 1.0, wide) == "ok"
+    assert reclaim_action(61, 0.4, 1.0, wide) == "skip"
+    assert reclaim_action(40, 1.1, 1.0, wide) == "skip"
+    retest = SwingParams(reclaim_mode="retest", max_reclaim_bps=50, max_reclaim_atr=0.5)
+    assert reclaim_action(40, 0.6, 1.0, retest) == "retest"
+
+    # MAE before +0.5R exits at the trigger. A later +0.5R disarms it.
+    px = scratch_trigger(
+        side="long", entry=100, stop=99, prior_mfe=0.2, mfe=0.2,
+        high=100.4, low=99.4, close=99.7, opened=0, now=0,
+        scratch_mfe_r=0, scratch_minutes=0, scratch_mae_r=0.6,
+    )
+    assert px == pytest.approx(99.4)
+    assert scratch_trigger(
+        side="long", entry=100, stop=99, prior_mfe=SCRATCH_ARM_R, mfe=0.5,
+        high=100.6, low=99.2, close=100.1, opened=0, now=0,
+        scratch_mfe_r=0, scratch_minutes=0, scratch_mae_r=0.6,
+    ) is None
+    # 60 minutes from the fill close, MFE still under 0.3R, exit at the close.
+    assert scratch_trigger(
+        side="short", entry=100, stop=101, prior_mfe=0.1, mfe=0.1,
+        high=100.2, low=99.5, close=100.05, opened=1_000, now=1_000 + 3600,
+        scratch_mfe_r=0.3, scratch_minutes=60, scratch_mae_r=0,
+    ) == pytest.approx(100.05)
+    assert scratch_trigger(
+        side="short", entry=100, stop=101, prior_mfe=0.1, mfe=0.4,
+        high=100.2, low=99.5, close=99.6, opened=1_000, now=1_000 + 3600,
+        scratch_mfe_r=0.3, scratch_minutes=60, scratch_mae_r=0,
+    ) is None
+
+    scratch_net = exit_net(
+        side="long", size=1, entry=100, exit_px=99.5, reason="scratch",
+        maker_fee=0.00015, taker_fee=0.00045, slip_bps=25,
+    )
+    stop_net = exit_net(
+        side="long", size=1, entry=100, exit_px=99.5, reason="stop",
+        maker_fee=0.00015, taker_fee=0.00045, slip_bps=25,
+    )
+    tp_net = exit_net(
+        side="long", size=1, entry=100, exit_px=99.5, reason="tp",
+        maker_fee=0.00015, taker_fee=0.00045, slip_bps=25,
+    )
+    assert scratch_net == pytest.approx(stop_net)
+    assert scratch_net < tp_net
+
+    pos = SimpleNamespace(side="long", entry=100.0, stop=99.0, opened_at=0.0, mfe_r=0.0, mae_r=0.0)
+    assert paper_scratch_exit(pos, 99.5, 10, SwingParams()) is None
+    assert paper_scratch_exit(pos, 99.3, 30, SwingParams(scratch_mae_r=0.6)) == pytest.approx(99.3)
+    slow = SimpleNamespace(side="long", entry=100.0, stop=99.0, opened_at=0.0, mfe_r=0.1, mae_r=0.0)
+    assert paper_scratch_exit(
+        slow, 100.1, 3600, SwingParams(scratch_mfe_r=0.3, scratch_minutes=60)
+    ) == pytest.approx(100.1)
+
+    slot = {"left": False, "born": 10.0, "since": 10.0}
+    plan = Plan(
+        "long", 100.0, 1.0, 100.0, 99.0, 105.0, None, 1.0, 5.0, 4.0, 98.0, "m", ("4h_low",)
+    )
+    assert _retest_ready(slot, plan, 10.0, 100.5) == "wait"
+    assert _retest_ready(slot, plan, 11.0, 100.5) == "wait"
+    assert slot["left"] is True
+    assert _retest_ready(slot, plan, 12.0, 100.2) == "wait"
+    assert _retest_ready(slot, plan, 13.0, 100.0) == "arm"

@@ -23,6 +23,7 @@ from hl_bot.strategy.model_b.swing import (
     exit_net,
     funding_pnl,
     plan_trade,
+    scratch_trigger,
     slip_bps_for,
 )
 
@@ -250,6 +251,20 @@ def _scale_half(trades, coin, plan, st, high, low, now, fees, slip, rates, eq) -
     return eq, False
 
 
+def _clear_swing_caches() -> None:
+    """Drop level, macro, and ATR caches so one replay cannot reuse another's bars.
+
+    The caches key a 4h bucket to the first ``now`` that touched it. A later
+    replay in the same process, especially on a slower confirm bar, must not
+    inherit that snapshot.
+    """
+    from hl_bot.strategy.model_b.swing import _ATR_CACHE, _LEVEL_CACHE, _MACRO_CACHE
+
+    _LEVEL_CACHE.clear()
+    _MACRO_CACHE.clear()
+    _ATR_CACHE.clear()
+
+
 def replay(
     data: dict[str, dict],
     params: SwingParams,
@@ -259,6 +274,7 @@ def replay(
     name: str = "swing",
 ) -> Summary:
     """Walk the confirm bars. One position per coin. Shared equity."""
+    _clear_swing_caches()
     confirm_sec = TF_SEC[params.confirm_tf]
     series: dict[str, dict] = {}
     span_start = None
@@ -307,6 +323,29 @@ def replay(
         slip = slip_bps_for(coin, params)
         rates = item.get("funding") or []
 
+        if st["mode"] == "retest" and idx >= st["from_idx"]:
+            plan = st["plan"]
+            if now > st["expire"]:
+                st["mode"] = "flat"
+            else:
+                if plan.side == "long":
+                    away = low > plan.entry + 1e-9
+                    failed = low <= plan.stop + 1e-9
+                    touched = low <= plan.entry + 1e-9
+                else:
+                    away = high < plan.entry - 1e-9
+                    failed = high >= plan.stop - 1e-9
+                    touched = high >= plan.entry - 1e-9
+                if not st.get("left"):
+                    # Price has to print entirely on the profit side of the
+                    # level before a later bar is allowed to fill the limit.
+                    if failed:
+                        st["mode"] = "flat"
+                    elif away:
+                        st["left"] = True
+                elif touched:
+                    st["mode"] = "working"
+
         if st["mode"] == "working" and idx >= st["from_idx"]:
             plan: Plan = st["plan"]
             if now > st["expire"]:
@@ -331,6 +370,16 @@ def replay(
                             high=high, low=low, exit_close=close,
                         )
                         eq = eq_box[0]
+                        st["mode"] = "flat"
+                    elif (scratch_px := _scratch_px(
+                        plan, {"mfe": 0.0, "opened": now}, high, low, close, now, params, 0.0
+                    )) is not None:
+                        # The probe has no prior MFE. A wide fill bar that
+                        # reaches 0.6R against and the target scratches.
+                        eq = _close_full(
+                            trades, coin, plan, scratch_px, "scratch", now, now, fees, slip, rates, [eq],
+                            high=high, low=low, exit_close=close,
+                        )
                         st["mode"] = "flat"
                     elif hit_tp and not params.runner and not (params.partial_r > 0 and _partial_price(plan, params.partial_r)):
                         eq = _close_full(
@@ -363,10 +412,12 @@ def replay(
 
         elif st["mode"] == "open":
             plan = st["plan"]
+            prior_mfe = float(st.get("mfe") or 0.0)
             _note_bar(st, plan, high, low)
             stop = float(st["stop"])
             tp = float(st["tp"])
             hold_limit = float(st["opened"]) + float(params.hold_days) * 86400.0
+            scratch_px = _scratch_px(plan, st, high, low, close, now, params, prior_mfe)
             if plan.side == "long":
                 hit_stop = low <= stop + 1e-9
                 hit_tp = high >= tp - 1e-9
@@ -376,6 +427,11 @@ def replay(
             if hit_stop:
                 eq = _finish(
                     trades, coin, plan, st, stop, "stop", now, fees, slip, rates, eq, exit_close=close
+                )
+                st["mode"] = "flat"
+            elif scratch_px is not None:
+                eq = _finish(
+                    trades, coin, plan, st, scratch_px, "scratch", now, fees, slip, rates, eq, exit_close=close
                 )
                 st["mode"] = "flat"
             elif hit_tp and (not params.runner or st["tp1_done"] or not plan.runner_px or params.partial_r > 0):
@@ -448,10 +504,11 @@ def replay(
                     continue
                 seen[coin].add(sid)
                 state[coin] = {
-                    "mode": "working",
+                    "mode": "retest" if planned.retest else "working",
                     "plan": planned,
                     "from_idx": idx + 1,
                     "expire": now + float(params.fill_hours) * 3600.0,
+                    "left": False,
                 }
 
         st = state[coin]
@@ -483,6 +540,24 @@ def _excursion(side: str, entry: float, stop: float, high: float, low: float) ->
     if side == "long":
         return (high - entry) / risk, (entry - low) / risk
     return (entry - low) / risk, (high - entry) / risk
+
+
+def _scratch_px(plan: Plan, st: dict, high: float, low: float, close: float, now: float, params: SwingParams, prior_mfe: float) -> float | None:
+    return scratch_trigger(
+        side=plan.side,
+        entry=plan.entry,
+        stop=plan.stop,
+        prior_mfe=prior_mfe,
+        mfe=float(st.get("mfe") or 0.0),
+        high=high,
+        low=low,
+        close=close,
+        opened=float(st.get("opened") or now),
+        now=now,
+        scratch_mfe_r=float(params.scratch_mfe_r),
+        scratch_minutes=float(params.scratch_minutes),
+        scratch_mae_r=float(params.scratch_mae_r),
+    )
 
 
 def _note_bar(st: dict, plan: Plan, high: float, low: float) -> None:

@@ -1279,6 +1279,13 @@ def _run_model_b(
                         runner_frac=float(getattr(settings, "model_b_swing_runner_frac", 0.5) or 0.5),
                     )
                 closed = book.try_exit(coin, last)
+                if closed is None and swing_on and (scratch_pos := book.position(coin)) is not None:
+                    if not scratch_pos.adopted and engine.swing_params is not None:
+                        from hl_bot.strategy.model_b.swing import paper_scratch_exit
+
+                        scratch_px = paper_scratch_exit(scratch_pos, float(last), now, engine.swing_params)
+                        if scratch_px is not None and scratch_px > 0:
+                            closed = book.force_flat(coin, scratch_px, reason="scratch")
                 if (
                     closed is None
                     and swing_on

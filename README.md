@@ -93,7 +93,7 @@ RISK_PER_TRADE=0.01
 python -m hl_bot run
 ```
 
-The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100.
+The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100. A wide-reclaim filter (`MODEL_B_SWING_RECLAIM_MODE=off`) and a fail-fast scratch (`MODEL_B_SWING_SCRATCH_MINUTES=0`, `MODEL_B_SWING_SCRATCH_MAE_R=0`) stay off, so this command does not skip a large reclaim bar or scratch a fill.
 
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 

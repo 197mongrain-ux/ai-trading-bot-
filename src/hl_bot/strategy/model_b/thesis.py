@@ -138,6 +138,9 @@ class OpenPosition:
     tick: float = 0.0
     # Shadow runner: log the trail, do not move the stop or split the TP.
     runner_shadow: bool = False
+    # Paper scratch path. Unused when those flags are off.
+    mfe_r: float = 0.0
+    mae_r: float = 0.0
 
 
 @dataclass

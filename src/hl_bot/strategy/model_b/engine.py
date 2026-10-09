@@ -351,6 +351,8 @@ class ModelBEngine:
             raise ValueError("style must be scalp|swing")
         self.style = style_name
         self.swing_params = swing_params
+        # Coin -> pending wide-reclaim retest. Empty unless that flag is on.
+        self.swing_retest = {}
         # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
         self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
 

@@ -334,6 +334,13 @@ class Settings:
     model_b_swing_min_sweep_bps: float = 5.0
     model_b_swing_flow: str = "tape"
     model_b_swing_fill_hours: float = 24.0
+    # Wide-reclaim and fail-fast scratch. off / 0 is the paper book.
+    model_b_swing_reclaim_mode: str = "off"
+    model_b_swing_reclaim_bps: float = 0.0
+    model_b_swing_reclaim_atr: float = 0.0
+    model_b_swing_scratch_mfe_r: float = 0.0
+    model_b_swing_scratch_minutes: float = 0.0
+    model_b_swing_scratch_mae_r: float = 0.0
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -595,6 +602,25 @@ class Settings:
                 raise ValueError("Swing slip bps must be >= 0.")
             if self.model_b_swing_fill_hours <= 0:
                 raise ValueError("MODEL_B_SWING_FILL_HOURS must be > 0.")
+            if self.model_b_swing_reclaim_mode not in ("off", "skip", "retest"):
+                raise ValueError(
+                    f"MODEL_B_SWING_RECLAIM_MODE={self.model_b_swing_reclaim_mode!r} "
+                    "must be off|skip|retest."
+                )
+            if self.model_b_swing_reclaim_bps < 0 or self.model_b_swing_reclaim_atr < 0:
+                raise ValueError("Swing reclaim caps must be >= 0.")
+            if (
+                self.model_b_swing_scratch_mfe_r < 0
+                or self.model_b_swing_scratch_minutes < 0
+                or self.model_b_swing_scratch_mae_r < 0
+            ):
+                raise ValueError("Swing scratch settings must be >= 0.")
+            time_on = self.model_b_swing_scratch_mfe_r > 0 or self.model_b_swing_scratch_minutes > 0
+            time_pair = self.model_b_swing_scratch_mfe_r > 0 and self.model_b_swing_scratch_minutes > 0
+            if time_on and not time_pair:
+                raise ValueError(
+                    "MODEL_B_SWING_SCRATCH_MFE_R and MODEL_B_SWING_SCRATCH_MINUTES must be set together."
+                )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -802,6 +828,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_min_sweep_bps=_float("MODEL_B_SWING_MIN_SWEEP_BPS", 5.0),
         model_b_swing_flow=(os.getenv("MODEL_B_SWING_FLOW") or "tape").strip().lower() or "tape",
         model_b_swing_fill_hours=_float("MODEL_B_SWING_FILL_HOURS", 24.0),
+        model_b_swing_reclaim_mode=(os.getenv("MODEL_B_SWING_RECLAIM_MODE") or "off").strip().lower() or "off",
+        model_b_swing_reclaim_bps=_float("MODEL_B_SWING_RECLAIM_BPS", 0.0),
+        model_b_swing_reclaim_atr=_float("MODEL_B_SWING_RECLAIM_ATR", 0.0),
+        model_b_swing_scratch_mfe_r=_float("MODEL_B_SWING_SCRATCH_MFE_R", 0.0),
+        model_b_swing_scratch_minutes=_float("MODEL_B_SWING_SCRATCH_MINUTES", 0.0),
+        model_b_swing_scratch_mae_r=_float("MODEL_B_SWING_SCRATCH_MAE_R", 0.0),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
