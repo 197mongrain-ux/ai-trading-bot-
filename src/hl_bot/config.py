@@ -354,6 +354,12 @@ class Settings:
     model_b_swing_trap_lift_bps: float = 5.0
     model_b_swing_trap_cvd_bars: int = 3
     model_b_swing_trap_delta_mode: str = "either"
+    # Trapped stop and slip. Defaults keep the wick stop and the 25/30 bp allowance.
+    model_b_swing_trap_stop_anchor: str = "trap"
+    model_b_swing_trap_min_stop_bps: float = 0.0
+    model_b_swing_trap_min_stop_atr: float = 0.0
+    model_b_swing_trap_slip_bps: float = 0.0
+    model_b_swing_trap_slip_mode: str = "flat"
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -666,6 +672,20 @@ class Settings:
                     f"MODEL_B_SWING_TRAP_DELTA={self.model_b_swing_trap_delta_mode!r} "
                     "must be either|delta|cvd|both."
                 )
+            if self.model_b_swing_trap_stop_anchor not in ("trap", "zone"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_STOP_ANCHOR={self.model_b_swing_trap_stop_anchor!r} "
+                    "must be trap|zone."
+                )
+            if self.model_b_swing_trap_min_stop_bps < 0 or self.model_b_swing_trap_min_stop_atr < 0:
+                raise ValueError("Trap min stop distance must be >= 0.")
+            if self.model_b_swing_trap_slip_bps < 0:
+                raise ValueError("MODEL_B_SWING_TRAP_SLIP_BPS must be >= 0.")
+            if self.model_b_swing_trap_slip_mode not in ("flat", "proportional"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_SLIP_MODE={self.model_b_swing_trap_slip_mode!r} "
+                    "must be flat|proportional."
+                )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -893,6 +913,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_trap_cvd_bars=_int("MODEL_B_SWING_TRAP_CVD_BARS", 3),
         model_b_swing_trap_delta_mode=(os.getenv("MODEL_B_SWING_TRAP_DELTA") or "either").strip().lower()
         or "either",
+        model_b_swing_trap_stop_anchor=(os.getenv("MODEL_B_SWING_TRAP_STOP_ANCHOR") or "trap").strip().lower()
+        or "trap",
+        model_b_swing_trap_min_stop_bps=_float("MODEL_B_SWING_TRAP_MIN_STOP_BPS", 0.0),
+        model_b_swing_trap_min_stop_atr=_float("MODEL_B_SWING_TRAP_MIN_STOP_ATR", 0.0),
+        model_b_swing_trap_slip_bps=_float("MODEL_B_SWING_TRAP_SLIP_BPS", 0.0),
+        model_b_swing_trap_slip_mode=(os.getenv("MODEL_B_SWING_TRAP_SLIP_MODE") or "flat").strip().lower()
+        or "flat",
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

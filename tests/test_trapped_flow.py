@@ -22,15 +22,33 @@ from hl_bot.strategy.model_b.footprint import (
     session_volume_profile,
     stacked_runs,
 )
-from hl_bot.research.trapped_backtest import grid_cells, main
-from hl_bot.strategy.model_b.swing import Level, SwingParams
+from hl_bot.research.trapped_backtest import (
+    Working,
+    expectancy_split,
+    grid_cells,
+    main,
+    simulate,
+    stop_cells,
+)
+from hl_bot.strategy.model_b.fees import conservative_fees
+from hl_bot.strategy.model_b.swing import (
+    Level,
+    SwingParams,
+    exit_net,
+    exit_slip_bps,
+    reserved_slip_bps,
+    size_swing,
+)
+from hl_bot.strategy.model_b.thesis import ThesisBook
 from hl_bot.strategy.model_b.trapped import (
     check_trapped,
+    footprint_atr,
     is_mid_range,
+    place_trap_stop,
     plan_from_signal,
     tag_level,
 )
-from hl_bot.strategy.model_b.types import TradePrint
+from hl_bot.strategy.model_b.types import AloIntent, TradePrint
 
 
 def _bar(t, o, h, l, c, levels, delta, cvd) -> FootprintBar:
@@ -344,6 +362,7 @@ def _line(ts_ms, side, px, sz, coin="BTC"):
 
 def test_backtest_cli_on_a_synthetic_tape(tmp_path: Path):
     assert len(grid_cells()) == 81
+    assert len(stop_cells()) == 15
     folder = tmp_path / "BTC"
     folder.mkdir()
     trap = int(_oct(9, 12) * 1000)
@@ -399,15 +418,328 @@ def test_backtest_cli_on_a_synthetic_tape(tmp_path: Path):
     assert code == 0
     text = (out / "trapped_summary.md").read_text()
     assert "cannot say whether this entry has an edge" in text
+    assert "with-marks" in text
+    assert "risk budget" in text
     with (out / "trapped_trades.csv").open() as handle:
         rows = list(csv.DictReader(handle))
-    assert len(rows) == 1
-    assert rows[0]["reason"] == "tp"
-    assert rows[0]["side"] == "long"
-    assert float(rows[0]["r"]) > 0
+    default_rows = [row for row in rows if row["config"] == "1m-imb3-stack3-z20"]
+    assert len(default_rows) == 1
+    assert default_rows[0]["reason"] == "tp"
+    assert default_rows[0]["side"] == "long"
+    assert float(default_rows[0]["r"]) > 0
+    assert float(default_rows[0]["r"]) == pytest.approx(
+        float(default_rows[0]["net"]) / float(default_rows[0]["budget"])
+    )
+    flat = [row for row in rows if row["config"] == "slip-flat10"]
+    assert len(flat) == 1
+    assert float(flat[0]["slip_bps"]) == pytest.approx(10)
+    assert float(default_rows[0]["slip_bps"]) == pytest.approx(25)
     prints = [TapePrint(_oct(9, 11) + i * 0.01, 20000, 1, "buy") for i in range(40)]
     prints += [TapePrint(_oct(9, 11, 1) + i * 0.01, 20040, 1, "sell") for i in range(10)]
     profile = session_volume_profile(prints, tick=1, start=_oct(9, 11), end=_oct(9, 12))
     assert profile.ok and profile.val == pytest.approx(20000) and profile.poc == pytest.approx(20000)
     bars = build_footprint(prints, bar_sec=60, tick=1)
     assert bars and bars[0].delta > 0
+
+
+def _tight_pair():
+    """Wick and close a few bps apart, so the default buffer is about 5 bps."""
+    tick = 0.01
+    trap = _bar(
+        0,
+        10000.05,
+        10000.08,
+        10000.0,
+        10000.04,
+        [
+            (10000.0, 0.1, 10),
+            (10000.01, 0.1, 10),
+            (10000.02, 0.1, 10),
+            (10000.08, 1, 0),
+        ],
+        delta=-20,
+        cvd=-20,
+    )
+    failure = _bar(
+        60,
+        10000.04,
+        10000.10,
+        10000.03,
+        10000.06,
+        [(10000.06, 8, 0)],
+        delta=8,
+        cvd=-12,
+    )
+    levels = [
+        Level(10000.0, "support", 3.0, 1, ("PDL",), 1.0),
+        Level(10200.0, "resistance", 3.0, 1, ("PDH",), 1.0),
+    ]
+    return trap, failure, levels, tick
+
+
+def _ranged(n, start, width, close=10000.0):
+    bars = []
+    for i in range(n):
+        bars.append(
+            _bar(
+                start + i * 60,
+                close,
+                close + width,
+                close,
+                close,
+                [(close, 1, 1)],
+                delta=0,
+                cvd=0,
+            )
+        )
+    return bars
+
+
+def test_defaults_keep_the_wick_stop_and_the_coin_slip():
+    assert SwingParams().trap_stop_anchor == "trap"
+    assert SwingParams().trap_min_stop_bps == 0
+    assert SwingParams().trap_min_stop_atr == 0
+    assert SwingParams().trap_slip_bps == 0
+    assert SwingParams().trap_slip_mode == "flat"
+    names = [cell.name for cell in stop_cells()]
+    assert names[0] == "stop-trap-x20-k0.5"
+    assert "stop-zone-x40-k1" in names
+    assert names[-3:] == ["slip-flat10", "slip-flat15", "slip-proportional"]
+
+
+def test_zone_stop_sits_beyond_the_level_and_the_floor_widens_a_tight_wick():
+    trap, failure, levels, tick = _tight_pair()
+    # Pierce the level so the wick stop is further than the zone stop.
+    pierced = _bar(
+        0,
+        10000.05,
+        10000.08,
+        9990.0,
+        10000.04,
+        [
+            (9990.0, 0.1, 10),
+            (9990.01, 0.1, 10),
+            (9990.02, 0.1, 10),
+            (10000.08, 1, 0),
+        ],
+        delta=-20,
+        cvd=-20,
+    )
+    wide = _params(trap_zone_bps=20)
+    # 10 points under 10000 is 10 bps, inside a 20 bp zone.
+    zone = check_trapped(
+        "long", pierced, failure, [pierced, failure], 1, levels, _params(trap_stop_anchor="zone", trap_zone_bps=20), tick
+    )
+    wick = check_trapped("long", pierced, failure, [pierced, failure], 1, levels, wide, tick)
+    assert not isinstance(zone, str) and not isinstance(wick, str)
+    assert zone.stop < 10000
+    assert wick.stop < pierced.l
+    assert zone.stop > wick.stop
+    raw = check_trapped("long", trap, failure, [trap, failure], 1, levels, _params(), tick)
+    assert not isinstance(raw, str)
+    raw_bps = (raw.entry - raw.stop) / raw.entry * 10_000
+    assert raw_bps < 12
+    floored = check_trapped(
+        "long",
+        trap,
+        failure,
+        [trap, failure],
+        1,
+        levels,
+        _params(trap_min_stop_bps=20, trap_min_stop_atr=0),
+        tick,
+    )
+    assert not isinstance(floored, str)
+    assert (floored.entry - floored.stop) / floored.entry * 10_000 == pytest.approx(20, abs=0.05)
+    assert floored.stop < raw.stop
+
+
+def test_min_distance_is_the_max_of_bps_and_atr_and_ignores_the_failure_bar():
+    trap, failure, levels, tick = _tight_pair()
+    history = _ranged(14, -14 * 60, width=50.0)
+    bars = history + [trap, failure]
+    huge = _bar(60, 10000, 11000, 10000, 10000.06, [(10000.06, 8, 0)], delta=8, cvd=-12)
+    params = _params(trap_min_stop_bps=20, trap_min_stop_atr=0.5)
+    signal = check_trapped("long", trap, failure, bars, len(bars) - 1, levels, params, tick)
+    assert not isinstance(signal, str)
+    atr = footprint_atr(bars, len(bars) - 2)
+    assert atr is not None and atr == pytest.approx(50, rel=0.15)
+    need = max(signal.entry * 20 / 10_000, 0.5 * atr)
+    assert signal.entry - signal.stop == pytest.approx(need, rel=0.02)
+    # The failure bar's 1000-point range is not in that ATR.
+    atr_with_failure = footprint_atr(history + [trap, huge], len(history) + 1)
+    assert atr_with_failure > atr + 10
+    # ATR missing: the bps floor still applies. A larger bps wins over a small ATR.
+    only = check_trapped(
+        "long",
+        trap,
+        failure,
+        [trap, failure],
+        1,
+        levels,
+        _params(trap_min_stop_bps=40, trap_min_stop_atr=1.0),
+        tick,
+    )
+    assert footprint_atr([trap, failure], 0) is None
+    assert not isinstance(only, str)
+    assert (only.entry - only.stop) / only.entry * 10_000 == pytest.approx(40, abs=0.05)
+    small_atr = check_trapped(
+        "long",
+        trap,
+        failure,
+        _ranged(14, -14 * 60, width=10.0) + [trap, failure],
+        15,
+        levels,
+        _params(trap_min_stop_bps=40, trap_min_stop_atr=0.5),
+        tick,
+    )
+    assert not isinstance(small_atr, str)
+    assert (small_atr.entry - small_atr.stop) / small_atr.entry * 10_000 == pytest.approx(40, abs=0.5)
+
+
+def test_proportional_slip_shrinks_the_reserve_and_changes_r():
+    trap, failure, levels, tick = _tight_pair()
+    signal = check_trapped("long", trap, failure, [trap, failure], 1, levels, _params(), tick)
+    assert not isinstance(signal, str)
+    stop_bps = (signal.entry - signal.stop) / signal.entry * 10_000
+    assert stop_bps < 15
+    proportional = reserved_slip_bps(
+        "BTC", signal.entry, signal.stop, _params(trap_slip_mode="proportional")
+    )
+    assert proportional == pytest.approx(stop_bps)
+    assert proportional < 25
+    assert reserved_slip_bps("xyz:SP500", signal.entry, signal.stop, _params()) == pytest.approx(30)
+    equity = 10_000.0
+    fees = conservative_fees("BTC")
+    wide = _params()
+    tight = _params(trap_slip_bps=10)
+    size_wide, budget_wide = size_swing(
+        "BTC", signal.entry, signal.stop, equity, wide, risk_pct=0.01, slip_bps=25
+    )
+    size_tight, budget_tight = size_swing(
+        "BTC", signal.entry, signal.stop, equity, tight, risk_pct=0.01, slip_bps=10
+    )
+    assert budget_tight / size_tight < budget_wide / size_wide
+    assert budget_wide <= equity * 0.01 + 1e-4
+    assert budget_tight <= equity * 0.01 + 1e-4
+    target = signal.entry + (signal.entry - signal.stop)
+    net_wide = exit_net(
+        side="long", size=size_wide, entry=signal.entry, exit_px=target,
+        reason="tp", maker_fee=fees.maker, taker_fee=fees.taker, slip_bps=25,
+    )
+    net_tight = exit_net(
+        side="long", size=size_tight, entry=signal.entry, exit_px=target,
+        reason="tp", maker_fee=fees.maker, taker_fee=fees.taker, slip_bps=10,
+    )
+    assert net_tight / budget_tight > net_wide / budget_wide
+
+
+def test_a_stop_cannot_lose_more_than_two_percent_or_the_budget():
+    equity = 5_000.0
+    entry = 10_000.0
+    stop = entry * (1.0 - 0.0001)
+    params = _params(trap_slip_bps=30)
+    size, budget = size_swing("BTC", entry, stop, equity, params, risk_pct=0.02, slip_bps=30)
+    fees = conservative_fees("BTC")
+    paid = -exit_net(
+        side="long", size=size, entry=entry, exit_px=stop, reason="stop",
+        maker_fee=fees.maker, taker_fee=fees.taker, slip_bps=30,
+    )
+    assert paid <= equity * 0.02 + 1e-6
+    assert paid <= budget + 1e-6
+    short_stop = entry * (1.0 + 0.0001)
+    size_s, budget_s = size_swing(
+        "xyz:SP500", entry, short_stop, equity, params, risk_pct=0.02, slip_bps=30
+    )
+    fees_x = conservative_fees("xyz:SP500")
+    paid_s = -exit_net(
+        side="short", size=size_s, entry=entry, exit_px=short_stop, reason="stop",
+        maker_fee=fees_x.maker, taker_fee=fees_x.taker, slip_bps=30,
+    )
+    assert paid_s <= equity * 0.02 + 1e-6
+    assert paid_s <= budget_s + 1e-4
+
+
+def test_summary_r_is_the_budget_and_marks_are_separate():
+    params = SwingParams(entry="trapped", flow="off", hold_days=3, fill_hours=24, trap_slip_bps=25)
+    btc = Working(
+        coin="BTC", side="long", signal_ts=1_000, expire_ts=90_000,
+        entry=100.0, stop=90.0, take_profit=120.0, size=1.0, level=100.0,
+        sources="PDL", absorption=99.0, delta=1.0, slope=1.0, config="t",
+    )
+    eth = Working(
+        coin="ETH", side="long", signal_ts=1_000, expire_ts=90_000,
+        entry=100.0, stop=90.0, take_profit=120.0, size=1.0, level=100.0,
+        sources="PDL", absorption=99.0, delta=1.0, slope=1.0, config="t",
+    )
+    prints = {
+        "BTC": [TapePrint(1_100, 100.0, 1, "sell"), TapePrint(1_200, 120.0, 1, "buy")],
+        "ETH": [TapePrint(1_100, 100.0, 1, "sell"), TapePrint(1_300, 101.0, 1, "buy")],
+    }
+    rows, _counts = simulate([btc, eth], prints, params, 10_000, 0.01)
+    by_coin = {row["coin"]: row for row in rows}
+    assert by_coin["BTC"]["reason"] == "tp"
+    assert by_coin["ETH"]["reason"] == "tape_end"
+    for row in rows:
+        assert float(row["r"]) == pytest.approx(float(row["net"]) / float(row["budget"]))
+        price_risk = float(row["size"]) * abs(float(row["entry"]) - float(row["stop"]))
+        assert float(row["budget"]) > price_risk
+    split = expectancy_split(rows)
+    assert split["n_closed"] == 1 and split["n_marks"] == 1
+    assert split["e_closed"] == pytest.approx(float(by_coin["BTC"]["r"]))
+    assert split["e_marks"] == pytest.approx(float(by_coin["ETH"]["r"]))
+    assert split["e_with_marks"] == pytest.approx(
+        (float(by_coin["BTC"]["r"]) + float(by_coin["ETH"]["r"])) / 2
+    )
+
+
+def test_paper_close_pays_the_slip_the_arm_reserved():
+    assert exit_slip_bps("BTC", SwingParams(), None) == pytest.approx(25)
+    assert exit_slip_bps("xyz:GOLD", SwingParams(), None) == pytest.approx(30)
+    assert exit_slip_bps("BTC", SwingParams(), 10) == pytest.approx(10)
+    book = ThesisBook()
+    intent = AloIntent(
+        coin="BTC",
+        side="long",
+        limit_px=100.0,
+        size=1.0,
+        stop=99.0,
+        take_profit=104.0,
+        swing_id="trap-1",
+        tif="Alo",
+        leverage=20,
+        sweep_px=99.5,
+        tick=0.1,
+        pool_px=104.0,
+        exit_slip_bps=10.0,
+    )
+    book.post(intent, 0.0)
+    pos = book.try_fill_from_prints(
+        [TradePrint(ts=1.0, coin="BTC", price=100.0, size=1.0, side="sell")],
+        partial=True,
+    )
+    assert pos is not None
+    assert pos.exit_slip_bps == pytest.approx(10)
+    closed = book.force_flat("BTC", 101.0, reason="tp")
+    assert closed is not None and closed.exit_slip_bps == pytest.approx(10)
+    Settings(
+        entry_mode="model_b",
+        model_b_style="swing",
+        risk_per_trade=0.01,
+        leverage=20,
+        model_b_swing_trap_stop_anchor="zone",
+        model_b_swing_trap_min_stop_bps=30,
+        model_b_swing_trap_min_stop_atr=0.5,
+        model_b_swing_trap_slip_bps=10,
+        model_b_swing_trap_slip_mode="proportional",
+    ).validate()
+    with pytest.raises(ValueError, match="TRAP_STOP_ANCHOR"):
+        Settings(
+            entry_mode="model_b",
+            model_b_style="swing",
+            risk_per_trade=0.01,
+            leverage=20,
+            model_b_swing_trap_stop_anchor="wick",
+        ).validate()
+    # place_trap_stop rejects a stop that is not beyond the anchor.
+    assert place_trap_stop("long", 100, 100, 100, 0, _params(trap_stop_bps=0), None) is None

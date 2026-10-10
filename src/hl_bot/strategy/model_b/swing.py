@@ -104,6 +104,16 @@ class SwingParams:
     trap_lift_bps: float = 5.0
     trap_cvd_bars: int = 3
     trap_delta_mode: str = "either"  # either | delta | cvd | both
+    # Stop and slip for the trapped entry only. Defaults keep the trap-bar
+    # extreme plus trap_stop_bps, and the coin 25/30 bp allowance.
+    # zone anchors beyond the level instead of the wick. A min distance of
+    # max(bps, k×ATR(14) of the footprint bars) pushes a tighter stop out.
+    # proportional slip reserves min(the flat allowance, the stop's own bps).
+    trap_stop_anchor: str = "trap"  # trap | zone
+    trap_min_stop_bps: float = 0.0
+    trap_min_stop_atr: float = 0.0
+    trap_slip_bps: float = 0.0  # 0 = the coin allowance (25 main, 30 xyz)
+    trap_slip_mode: str = "flat"  # flat | proportional
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -148,6 +158,11 @@ class SwingParams:
             trap_lift_bps=float(getattr(settings, "model_b_swing_trap_lift_bps", 5.0) or 5.0),
             trap_cvd_bars=int(getattr(settings, "model_b_swing_trap_cvd_bars", 3) or 3),
             trap_delta_mode=str(getattr(settings, "model_b_swing_trap_delta_mode", "either") or "either"),
+            trap_stop_anchor=str(getattr(settings, "model_b_swing_trap_stop_anchor", "trap") or "trap"),
+            trap_min_stop_bps=float(getattr(settings, "model_b_swing_trap_min_stop_bps", 0.0) or 0.0),
+            trap_min_stop_atr=float(getattr(settings, "model_b_swing_trap_min_stop_atr", 0.0) or 0.0),
+            trap_slip_bps=float(getattr(settings, "model_b_swing_trap_slip_bps", 0.0) or 0.0),
+            trap_slip_mode=str(getattr(settings, "model_b_swing_trap_slip_mode", "flat") or "flat"),
         )
 
 
@@ -180,6 +195,10 @@ class Plan:
     sweep_bps: float = 0.0
     reclaim_bps: float = 0.0
     retest: bool = False
+    # Dollars reserved at the arm (stop + slip + fees). 0 on plans built
+    # before this field. Tape R is net $ / this budget, not the raw stop.
+    budget: float = 0.0
+    slip_bps: float = 0.0
 
 
 def _source_ok(source: str, level_set: str) -> bool:
@@ -227,6 +246,47 @@ def slip_bps_for(coin: str, params: SwingParams) -> float:
     if ":" in name and name.split(":", 1)[0] == "xyz":
         return float(params.slip_xyz_bps)
     return float(params.slip_main_bps)
+
+
+def trap_flat_allowance(coin: str, params: SwingParams) -> float:
+    """Flat slip bps reserved for a trapped trade.
+
+    ``trap_slip_bps`` of 0 keeps the coin allowance (25 main, 30 xyz).
+    """
+    override = float(getattr(params, "trap_slip_bps", 0.0) or 0.0)
+    if override > 0:
+        return override
+    return slip_bps_for(coin, params)
+
+
+def reserved_slip_bps(coin: str, entry: float, stop: float, params: SwingParams) -> float:
+    """Slip bps baked into the size, and the same number the exit must pay.
+
+    Sweep keeps the coin allowance. Trapped flat uses ``trap_flat_allowance``.
+    Proportional, the one definition registered for this study, is the
+    minimum of that allowance and the stop distance in bps. A stop tighter
+    than the flat allowance then reserves only its own distance.
+    """
+    if str(getattr(params, "entry", "sweep") or "sweep") != "trapped":
+        return slip_bps_for(coin, params)
+    flat = trap_flat_allowance(coin, params)
+    mode = str(getattr(params, "trap_slip_mode", "flat") or "flat")
+    if mode == "proportional" and float(entry) > 0:
+        stop_bps = abs(float(entry) - float(stop)) / float(entry) * 10_000.0
+        return min(flat, max(0.0, stop_bps))
+    return flat
+
+
+def exit_slip_bps(coin: str, params: SwingParams, reserved: float | None) -> float:
+    """Slip the paper close pays. ``None`` is the coin allowance.
+
+    A trapped arm stores the reserved number, including 0, so a later
+    change to the flag cannot make the exit pay a different slip than
+    the size was built with.
+    """
+    if reserved is None:
+        return slip_bps_for(coin, params)
+    return float(reserved)
 
 
 def closed_candles(bars: list[dict] | None, tf_sec: int, now: float) -> list[dict]:
@@ -653,16 +713,22 @@ def size_swing(
     maker_fee: float | None = None,
     taker_fee: float | None = None,
     max_leverage: int = 20,
+    slip_bps: float | None = None,
 ) -> tuple[float, float]:
     """Size so stop distance + slip + fees stays inside the swing risk and 20x.
 
     Returns ``(size, loss_at_stop_including_slip_and_fees)``. Size 0 does not arm.
     The loss cap is the swing risk, and never above 2% of ``equity``.
+    ``slip_bps`` overrides the allowance. ``None`` uses the coin allowance,
+    or the trapped rule when ``params.entry`` is ``trapped``.
     """
     fees = conservative_fees(coin)
     maker = float(maker_fee if maker_fee is not None else fees.maker)
     taker = float(taker_fee if taker_fee is not None else fees.taker)
-    slip = slip_bps_for(coin, params)
+    if slip_bps is None:
+        slip = reserved_slip_bps(coin, entry, stop, params)
+    else:
+        slip = float(slip_bps)
     risk = float(risk_pct)
     size, _dollar = size_from_stop(
         equity,
@@ -690,6 +756,38 @@ def size_swing(
     loss = loss_at_stop(
         capped, entry, stop, include_fees=True, maker_fee=maker, taker_fee=taker, slip_bps=slip
     )
+    # A short stop pays the taker fee on the slipped price, which is a hair
+    # more than loss_at_stop. Trapped scales that fill back inside the cap.
+    # Sweep and scalp sizes are left as cap_size_to_loss computed them.
+    if str(getattr(params, "entry", "sweep") or "sweep") == "trapped" and capped > 0 and equity > 0:
+        side = "long" if float(stop) < float(entry) else "short"
+        paid = -exit_net(
+            side=side,
+            size=capped,
+            entry=float(entry),
+            exit_px=float(stop),
+            reason="stop",
+            maker_fee=maker,
+            taker_fee=taker,
+            slip_bps=slip,
+        )
+        cap_dollars = min(risk, 0.02) * float(equity)
+        if paid > cap_dollars > 0:
+            capped = capped * cap_dollars / paid
+            loss = loss_at_stop(
+                capped, entry, stop, include_fees=True, maker_fee=maker, taker_fee=taker, slip_bps=slip
+            )
+            paid = -exit_net(
+                side=side,
+                size=capped,
+                entry=float(entry),
+                exit_px=float(stop),
+                reason="stop",
+                maker_fee=maker,
+                taker_fee=taker,
+                slip_bps=slip,
+            )
+        loss = max(loss, paid)
     return capped, loss
 
 
@@ -903,7 +1001,7 @@ def plan_trade(
             continue
         tp, r_mult, runner_px = target
         try:
-            size, _loss = size_swing(
+            size, loss = size_swing(
                 coin,
                 level.price,
                 stop,
@@ -945,6 +1043,8 @@ def plan_trade(
             sweep_bps=float(sweep_bps),
             reclaim_bps=float(reclaim_bps),
             retest=(action == "retest"),
+            budget=float(loss),
+            slip_bps=slip_bps_for(coin, params),
         )
         if best is None or (plan.score, plan.r_multiple) > (best.score, best.r_multiple):
             best = plan

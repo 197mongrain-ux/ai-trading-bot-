@@ -1299,7 +1299,7 @@ def _run_model_b(
                 if closed is not None:
                     pnl = closed.pnl
                     if swing_on:
-                        from hl_bot.strategy.model_b.swing import SwingParams, exit_net, slip_bps_for
+                        from hl_bot.strategy.model_b.swing import SwingParams, exit_net, exit_slip_bps
 
                         maker_fee, taker_fee = fee_book.pair(closed.coin)
                         params = engine.swing_params or SwingParams()
@@ -1311,7 +1311,9 @@ def _run_model_b(
                             reason=closed.reason,
                             maker_fee=maker_fee,
                             taker_fee=taker_fee,
-                            slip_bps=slip_bps_for(closed.coin, params),
+                            slip_bps=exit_slip_bps(
+                                closed.coin, params, getattr(closed, "exit_slip_bps", None)
+                            ),
                         )
                     equity += pnl
                     risk.record_trade_close(pnl)

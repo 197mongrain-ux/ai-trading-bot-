@@ -104,7 +104,16 @@ python -m hl_bot.research.trapped_backtest \
   --out docs/pnl/trapped_sample
 ```
 
-That writes `trapped_trades.csv` and `trapped_summary.md`. The grid is bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone tolerance 10/20/40 bps.
+That writes `trapped_trades.csv` and `trapped_summary.md`. The entry grid is bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone tolerance 10/20/40 bps. A second grid, only on the default cell, tries a stop beyond the zone and a minimum distance of max(20/30/40 bps, 0.5/1.0×ATR(14)), plus a flat 10 or 15 bp slip and a proportional slip. Those flags stay off (`MODEL_B_SWING_TRAP_STOP_ANCHOR=trap`, min distance 0, slip mode `flat`). R in that summary is net dollars divided by the risk budget, and an open trade at the end of the file is a mark inside the with-marks total.
+
+The same tape window can replay the sweep entry (15m confirm, 1h+4h with the 4h leading):
+
+```bash
+python -m hl_bot.research.sweep_tape_backtest \
+  --tape /workspace/hl_tape --from 2026-10-09 --to 2026-10-09 \
+  --coins BTC,ETH,SOL,xyz:GOLD,xyz:SP500,xyz:XYZ100 \
+  --out docs/pnl/sweep_tape_sample
+```
 
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 

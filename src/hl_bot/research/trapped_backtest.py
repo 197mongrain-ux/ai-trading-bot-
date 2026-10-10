@@ -1,15 +1,27 @@
 """Tape backtest for the trapped-seller / trapped-buyer entry.
 
-The grid is fixed: bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4,
+The entry grid is fixed: bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4,
 zone tolerance 10/20/40 bps. The default cell is 1m, 3:1, 3 stacked,
 20 bps. Seeing a sample does not add or drop a cell.
+
+A second grid, also fixed, runs only on that default cell. Stop anchor
+is trap or zone, min distance is max(X bps, k×ATR(14)) with X 20/30/40
+and k 0.5/1.0. Slip on the default geometry is flat 10 bps, flat 15 bps,
+or proportional (min of the coin 25/30 allowance and the stop's own bps).
+Those cells are not crossed with the 81 entry cells.
+
+R is net dollars divided by the risk budget reserved at the arm (stop
+distance plus the slip that was sized, plus fees). It is not the raw
+stop distance. ``tape_end`` rows are marks. Closed expectancy leaves
+them out. The with-marks total includes them. A stop's dollar loss stays
+inside the 2% cap.
 
 Fill model, locked with the grid: the signal is known at the failure
 bar's close. A post-only limit rests at the entry. A later print through
 the target before a fill cancels the order. A print through the stop
 before a fill cancels it. A fill is the limit price and pays the maker
 fee. A stop, max-hold, or end-of-tape flatten pays the taker fee plus
-the swing slip (25 bps main, 30 bps xyz). A target pays the maker fee.
+the slip that sizing reserved. A target pays the maker fee.
 One position per coin. Funding is not in the tape files, so it is not
 charged.
 
@@ -43,8 +55,10 @@ from hl_bot.strategy.model_b.swing import (
     aggregate,
     build_levels,
     exit_net,
-    slip_bps_for,
+    reserved_slip_bps,
+    size_swing,
 )
+from hl_bot.strategy.model_b.swings import bar_open_sec
 from hl_bot.strategy.model_b.trapped import TrapSignal, assess_pair, merge_levels
 from hl_bot.strategy.model_b.universe import canon_coin
 
@@ -54,6 +68,12 @@ GRID_IMBALANCE = (2.5, 3.0, 4.0)
 GRID_STACKED = (2, 3, 4)
 GRID_ZONE_BPS = (10.0, 20.0, 40.0)
 DEFAULT_CELL = ("1m", 3.0, 3, 20.0)
+# Pre-registered stop/slip study. Default entry cell only. Do not extend
+# after looking at a tape, and do not cross it with the 81 entry cells.
+GRID_STOP_ANCHOR = ("trap", "zone")
+GRID_MIN_STOP_BPS = (20.0, 30.0, 40.0)
+GRID_MIN_STOP_ATR = (0.5, 1.0)
+GRID_SLIP_BPS = (10.0, 15.0)
 
 COLUMNS = (
     "config",
@@ -69,6 +89,9 @@ COLUMNS = (
     "size",
     "net",
     "r",
+    "budget",
+    "slip_bps",
+    "stop_bps",
     "level",
     "sources",
     "absorption",
@@ -122,6 +145,51 @@ def base_params(cell: Cell) -> SwingParams:
     )
 
 
+@dataclass(frozen=True)
+class StopCell:
+    """One pre-registered stop or slip variant of the default entry cell."""
+
+    kind: str  # stop | slip
+    anchor: str = "trap"
+    min_bps: float = 0.0
+    min_atr: float = 0.0
+    slip_bps: float = 0.0
+    slip_mode: str = "flat"
+
+    @property
+    def name(self) -> str:
+        if self.kind == "slip":
+            if self.slip_mode == "proportional":
+                return "slip-proportional"
+            return f"slip-flat{self.slip_bps:g}"
+        return f"stop-{self.anchor}-x{self.min_bps:g}-k{self.min_atr:g}"
+
+
+def stop_cells() -> list[StopCell]:
+    cells = [
+        StopCell("stop", anchor, bps, k)
+        for anchor in GRID_STOP_ANCHOR
+        for bps in GRID_MIN_STOP_BPS
+        for k in GRID_MIN_STOP_ATR
+    ]
+    cells.append(StopCell("slip", slip_bps=GRID_SLIP_BPS[0], slip_mode="flat"))
+    cells.append(StopCell("slip", slip_bps=GRID_SLIP_BPS[1], slip_mode="flat"))
+    cells.append(StopCell("slip", slip_mode="proportional"))
+    return cells
+
+
+def params_for_stop(cell: StopCell) -> SwingParams:
+    base = base_params(Cell(*DEFAULT_CELL))
+    return replace(
+        base,
+        trap_stop_anchor=cell.anchor,
+        trap_min_stop_bps=float(cell.min_bps),
+        trap_min_stop_atr=float(cell.min_atr),
+        trap_slip_bps=float(cell.slip_bps),
+        trap_slip_mode=cell.slip_mode,
+    )
+
+
 def coin_dirname(coin: str) -> str:
     return canon_coin(coin).replace(":", "_")
 
@@ -163,8 +231,8 @@ def load_coin(root: Path, coin: str, start: str, end: str) -> tuple[list[TapePri
     return prints, hourly
 
 
-def _hourly(folder: Path, prints: list[TapePrint]) -> list[dict]:
-    """1h bars from ``candles_1m.jsonl`` when it is there, filled by the tape."""
+def minute_candles(folder: Path, prints: list[TapePrint]) -> list[dict]:
+    """1m bars. ``candles_1m.jsonl`` wins a minute the tape also printed."""
     candles: dict[float, dict] = {}
     path = folder / "candles_1m.jsonl"
     if path.is_file():
@@ -207,10 +275,15 @@ def _hourly(folder: Path, prints: list[TapePrint]) -> list[dict]:
                 "c": bar.c,
                 "v": bar.buy + bar.sell,
             }
-    one_min = [candles[key] for key in sorted(candles)]
+    return [candles[key] for key in sorted(candles)]
+
+
+def _hourly(folder: Path, prints: list[TapePrint]) -> list[dict]:
+    """1h bars from ``candles_1m.jsonl`` when it is there, filled by the tape."""
+    one_min = minute_candles(folder, prints)
     if not one_min:
         return []
-    end = max(bar["t"] for bar in one_min) / 1000.0 + 120.0
+    end = max(bar_open_sec(bar["t"]) for bar in one_min) + 120.0
     return aggregate(one_min, 60, 3600, end)
 
 
@@ -260,6 +333,8 @@ class Working:
     delta: float
     slope: float
     config: str
+    budget: float = 0.0
+    slip_bps: float | None = None
 
 
 @dataclass
@@ -364,6 +439,9 @@ def simulate(
         nonlocal cash
         work = pos.work
         fees = conservative_fees(work.coin)
+        slip = work.slip_bps
+        if slip is None:
+            slip = reserved_slip_bps(work.coin, work.entry, work.stop, params)
         net = exit_net(
             side=work.side,
             size=work.size,
@@ -372,10 +450,15 @@ def simulate(
             reason=reason,
             maker_fee=fees.maker,
             taker_fee=fees.taker,
-            slip_bps=slip_bps_for(work.coin, params),
+            slip_bps=float(slip),
         )
-        risk_dollars = work.size * abs(work.entry - work.stop)
-        r_mult = net / risk_dollars if risk_dollars > 0 else 0.0
+        budget = float(work.budget)
+        if budget <= 0:
+            budget = work.size * abs(work.entry - work.stop)
+        r_mult = net / budget if budget > 0 else 0.0
+        stop_bps = (
+            abs(work.entry - work.stop) / work.entry * 10_000.0 if work.entry > 0 else 0.0
+        )
         cash += net
         mark_dd()
         counts[reason] += 1
@@ -394,6 +477,9 @@ def simulate(
                 "size": work.size,
                 "net": net,
                 "r": r_mult,
+                "budget": budget,
+                "slip_bps": float(slip),
+                "stop_bps": stop_bps,
                 "level": work.level,
                 "sources": work.sources,
                 "absorption": work.absorption,
@@ -459,10 +545,9 @@ def simulate(
 
 
 def _resize(order: Working, equity: float, risk: float, params: SwingParams) -> Working | None:
-    from hl_bot.strategy.model_b.swing import size_swing
-
+    slip = reserved_slip_bps(order.coin, order.entry, order.stop, params)
     try:
-        size, _loss = size_swing(
+        size, loss = size_swing(
             order.coin,
             order.entry,
             order.stop,
@@ -471,22 +556,42 @@ def _resize(order: Working, equity: float, risk: float, params: SwingParams) -> 
             risk_pct=risk,
             leverage=20,
             max_leverage=20,
+            slip_bps=slip,
         )
     except ValueError:
         return None
-    if size <= 0:
+    if size <= 0 or loss <= 0:
         return None
-    return replace(order, size=float(size))
+    return replace(order, size=float(size), budget=float(loss), slip_bps=float(slip))
 
 
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(float(ts), timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _expectancy(rows: list[dict]) -> float | None:
+def _mean(rows: list[dict], key: str) -> float | None:
     if not rows:
         return None
-    return sum(float(row["r"]) for row in rows) / len(rows)
+    return sum(float(row[key]) for row in rows) / len(rows)
+
+
+def expectancy_split(rows: list[dict]) -> dict:
+    """Closed exits, end-of-tape marks, and the total that includes both.
+
+    R on each row is net dollars / the risk budget reserved at the arm.
+    """
+    closed = [row for row in rows if row.get("reason") != "tape_end"]
+    marks = [row for row in rows if row.get("reason") == "tape_end"]
+    return {
+        "n": len(rows),
+        "n_closed": len(closed),
+        "n_marks": len(marks),
+        "e_closed": _mean(closed, "r"),
+        "e_marks": _mean(marks, "r"),
+        "e_with_marks": _mean(rows, "r"),
+        "avg_budget": _mean(rows, "budget") if rows and "budget" in rows[0] else None,
+        "avg_stop_bps": _mean(rows, "stop_bps") if rows and "stop_bps" in rows[0] else None,
+    }
 
 
 def run(
@@ -512,31 +617,42 @@ def run(
             by_bar[bar][coin] = prepare_coin(coin, prints, hourly, bar, skeleton)
     reports = []
     all_rows: list[dict] = []
-    for cell in cells:
-        params = base_params(cell)
+    tape_map = {coin: loaded[coin][0] for coin in loaded}
+
+    def _play(preps: dict[str, Prepared], params: SwingParams, name: str) -> dict:
         orders: list[Working] = []
         fails: Counter = Counter()
-        tape_map = {coin: loaded[coin][0] for coin in loaded}
-        for coin, prep in by_bar[cell.bar].items():
+        for coin, prep in preps.items():
             found, cell_fails = scan_cell(prep, params, equity, risk)
             fails.update(cell_fails)
             for _ts, order in found:
-                orders.append(replace(order, config=cell.name))
+                orders.append(replace(order, config=name))
         rows, counts = simulate(orders, tape_map, params, equity, risk)
-        finished = [row for row in rows if row["reason"] != "tape_end"]
-        all_rows.extend(rows)
-        reports.append(
-            {
-                "cell": cell,
-                "fails": fails,
-                "counts": counts,
-                "rows": rows,
-                "expectancy_r": _expectancy(rows),
-                "closed_r": _expectancy(finished),
-                "net": float(counts.get("net", 0.0)),
-                "max_dd": float(counts.get("max_dd", 0.0)),
-            }
-        )
+        return {
+            "fails": fails,
+            "counts": counts,
+            "rows": rows,
+            "split": expectancy_split(rows),
+            "net": float(counts.get("net", 0.0)),
+            "max_dd": float(counts.get("max_dd", 0.0)),
+        }
+
+    for cell in cells:
+        played = _play(by_bar[cell.bar], base_params(cell), cell.name)
+        all_rows.extend(played["rows"])
+        reports.append({"cell": cell, **played})
+    # Stop and slip, default entry cell only. Not crossed with the other 80.
+    default_bar = DEFAULT_CELL[0]
+    if default_bar not in by_bar:
+        by_bar[default_bar] = {
+            coin: prepare_coin(coin, prints, hourly, default_bar, skeleton)
+            for coin, (prints, hourly) in loaded.items()
+        }
+    stop_reports = []
+    for cell in stop_cells():
+        played = _play(by_bar[default_bar], params_for_stop(cell), cell.name)
+        all_rows.extend(played["rows"])
+        stop_reports.append({"cell": cell, **played})
     span = _span(loaded)
     return {
         "coins": [canon_coin(coin) for coin in coins],
@@ -554,6 +670,7 @@ def run(
         },
         "span": span,
         "reports": reports,
+        "stop_reports": stop_reports,
         "rows": all_rows,
         "equity": equity,
         "risk": risk,
@@ -589,13 +706,32 @@ def write_csv(path: Path, rows: list[dict]) -> None:
             writer.writerow({key: _csv_value(row.get(key, "")) for key in COLUMNS})
 
 
+def _fmt(value: float | None, digits: int = 3) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.{digits}f}"
+
+
+def _result_row(name: str, report: dict) -> str:
+    counts = report["counts"]
+    split = report["split"]
+    budget = "—" if split["avg_budget"] is None else f"{split['avg_budget']:.2f}"
+    return (
+        f"| {name} | {counts.get('signaled', 0)} | {counts.get('filled', 0)} | "
+        f"{split['n_closed']} | {split['n_marks']} | {_fmt(split['e_closed'])} | "
+        f"{_fmt(split['e_marks'])} | {_fmt(split['e_with_marks'])} | {budget} | "
+        f"{report['net']:.2f} | {report['max_dd']:.2%} | "
+        f"{'yes' if split['n'] < 20 else 'no'} |"
+    )
+
+
 def render_markdown(result: dict) -> str:
     lines = [
         "# Trapped sellers / trapped buyers",
         "",
-        "Pipeline check on the tape that was passed in. A couple of hours of prints cannot say whether this entry has an edge. The grid was fixed before the run (bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone 10/20/40 bps). The default cell is 1m, 3:1, stacked 3, zone 20 bps. `MODEL_B_SWING_ENTRY` stays `sweep` unless it is set to `trapped`. Nothing here is deployed.",
+        "Pipeline check on the tape that was passed in. A couple of hours of prints cannot say whether this entry has an edge. The entry grid was fixed before the run (bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone 10/20/40 bps). The default cell is 1m, 3:1, stacked 3, zone 20 bps. The stop and slip grid below is also fixed, and it runs only on that default cell. `MODEL_B_SWING_ENTRY` stays `sweep` unless it is set to `trapped`. Nothing here is deployed.",
         "",
-        f"Window `{result['start']}` → `{result['end']}`. Equity {result['equity']:g}, risk {result['risk']:.2%}. Fees and the 25/30 bp slip are on. Funding is not in these files, so it is not charged. A `tape_end` row is a mark of a position still open when the file ends, not a finished trade.",
+        f"Window `{result['start']}` → `{result['end']}`. Equity {result['equity']:g}, risk {result['risk']:.2%}. R is net dollars divided by the risk budget reserved at the arm (stop distance, the slip that sizing used, and fees). It is not the raw stop distance. A `tape_end` row is a mark of a position still open when the file ends. Closed expectancy leaves those marks out. The with-marks total includes them. Funding is not in these files, so it is not charged. A stop's dollar loss stays inside the 2% cap.",
         "",
         "## Tape read",
         "",
@@ -627,27 +763,19 @@ def render_markdown(result: dict) -> str:
             "",
             "## Grid",
             "",
-            "The same fill can show up in more than one cell. That is one event counted again, not a new trade.",
+            "The same fill can show up in more than one cell. That is one event counted again, not a new trade. The entry grid uses the wick stop and the coin slip (25 bps main, 30 bps xyz).",
             "",
         ]
     )
-    lines.append(
-        "| config | signals | fills | trades | tape_end | E (all exits) | E (closed) | net | max DD | under 20 |"
+    header = (
+        "| config | signals | fills | closed | marks | E closed | E marks | E with marks | "
+        "avg budget $ | net | max DD | under 20 |"
     )
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+    align = "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    lines.append(header)
+    lines.append(align)
     for report in result["reports"]:
-        cell: Cell = report["cell"]
-        counts = report["counts"]
-        n = len(report["rows"])
-        closed = sum(1 for row in report["rows"] if row["reason"] != "tape_end")
-        e_all = "—" if report["expectancy_r"] is None else f"{report['expectancy_r']:.3f}"
-        e_closed = "—" if report["closed_r"] is None else f"{report['closed_r']:.3f}"
-        net = report["net"]
-        lines.append(
-            f"| {cell.name} | {counts.get('signaled', 0)} | {counts.get('filled', 0)} | {closed} | "
-            f"{n - closed} | {e_all} | {e_closed} | {net:.2f} | {report['max_dd']:.2%} | "
-            f"{'yes' if n < 20 else 'no'} |"
-        )
+        lines.append(_result_row(report["cell"].name, report))
     default = next((item for item in result["reports"] if item["cell"].is_default), None)
     lines.extend(["", "## Default cell", ""])
     if default is None:
@@ -670,9 +798,24 @@ def render_markdown(result: dict) -> str:
     lines.extend(
         [
             "",
+            "## Stop and slip",
+            "",
+            "Fixed before the run, and only on the default entry cell (`1m-imb3-stack3-z20`). Anchor `trap` is beyond the trap-bar extreme. Anchor `zone` is beyond the support or resistance. The min distance is max(X bps, k×ATR(14) of the footprint bars up to the trap bar), with X 20/30/40 and k 0.5/1.0. Those twelve cells keep the coin slip. The slip rows keep the wick stop and no min floor: flat 10 bps, flat 15 bps, and proportional, which reserves min(the coin 25/30 allowance, the stop distance in bps). `ref` is the default cell above. Avg budget is the mean dollars reserved per fill. A wider stop or a smaller slip changes how much of that budget is the stop versus unused slip, and therefore the R of the same price path. This is not crossed with the 81 entry cells. Seeing the table does not add a grid point.",
+            "",
+            header,
+            align,
+        ]
+    )
+    if default is not None:
+        lines.append(_result_row("ref-trap-slip25/30", default))
+    for report in result.get("stop_reports") or []:
+        lines.append(_result_row(report["cell"].name, report))
+    lines.extend(
+        [
+            "",
             "## Read this as a pipeline check",
             "",
-            "The same cell would have to be judged on both the 15m and the 1h books, in both halves, on at least 4 of 6 coins, with at least 20 trades, before the paper flag would turn on. This file does not meet that bar. Order-flow thresholds chosen on a few hours of one session would be fit to that session. Monday paper stays on the sweep entry.",
+            "The same cell would have to be judged on both the 15m and the 1h books, in both halves, on at least 4 of 6 coins, with at least 20 trades, before the paper flag would turn on. This file does not meet that bar. A stop or slip chosen on a few hours of one session would be fit to that session. Monday paper stays on the sweep entry, with the wick stop and the 25/30 bp allowance.",
             "",
         ]
     )
@@ -692,7 +835,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="docs/pnl/trapped_sample", help="Directory for the CSV and markdown")
     parser.add_argument("--equity", type=float, default=5000.0)
     parser.add_argument("--risk", type=float, default=0.01)
-    parser.add_argument("--no-grid", action="store_true", help="Run only the default cell")
+    parser.add_argument(
+        "--no-grid",
+        action="store_true",
+        help="Skip the other 80 entry cells. The default cell and the stop/slip study still run.",
+    )
     args = parser.parse_args(argv)
     coins = [part.strip() for part in str(args.coins).split(",") if part.strip()]
     result = run(

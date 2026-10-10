@@ -13,8 +13,11 @@ Long, in order:
 3. The next bar does not make a lower low and closes higher.
 4. That failure bar's delta is non-negative, or the CVD slope into it is.
 5. The paper order is a post-only Alo at the failure close (or a small
-   lift off the trap low). The stop is beyond the lower of the two lows
-   by a small buffer. The target is the opposite level inside 1R to 5R.
+   lift off the trap low). The stop defaults to beyond the lower of the
+   two lows by a small buffer. ``trap_stop_anchor=zone`` puts it beyond
+   the level instead, and a min distance of max(X bps, k×ATR(14) of the
+   footprint bars) can push either anchor further out. The target is the
+   opposite level inside 1R to 5R of that stop.
 
 Short mirrors every comparison. Same sizing, fees, and slip as swing.
 The resting order still uses the swing thesis: stale cancel if the
@@ -46,8 +49,10 @@ from hl_bot.strategy.model_b.swing import (
     Plan,
     SwingParams,
     _decision,
+    atr14_of,
     build_levels,
     pick_targets,
+    reserved_slip_bps,
     session_open,
     size_swing,
 )
@@ -205,6 +210,65 @@ def _stop_buffer(entry: float, tick: float, params: SwingParams) -> float:
     return max(float(tick) if tick > 0 else 0.0, bps)
 
 
+def footprint_atr(bars: list[FootprintBar], end_index: int) -> float | None:
+    """ATR(14) of footprint bars through ``end_index`` inclusive.
+
+    The failure bar is not included when ``end_index`` is the trap. A short
+    window returns None and the bps floor, if one is set, still applies.
+    """
+    if end_index < 0 or end_index >= len(bars):
+        return None
+    candles = [{"h": bar.h, "l": bar.l, "c": bar.c} for bar in bars[: end_index + 1]]
+    return atr14_of(candles)
+
+
+def place_trap_stop(
+    side: str,
+    entry: float,
+    absorption: float,
+    level_price: float,
+    tick: float,
+    params: SwingParams,
+    atr: float | None,
+) -> float | None:
+    """Stop beyond the wick (``trap``) or the level (``zone``).
+
+    After the anchor, a floor of max(X bps of entry, k×ATR) pushes the
+    stop further away when the anchor is tighter than that distance.
+    None when the stop is not beyond the anchor or not past the entry.
+    """
+    buffer = _stop_buffer(entry, tick, params)
+    if entry <= 0 or buffer <= 0:
+        return None
+    anchor = str(getattr(params, "trap_stop_anchor", "trap") or "trap")
+    if anchor not in {"trap", "zone"}:
+        anchor = "trap"
+    if anchor == "zone":
+        anchor_px = float(level_price)
+    else:
+        anchor_px = float(absorption)
+    if side == "long":
+        base = anchor_px - buffer
+    else:
+        base = anchor_px + buffer
+    need = 0.0
+    bps = float(getattr(params, "trap_min_stop_bps", 0.0) or 0.0)
+    k_atr = float(getattr(params, "trap_min_stop_atr", 0.0) or 0.0)
+    if bps > 0:
+        need = max(need, float(entry) * bps / 10_000.0)
+    if k_atr > 0 and atr is not None and atr > 0:
+        need = max(need, k_atr * float(atr))
+    if side == "long":
+        stop = min(base, float(entry) - need) if need > 0 else base
+        if stop < float(entry) and stop < anchor_px:
+            return float(stop)
+        return None
+    stop = max(base, float(entry) + need) if need > 0 else base
+    if stop > float(entry) and stop > anchor_px:
+        return float(stop)
+    return None
+
+
 def check_trapped(
     side: str,
     trap: FootprintBar,
@@ -245,13 +309,9 @@ def check_trapped(
         entry = math.floor(raw_entry / step + 1e-9) * step
     else:
         entry = math.ceil(raw_entry / step - 1e-9) * step
-    buffer = _stop_buffer(entry, tick, params)
-    stop = float(absorption) - buffer if side == "long" else float(absorption) + buffer
-    if entry <= 0 or buffer <= 0:
-        return "BAD_STOP"
-    if side == "long" and not (stop < absorption and stop < entry):
-        return "BAD_STOP"
-    if side == "short" and not (stop > absorption and stop > entry):
+    atr = footprint_atr(bars, failure_index - 1)
+    stop = place_trap_stop(side, entry, absorption, float(level.price), tick, params, atr)
+    if stop is None:
         return "BAD_STOP"
     return TrapSignal(
         side=side,
@@ -291,8 +351,9 @@ def plan_from_signal(
     if isinstance(target, str):
         return target
     tp, r_mult, runner_px = target
+    slip = reserved_slip_bps(coin, signal.entry, signal.stop, params)
     try:
-        size, _loss = size_swing(
+        size, loss = size_swing(
             coin,
             signal.entry,
             signal.stop,
@@ -303,10 +364,11 @@ def plan_from_signal(
             maker_fee=maker_fee,
             taker_fee=taker_fee,
             max_leverage=max_leverage,
+            slip_bps=slip,
         )
     except ValueError:
         return "SIZE_ZERO"
-    if size <= 0:
+    if size <= 0 or loss <= 0:
         return "SIZE_ZERO"
     return Plan(
         side=signal.side,
@@ -326,6 +388,8 @@ def plan_from_signal(
         sweep_bps=0.0,
         reclaim_bps=0.0,
         retest=False,
+        budget=float(loss),
+        slip_bps=float(slip),
     )
 
 
@@ -496,6 +560,7 @@ def evaluate_trapped(
         tp_r=float(min(2.0, max(1.0, planned.r_multiple))),
         runner_px=planned.runner_px,
         runner_mode="on" if planned.runner_px else "off",
+        exit_slip_bps=float(planned.slip_bps),
     )
     return _decision(
         coin_u,

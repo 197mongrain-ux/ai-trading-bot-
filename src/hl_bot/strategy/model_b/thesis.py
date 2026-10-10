@@ -82,6 +82,9 @@ class WorkingOrder:
     # one full-size TP. The fill path turns ``on`` into a real split.
     runner_px: float | None = None
     runner_mode: str = "off"
+    # None uses the coin slip at the paper close. A trapped arm stores
+    # the allowance the size reserved.
+    exit_slip_bps: float | None = None
 
 
 @dataclass
@@ -141,6 +144,8 @@ class OpenPosition:
     # Paper scratch path. Unused when those flags are off.
     mfe_r: float = 0.0
     mae_r: float = 0.0
+    # None uses the coin slip. Copied from the working order on fill.
+    exit_slip_bps: float | None = None
 
 
 @dataclass
@@ -155,6 +160,8 @@ class CloseEvent:
     swing_id: str
     # Resting Alo detached because the position itself closed.
     remainder: WorkingOrder | None = None
+    # Slip reserved at the arm. None keeps the coin allowance.
+    exit_slip_bps: float | None = None
 
 
 @dataclass
@@ -235,6 +242,7 @@ class ThesisBook:
             planned_risk=float(intent.size) * abs(float(intent.limit_px) - float(intent.stop)),
             runner_px=getattr(intent, "runner_px", None),
             runner_mode=str(getattr(intent, "runner_mode", "off") or "off"),
+            exit_slip_bps=getattr(intent, "exit_slip_bps", None),
         )
         self._state(intent.coin).working = order
         return order
@@ -553,6 +561,7 @@ class ThesisBook:
                 planned_stop=float(stop),
                 armed_at=float(order.posted_at),
                 tick=float(order.tick or 0.0),
+                exit_slip_bps=getattr(order, "exit_slip_bps", None),
             )
             st.position = pos
         else:
@@ -901,6 +910,7 @@ class ThesisBook:
             reason=reason,
             swing_id=pos.swing_id,
             remainder=remainder,
+            exit_slip_bps=getattr(pos, "exit_slip_bps", None),
         )
         st.consumed.add(pos.swing_id)
         st.position = None
@@ -945,6 +955,7 @@ class ThesisBook:
                     reason="kill_switch",
                     swing_id=pos.swing_id,
                     remainder=working,
+                    exit_slip_bps=getattr(pos, "exit_slip_bps", None),
                 )
             )
             st.consumed.add(pos.swing_id)
