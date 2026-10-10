@@ -115,6 +115,16 @@ python -m hl_bot.research.sweep_tape_backtest \
   --out docs/pnl/sweep_tape_sample
 ```
 
+Nightly self-review reads that day's paper journal, the arm and block rows, and the tape around each event. It does not place an order and it does not move the hard limits: a stop stays on, max loss stays 2%, leverage stays 20, and risk per trade stays at or under 2%.
+
+```bash
+python -m hl_bot.research.nightly_review \
+  --tape /workspace/hl_tape --date YYYY-MM-DD \
+  --out docs/review/YYYY-MM-DD
+```
+
+That writes `docs/review/<date>/summary.md` (winners versus losers, then the walk-forward verdicts) and `env.diff`. A candidate has to be on the pre-registered whitelist. It is tuned on earlier trades and kept only when later held-out trades improve budget-R expectancy without a worse drawdown. `--open-draft` stays off unless you pass it. That flag opens a draft pull request containing the env diff and nothing else.
+
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 
 BTC, ETH, SOL, NEAR, PUMP, LIT, AAVE, ONDO, WLD, TAO, xyz:GOLD, xyz:SP500, xyz:XYZ100
