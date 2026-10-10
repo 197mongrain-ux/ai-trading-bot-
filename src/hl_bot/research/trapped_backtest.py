@@ -706,6 +706,26 @@ def write_csv(path: Path, rows: list[dict]) -> None:
             writer.writerow({key: _csv_value(row.get(key, "")) for key in COLUMNS})
 
 
+def _distinct_entry_fills(rows: list[dict]) -> list[dict]:
+    """One row per fill. Stop and slip cells are not a second copy of it."""
+    seen: dict[tuple, dict] = {}
+    for row in rows:
+        config = str(row.get("config") or "")
+        if config.startswith("stop-") or config.startswith("slip-"):
+            continue
+        key = (
+            row.get("coin"),
+            row.get("side"),
+            row.get("signal_time"),
+            row.get("reason"),
+            row.get("entry"),
+            row.get("stop"),
+        )
+        if key not in seen:
+            seen[key] = row
+    return list(seen.values())
+
+
 def _fmt(value: float | None, digits: int = 3) -> str:
     if value is None:
         return "—"
@@ -810,6 +830,28 @@ def render_markdown(result: dict) -> str:
         lines.append(_result_row("ref-trap-slip25/30", default))
     for report in result.get("stop_reports") or []:
         lines.append(_result_row(report["cell"].name, report))
+    distinct = _distinct_entry_fills(result.get("rows") or [])
+    if distinct:
+        lines.extend(
+            [
+                "",
+                "Wick-stop fills from the entry grid, one row per event. A cell that repeats the fill is not a new trade. Stop distance is a few bps and the reserved slip is 25 or 30, so the budget is the full risk percent and a target that is 1 price-R of that stop is a small fraction of it. A mark pays the taker fee plus that same slip, so an open trade near the entry is charged most of the budget even though it has not stopped.",
+                "",
+                "| coin | side | reason | stop bps | slip bps | budget $ | net $ | R |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for row in distinct:
+            lines.append(
+                f"| {row['coin']} | {row['side']} | {row['reason']} | "
+                f"{float(row['stop_bps']):.2f} | {float(row['slip_bps']):.1f} | "
+                f"{float(row['budget']):.2f} | {float(row['net']):.2f} | {float(row['r']):.3f} |"
+            )
+    elif default is not None and not default["rows"]:
+        lines.append("")
+        lines.append(
+            "The default cell did not signal, so the stop and slip rows have no fill to compare."
+        )
     lines.extend(
         [
             "",
