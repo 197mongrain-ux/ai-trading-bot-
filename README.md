@@ -93,7 +93,18 @@ RISK_PER_TRADE=0.01
 python -m hl_bot run
 ```
 
-The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100. A wide-reclaim filter (`MODEL_B_SWING_RECLAIM_MODE=off`) and a fail-fast scratch (`MODEL_B_SWING_SCRATCH_MINUTES=0`, `MODEL_B_SWING_SCRATCH_MAE_R=0`) stay off, so this command does not skip a large reclaim bar or scratch a fill.
+The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100. A wide-reclaim filter (`MODEL_B_SWING_RECLAIM_MODE=off`) and a fail-fast scratch (`MODEL_B_SWING_SCRATCH_MINUTES=0`, `MODEL_B_SWING_SCRATCH_MAE_R=0`) stay off, so this command does not skip a large reclaim bar or scratch a fill. `MODEL_B_SWING_ENTRY=sweep` (the default) is that reclaim. `MODEL_B_SWING_ENTRY=trapped` switches the paper entry to trapped sellers at support and trapped buyers at resistance. It stays off until set.
+
+Replay a recorded tape (no orders) with:
+
+```bash
+python -m hl_bot.research.trapped_backtest \
+  --tape /workspace/hl_tape --from 2026-10-09 --to 2026-10-09 \
+  --coins BTC,ETH,SOL,xyz:GOLD,xyz:SP500,xyz:XYZ100 \
+  --out docs/pnl/trapped_sample
+```
+
+That writes `trapped_trades.csv` and `trapped_summary.md`. The grid is bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone tolerance 10/20/40 bps.
 
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 

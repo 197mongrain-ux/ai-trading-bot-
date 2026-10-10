@@ -91,6 +91,19 @@ class SwingParams:
     scratch_mfe_r: float = 0.0
     scratch_minutes: float = 0.0
     scratch_mae_r: float = 0.0
+    # sweep is the paper book. trapped is the footprint entry and stays off.
+    entry: str = "sweep"
+    trap_bar: str = "1m"
+    trap_imbalance: float = 3.0
+    trap_stacked: int = 3
+    trap_zone_bps: float = 20.0
+    trap_near_frac: float = 0.25
+    trap_min_volume: float = 0.0
+    trap_stop_bps: float = 5.0
+    trap_entry: str = "failure_close"  # failure_close | lift
+    trap_lift_bps: float = 5.0
+    trap_cvd_bars: int = 3
+    trap_delta_mode: str = "either"  # either | delta | cvd | both
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -123,6 +136,18 @@ class SwingParams:
             scratch_mfe_r=float(getattr(settings, "model_b_swing_scratch_mfe_r", 0.0) or 0.0),
             scratch_minutes=float(getattr(settings, "model_b_swing_scratch_minutes", 0.0) or 0.0),
             scratch_mae_r=float(getattr(settings, "model_b_swing_scratch_mae_r", 0.0) or 0.0),
+            entry=str(getattr(settings, "model_b_swing_entry", "sweep") or "sweep"),
+            trap_bar=str(getattr(settings, "model_b_swing_trap_bar", "1m") or "1m"),
+            trap_imbalance=float(getattr(settings, "model_b_swing_trap_imbalance", 3.0) or 3.0),
+            trap_stacked=int(getattr(settings, "model_b_swing_trap_stacked", 3) or 3),
+            trap_zone_bps=float(getattr(settings, "model_b_swing_trap_zone_bps", 20.0) or 20.0),
+            trap_near_frac=float(getattr(settings, "model_b_swing_trap_near_frac", 0.25) or 0.25),
+            trap_min_volume=float(getattr(settings, "model_b_swing_trap_min_volume", 0.0) or 0.0),
+            trap_stop_bps=float(getattr(settings, "model_b_swing_trap_stop_bps", 5.0) or 5.0),
+            trap_entry=str(getattr(settings, "model_b_swing_trap_entry", "failure_close") or "failure_close"),
+            trap_lift_bps=float(getattr(settings, "model_b_swing_trap_lift_bps", 5.0) or 5.0),
+            trap_cvd_bars=int(getattr(settings, "model_b_swing_trap_cvd_bars", 3) or 3),
+            trap_delta_mode=str(getattr(settings, "model_b_swing_trap_delta_mode", "either") or "either"),
         )
 
 
@@ -1022,6 +1047,25 @@ def evaluate_swing(
     min_prints = int(getattr(engine, "min_prints", 30) or 30)
     if coin_u not in set(getattr(engine, "coins", ()) or ()):
         return _decision(coin_u, "OUT_OF_SESSION")
+    if str(getattr(params, "entry", "sweep") or "sweep") == "trapped":
+        from hl_bot.strategy.model_b.trapped import evaluate_trapped
+
+        return evaluate_trapped(
+            engine,
+            coin_u,
+            now=now,
+            prints=prints,
+            bars=bars,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            equity=equity,
+            tick=tick,
+            mark=mark,
+            leverage=leverage,
+            htf_bars=htf_bars,
+            maker_fee=maker_fee,
+            taker_fee=taker_fee,
+        )
     hourly = htf_bars if htf_bars else (bars if params.confirm_tf == "1h" else None)
     pending_book = getattr(engine, "swing_retest", None)
     if pending_book is None:
@@ -1176,7 +1220,7 @@ def exit_net(
     ``slip_bps``. ``closed_pnl`` is profit already banked on a partial.
     """
     px = float(exit_px)
-    taker_exit = reason in ("stop", "max_hold", "scratch")
+    taker_exit = reason in ("stop", "max_hold", "scratch", "tape_end")
     if taker_exit and slip_bps > 0 and entry > 0:
         slip = abs(float(entry)) * float(slip_bps) / 10_000.0
         px = px - slip if side == "long" else px + slip

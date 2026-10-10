@@ -341,6 +341,19 @@ class Settings:
     model_b_swing_scratch_mfe_r: float = 0.0
     model_b_swing_scratch_minutes: float = 0.0
     model_b_swing_scratch_mae_r: float = 0.0
+    # sweep (default) is the reclaim entry. trapped is the footprint entry.
+    model_b_swing_entry: str = "sweep"
+    model_b_swing_trap_bar: str = "1m"
+    model_b_swing_trap_imbalance: float = 3.0
+    model_b_swing_trap_stacked: int = 3
+    model_b_swing_trap_zone_bps: float = 20.0
+    model_b_swing_trap_near_frac: float = 0.25
+    model_b_swing_trap_min_volume: float = 0.0
+    model_b_swing_trap_stop_bps: float = 5.0
+    model_b_swing_trap_entry: str = "failure_close"
+    model_b_swing_trap_lift_bps: float = 5.0
+    model_b_swing_trap_cvd_bars: int = 3
+    model_b_swing_trap_delta_mode: str = "either"
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -621,6 +634,38 @@ class Settings:
                 raise ValueError(
                     "MODEL_B_SWING_SCRATCH_MFE_R and MODEL_B_SWING_SCRATCH_MINUTES must be set together."
                 )
+            if self.model_b_swing_entry not in ("sweep", "trapped"):
+                raise ValueError(
+                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped."
+                )
+            if self.model_b_swing_trap_bar not in ("1m", "3m", "5m"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_BAR={self.model_b_swing_trap_bar!r} must be 1m|3m|5m."
+                )
+            if self.model_b_swing_trap_imbalance < 1.0:
+                raise ValueError("MODEL_B_SWING_TRAP_IMBALANCE must be >= 1.")
+            if self.model_b_swing_trap_stacked < 2:
+                raise ValueError("MODEL_B_SWING_TRAP_STACKED must be >= 2.")
+            if not (0 < self.model_b_swing_trap_zone_bps <= 500):
+                raise ValueError("MODEL_B_SWING_TRAP_ZONE_BPS must be in (0, 500].")
+            if not (0 < self.model_b_swing_trap_near_frac <= 1):
+                raise ValueError("MODEL_B_SWING_TRAP_NEAR must be in (0, 1].")
+            if self.model_b_swing_trap_min_volume < 0 or self.model_b_swing_trap_stop_bps < 0:
+                raise ValueError("Trap min volume and stop buffer must be >= 0.")
+            if self.model_b_swing_trap_entry not in ("failure_close", "lift"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_ENTRY={self.model_b_swing_trap_entry!r} "
+                    "must be failure_close|lift."
+                )
+            if self.model_b_swing_trap_lift_bps < 0:
+                raise ValueError("MODEL_B_SWING_TRAP_LIFT_BPS must be >= 0.")
+            if self.model_b_swing_trap_cvd_bars < 1:
+                raise ValueError("MODEL_B_SWING_TRAP_CVD_BARS must be >= 1.")
+            if self.model_b_swing_trap_delta_mode not in ("either", "delta", "cvd", "both"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_DELTA={self.model_b_swing_trap_delta_mode!r} "
+                    "must be either|delta|cvd|both."
+                )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -834,6 +879,20 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_scratch_mfe_r=_float("MODEL_B_SWING_SCRATCH_MFE_R", 0.0),
         model_b_swing_scratch_minutes=_float("MODEL_B_SWING_SCRATCH_MINUTES", 0.0),
         model_b_swing_scratch_mae_r=_float("MODEL_B_SWING_SCRATCH_MAE_R", 0.0),
+        model_b_swing_entry=(os.getenv("MODEL_B_SWING_ENTRY") or "sweep").strip().lower() or "sweep",
+        model_b_swing_trap_bar=(os.getenv("MODEL_B_SWING_TRAP_BAR") or "1m").strip() or "1m",
+        model_b_swing_trap_imbalance=_float("MODEL_B_SWING_TRAP_IMBALANCE", 3.0),
+        model_b_swing_trap_stacked=_int("MODEL_B_SWING_TRAP_STACKED", 3),
+        model_b_swing_trap_zone_bps=_float("MODEL_B_SWING_TRAP_ZONE_BPS", 20.0),
+        model_b_swing_trap_near_frac=_float("MODEL_B_SWING_TRAP_NEAR", 0.25),
+        model_b_swing_trap_min_volume=_float("MODEL_B_SWING_TRAP_MIN_VOL", 0.0),
+        model_b_swing_trap_stop_bps=_float("MODEL_B_SWING_TRAP_STOP_BPS", 5.0),
+        model_b_swing_trap_entry=(os.getenv("MODEL_B_SWING_TRAP_ENTRY") or "failure_close").strip().lower()
+        or "failure_close",
+        model_b_swing_trap_lift_bps=_float("MODEL_B_SWING_TRAP_LIFT_BPS", 5.0),
+        model_b_swing_trap_cvd_bars=_int("MODEL_B_SWING_TRAP_CVD_BARS", 3),
+        model_b_swing_trap_delta_mode=(os.getenv("MODEL_B_SWING_TRAP_DELTA") or "either").strip().lower()
+        or "either",
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

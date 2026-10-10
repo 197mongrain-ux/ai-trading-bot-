@@ -92,6 +92,7 @@ def test_study_filters_stay_off_unless_asked():
     assert SwingParams().scratch_mfe_r == 0
     assert SwingParams().scratch_minutes == 0
     assert SwingParams().scratch_mae_r == 0
+    assert SwingParams().entry == "sweep"
 
 
 def test_scalp_style_is_the_default_and_still_requires_two_percent(monkeypatch):
@@ -125,6 +126,8 @@ def test_swing_defaults_to_paper_its_own_journal_and_one_percent(monkeypatch, tm
     assert settings.model_b_swing_reclaim_bps == 0
     assert settings.model_b_swing_scratch_minutes == 0
     assert settings.model_b_swing_scratch_mae_r == 0
+    assert settings.model_b_swing_entry == "sweep"
+    assert SwingParams.from_settings(settings).entry == "sweep"
     Settings(
         entry_mode="model_b",
         model_b_style="swing",
