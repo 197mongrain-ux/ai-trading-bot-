@@ -310,6 +310,56 @@ class Settings:
     # 0 does not look.
     model_b_htf_stop: str = "shadow"
     model_b_oversize_ratio: float = 1.1
+    # scalp (default) is today's Model B. swing is the higher-timeframe book.
+    # Unset MODEL_B_PAPER with swing forces paper so a style flip cannot send
+    # real orders. MODEL_B_PAPER=0 is the later live opt-in.
+    model_b_style: str = "scalp"
+    model_b_paper: bool = False
+    model_b_swing_confirm: str = "15m"
+    model_b_swing_macro: str = "4h,1d"
+    model_b_swing_macro_mode: str = "both"
+    model_b_swing_atr_tf: str = "1h"
+    model_b_swing_atr_frac: float = 0.5
+    model_b_swing_min_r: float = 1.0
+    model_b_swing_max_r: float = 5.0
+    model_b_swing_top_n: int = 2
+    model_b_swing_min_score: float = 3.0
+    model_b_swing_cluster_bps: float = 20.0
+    model_b_swing_pivot: int = 2
+    model_b_swing_hold_days: float = 3.0
+    model_b_swing_runner: bool = False
+    model_b_swing_runner_frac: float = 0.5
+    model_b_swing_slip_main_bps: float = 25.0
+    model_b_swing_slip_xyz_bps: float = 30.0
+    model_b_swing_min_sweep_bps: float = 5.0
+    model_b_swing_flow: str = "tape"
+    model_b_swing_fill_hours: float = 24.0
+    # Wide-reclaim and fail-fast scratch. off / 0 is the paper book.
+    model_b_swing_reclaim_mode: str = "off"
+    model_b_swing_reclaim_bps: float = 0.0
+    model_b_swing_reclaim_atr: float = 0.0
+    model_b_swing_scratch_mfe_r: float = 0.0
+    model_b_swing_scratch_minutes: float = 0.0
+    model_b_swing_scratch_mae_r: float = 0.0
+    # sweep (default) is the reclaim entry. trapped is the footprint entry.
+    model_b_swing_entry: str = "sweep"
+    model_b_swing_trap_bar: str = "1m"
+    model_b_swing_trap_imbalance: float = 3.0
+    model_b_swing_trap_stacked: int = 3
+    model_b_swing_trap_zone_bps: float = 20.0
+    model_b_swing_trap_near_frac: float = 0.25
+    model_b_swing_trap_min_volume: float = 0.0
+    model_b_swing_trap_stop_bps: float = 5.0
+    model_b_swing_trap_entry: str = "failure_close"
+    model_b_swing_trap_lift_bps: float = 5.0
+    model_b_swing_trap_cvd_bars: int = 3
+    model_b_swing_trap_delta_mode: str = "either"
+    # Trapped stop and slip. Defaults keep the wick stop and the 25/30 bp allowance.
+    model_b_swing_trap_stop_anchor: str = "trap"
+    model_b_swing_trap_min_stop_bps: float = 0.0
+    model_b_swing_trap_min_stop_atr: float = 0.0
+    model_b_swing_trap_slip_bps: float = 0.0
+    model_b_swing_trap_slip_mode: str = "flat"
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -360,7 +410,19 @@ class Settings:
                 "(0 = unlimited)."
             )
         mode_now = (self.entry_mode or "").strip().lower()
-        if mode_now == "model_b":
+        style_now = (self.model_b_style or "scalp").strip().lower()
+        if style_now not in ("scalp", "swing"):
+            raise ValueError(
+                f"MODEL_B_STYLE={self.model_b_style!r} must be scalp|swing."
+            )
+        if mode_now == "model_b" and style_now == "swing":
+            if not (0.005 - 1e-12 <= self.risk_per_trade <= 0.02 + 1e-12):
+                raise ValueError(
+                    f"RISK_PER_TRADE={self.risk_per_trade} — swing Model B is "
+                    "0.5% to 2% of spot USDC (0.5% and 1% are the tested sizes; "
+                    "2% remains the hard account cap)."
+                )
+        elif mode_now == "model_b":
             if abs(self.risk_per_trade - 0.02) > 1e-12:
                 raise ValueError(
                     f"RISK_PER_TRADE={self.risk_per_trade} — Model B sizes at "
@@ -520,6 +582,110 @@ class Settings:
             raise ValueError(
                 f"MODEL_B_HTF_STOP={self.model_b_htf_stop!r} must be 1|shadow|0."
             )
+        if style_now == "swing":
+            if self.model_b_swing_confirm not in ("5m", "15m", "1h"):
+                raise ValueError(
+                    f"MODEL_B_SWING_CONFIRM={self.model_b_swing_confirm!r} must be 5m|15m|1h."
+                )
+            if self.model_b_swing_atr_tf not in ("15m", "1h"):
+                raise ValueError(
+                    f"MODEL_B_SWING_ATR_TF={self.model_b_swing_atr_tf!r} must be 15m|1h."
+                )
+            if self.model_b_swing_macro_mode not in ("both", "4h_lead", "4h_only", "4h_lead_1h_fill"):
+                raise ValueError(
+                    f"MODEL_B_SWING_MACRO_MODE={self.model_b_swing_macro_mode!r} "
+                    "must be both|4h_lead|4h_only|4h_lead_1h_fill."
+                )
+            tfs = tuple(part.strip() for part in self.model_b_swing_macro.split(",") if part.strip())
+            if len(tfs) != 2 or any(tf not in ("1h", "4h", "1d") for tf in tfs):
+                raise ValueError(
+                    f"MODEL_B_SWING_MACRO={self.model_b_swing_macro!r} must be two of 1h,4h,1d."
+                )
+            if not (0.05 <= self.model_b_swing_atr_frac <= 3.0):
+                raise ValueError(
+                    f"MODEL_B_SWING_ATR_FRAC={self.model_b_swing_atr_frac} must be in [0.05, 3]."
+                )
+            if not (1.0 <= self.model_b_swing_min_r <= self.model_b_swing_max_r <= 8.0):
+                raise ValueError(
+                    "MODEL_B_SWING_MIN_R / MAX_R must satisfy 1 <= min <= max <= 8."
+                )
+            if self.model_b_swing_top_n < 1:
+                raise ValueError("MODEL_B_SWING_TOP_N must be >= 1.")
+            if not (0.25 <= self.model_b_swing_hold_days <= 10.0):
+                raise ValueError("MODEL_B_SWING_HOLD_DAYS must be in [0.25, 10].")
+            if not (0.0 < self.model_b_swing_runner_frac < 1.0):
+                raise ValueError("MODEL_B_SWING_RUNNER_FRAC must be in (0, 1).")
+            if self.model_b_swing_flow not in ("tape", "off"):
+                raise ValueError("MODEL_B_SWING_FLOW must be tape|off.")
+            if self.model_b_swing_slip_main_bps < 0 or self.model_b_swing_slip_xyz_bps < 0:
+                raise ValueError("Swing slip bps must be >= 0.")
+            if self.model_b_swing_fill_hours <= 0:
+                raise ValueError("MODEL_B_SWING_FILL_HOURS must be > 0.")
+            if self.model_b_swing_reclaim_mode not in ("off", "skip", "retest"):
+                raise ValueError(
+                    f"MODEL_B_SWING_RECLAIM_MODE={self.model_b_swing_reclaim_mode!r} "
+                    "must be off|skip|retest."
+                )
+            if self.model_b_swing_reclaim_bps < 0 or self.model_b_swing_reclaim_atr < 0:
+                raise ValueError("Swing reclaim caps must be >= 0.")
+            if (
+                self.model_b_swing_scratch_mfe_r < 0
+                or self.model_b_swing_scratch_minutes < 0
+                or self.model_b_swing_scratch_mae_r < 0
+            ):
+                raise ValueError("Swing scratch settings must be >= 0.")
+            time_on = self.model_b_swing_scratch_mfe_r > 0 or self.model_b_swing_scratch_minutes > 0
+            time_pair = self.model_b_swing_scratch_mfe_r > 0 and self.model_b_swing_scratch_minutes > 0
+            if time_on and not time_pair:
+                raise ValueError(
+                    "MODEL_B_SWING_SCRATCH_MFE_R and MODEL_B_SWING_SCRATCH_MINUTES must be set together."
+                )
+            if self.model_b_swing_entry not in ("sweep", "trapped"):
+                raise ValueError(
+                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped."
+                )
+            if self.model_b_swing_trap_bar not in ("1m", "3m", "5m"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_BAR={self.model_b_swing_trap_bar!r} must be 1m|3m|5m."
+                )
+            if self.model_b_swing_trap_imbalance < 1.0:
+                raise ValueError("MODEL_B_SWING_TRAP_IMBALANCE must be >= 1.")
+            if self.model_b_swing_trap_stacked < 2:
+                raise ValueError("MODEL_B_SWING_TRAP_STACKED must be >= 2.")
+            if not (0 < self.model_b_swing_trap_zone_bps <= 500):
+                raise ValueError("MODEL_B_SWING_TRAP_ZONE_BPS must be in (0, 500].")
+            if not (0 < self.model_b_swing_trap_near_frac <= 1):
+                raise ValueError("MODEL_B_SWING_TRAP_NEAR must be in (0, 1].")
+            if self.model_b_swing_trap_min_volume < 0 or self.model_b_swing_trap_stop_bps < 0:
+                raise ValueError("Trap min volume and stop buffer must be >= 0.")
+            if self.model_b_swing_trap_entry not in ("failure_close", "lift"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_ENTRY={self.model_b_swing_trap_entry!r} "
+                    "must be failure_close|lift."
+                )
+            if self.model_b_swing_trap_lift_bps < 0:
+                raise ValueError("MODEL_B_SWING_TRAP_LIFT_BPS must be >= 0.")
+            if self.model_b_swing_trap_cvd_bars < 1:
+                raise ValueError("MODEL_B_SWING_TRAP_CVD_BARS must be >= 1.")
+            if self.model_b_swing_trap_delta_mode not in ("either", "delta", "cvd", "both"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_DELTA={self.model_b_swing_trap_delta_mode!r} "
+                    "must be either|delta|cvd|both."
+                )
+            if self.model_b_swing_trap_stop_anchor not in ("trap", "zone"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_STOP_ANCHOR={self.model_b_swing_trap_stop_anchor!r} "
+                    "must be trap|zone."
+                )
+            if self.model_b_swing_trap_min_stop_bps < 0 or self.model_b_swing_trap_min_stop_atr < 0:
+                raise ValueError("Trap min stop distance must be >= 0.")
+            if self.model_b_swing_trap_slip_bps < 0:
+                raise ValueError("MODEL_B_SWING_TRAP_SLIP_BPS must be >= 0.")
+            if self.model_b_swing_trap_slip_mode not in ("flat", "proportional"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TRAP_SLIP_MODE={self.model_b_swing_trap_slip_mode!r} "
+                    "must be flat|proportional."
+                )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -578,6 +744,13 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
 
     symbols = _parse_symbols()
     entry_mode = os.getenv("ENTRY_MODE", "both").strip().lower() or "both"
+    model_b_style = (os.getenv("MODEL_B_STYLE") or "scalp").strip().lower() or "scalp"
+    paper_raw = os.getenv("MODEL_B_PAPER")
+    if paper_raw is None or not paper_raw.strip():
+        # Swing stays on the simulator until someone sets MODEL_B_PAPER=0.
+        model_b_paper = model_b_style == "swing"
+    else:
+        model_b_paper = paper_raw.strip().lower() in {"1", "true", "yes", "on"}
     # Mainnet tape floor stays 30. Testnet uses the measured density ratio
     # unless MODEL_B_MIN_PRINTS is set explicitly.
     if os.getenv("MODEL_B_MIN_PRINTS", "").strip():
@@ -586,8 +759,14 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_min_prints = density_min_prints()
     else:
         model_b_min_prints = MIN_PRINTS
-    # Model B is max 2% of spot USDC. Scalp stays at 0.5% when the var is unset.
-    risk_default = 0.02 if entry_mode == "model_b" else 0.005
+    # Model B scalp is max 2% of spot USDC. Swing defaults to 1% when the
+    # var is unset (0.5% and 1% are both valid). Scalp stays at 0.5% otherwise.
+    if model_b_style == "swing" and entry_mode == "model_b" and not (os.getenv("RISK_PER_TRADE") or "").strip():
+        risk_default = 0.01
+    elif entry_mode == "model_b":
+        risk_default = 0.02
+    else:
+        risk_default = 0.005
     # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
     max_open = _int("MAX_OPEN_POSITIONS", 0)
     # MAX_POSITIONS_PER_SYMBOL: default 3; 0 = unlimited stacking per ticker
@@ -693,6 +872,54 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_stop_slip_bps=(os.getenv("MODEL_B_STOP_SLIP_BPS") or "").strip(),
         model_b_htf_stop=_tp_mode("MODEL_B_HTF_STOP", "shadow"),
         model_b_oversize_ratio=_float("MODEL_B_OVERSIZE_RATIO", 1.1),
+        model_b_style=model_b_style,
+        model_b_paper=model_b_paper,
+        model_b_swing_confirm=(os.getenv("MODEL_B_SWING_CONFIRM") or "15m").strip() or "15m",
+        model_b_swing_macro=(os.getenv("MODEL_B_SWING_MACRO") or "4h,1d").strip() or "4h,1d",
+        model_b_swing_macro_mode=(os.getenv("MODEL_B_SWING_MACRO_MODE") or "both").strip().lower() or "both",
+        model_b_swing_atr_tf=(os.getenv("MODEL_B_SWING_ATR_TF") or "1h").strip() or "1h",
+        model_b_swing_atr_frac=_float("MODEL_B_SWING_ATR_FRAC", 0.5),
+        model_b_swing_min_r=_float("MODEL_B_SWING_MIN_R", 1.0),
+        model_b_swing_max_r=_float("MODEL_B_SWING_MAX_R", 5.0),
+        model_b_swing_top_n=_int("MODEL_B_SWING_TOP_N", 2),
+        model_b_swing_min_score=_float("MODEL_B_SWING_MIN_SCORE", 3.0),
+        model_b_swing_cluster_bps=_float("MODEL_B_SWING_CLUSTER_BPS", 20.0),
+        model_b_swing_pivot=_int("MODEL_B_SWING_PIVOT", 2),
+        model_b_swing_hold_days=_float("MODEL_B_SWING_HOLD_DAYS", 3.0),
+        model_b_swing_runner=_bool("MODEL_B_SWING_RUNNER", False),
+        model_b_swing_runner_frac=_float("MODEL_B_SWING_RUNNER_FRAC", 0.5),
+        model_b_swing_slip_main_bps=_float("MODEL_B_SWING_SLIP_MAIN_BPS", 25.0),
+        model_b_swing_slip_xyz_bps=_float("MODEL_B_SWING_SLIP_XYZ_BPS", 30.0),
+        model_b_swing_min_sweep_bps=_float("MODEL_B_SWING_MIN_SWEEP_BPS", 5.0),
+        model_b_swing_flow=(os.getenv("MODEL_B_SWING_FLOW") or "tape").strip().lower() or "tape",
+        model_b_swing_fill_hours=_float("MODEL_B_SWING_FILL_HOURS", 24.0),
+        model_b_swing_reclaim_mode=(os.getenv("MODEL_B_SWING_RECLAIM_MODE") or "off").strip().lower() or "off",
+        model_b_swing_reclaim_bps=_float("MODEL_B_SWING_RECLAIM_BPS", 0.0),
+        model_b_swing_reclaim_atr=_float("MODEL_B_SWING_RECLAIM_ATR", 0.0),
+        model_b_swing_scratch_mfe_r=_float("MODEL_B_SWING_SCRATCH_MFE_R", 0.0),
+        model_b_swing_scratch_minutes=_float("MODEL_B_SWING_SCRATCH_MINUTES", 0.0),
+        model_b_swing_scratch_mae_r=_float("MODEL_B_SWING_SCRATCH_MAE_R", 0.0),
+        model_b_swing_entry=(os.getenv("MODEL_B_SWING_ENTRY") or "sweep").strip().lower() or "sweep",
+        model_b_swing_trap_bar=(os.getenv("MODEL_B_SWING_TRAP_BAR") or "1m").strip() or "1m",
+        model_b_swing_trap_imbalance=_float("MODEL_B_SWING_TRAP_IMBALANCE", 3.0),
+        model_b_swing_trap_stacked=_int("MODEL_B_SWING_TRAP_STACKED", 3),
+        model_b_swing_trap_zone_bps=_float("MODEL_B_SWING_TRAP_ZONE_BPS", 20.0),
+        model_b_swing_trap_near_frac=_float("MODEL_B_SWING_TRAP_NEAR", 0.25),
+        model_b_swing_trap_min_volume=_float("MODEL_B_SWING_TRAP_MIN_VOL", 0.0),
+        model_b_swing_trap_stop_bps=_float("MODEL_B_SWING_TRAP_STOP_BPS", 5.0),
+        model_b_swing_trap_entry=(os.getenv("MODEL_B_SWING_TRAP_ENTRY") or "failure_close").strip().lower()
+        or "failure_close",
+        model_b_swing_trap_lift_bps=_float("MODEL_B_SWING_TRAP_LIFT_BPS", 5.0),
+        model_b_swing_trap_cvd_bars=_int("MODEL_B_SWING_TRAP_CVD_BARS", 3),
+        model_b_swing_trap_delta_mode=(os.getenv("MODEL_B_SWING_TRAP_DELTA") or "either").strip().lower()
+        or "either",
+        model_b_swing_trap_stop_anchor=(os.getenv("MODEL_B_SWING_TRAP_STOP_ANCHOR") or "trap").strip().lower()
+        or "trap",
+        model_b_swing_trap_min_stop_bps=_float("MODEL_B_SWING_TRAP_MIN_STOP_BPS", 0.0),
+        model_b_swing_trap_min_stop_atr=_float("MODEL_B_SWING_TRAP_MIN_STOP_ATR", 0.0),
+        model_b_swing_trap_slip_bps=_float("MODEL_B_SWING_TRAP_SLIP_BPS", 0.0),
+        model_b_swing_trap_slip_mode=(os.getenv("MODEL_B_SWING_TRAP_SLIP_MODE") or "flat").strip().lower()
+        or "flat",
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
@@ -704,7 +931,16 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         scale_out_pct=_float("SCALE_OUT_PCT", 0.5),
         be_buffer_bps=_float("BE_BUFFER_BPS", 2.0),
         runner_tp_r=_optional_float("RUNNER_TP_R", None),
-        journal_path=os.getenv("JOURNAL_PATH", "logs/trades.jsonl"),
+        journal_path=(
+            (os.getenv("MODEL_B_JOURNAL_PATH") or "").strip()
+            or (
+                "logs/model_b_swing_paper.jsonl"
+                if model_b_paper
+                else "logs/model_b_swing.jsonl"
+            )
+            if model_b_style == "swing"
+            else os.getenv("JOURNAL_PATH", "logs/trades.jsonl")
+        ),
         killswitch_file=os.getenv("KILLSWITCH_FILE", ".killswitch"),
     )
     settings.validate()

@@ -243,6 +243,8 @@ class ModelBEngine:
         stop_slip: str = "off",
         stop_slip_bps: str = "",
         htf_stop: str = "off",
+        style: str = "scalp",
+        swing_params=None,
     ):
         assert_policy()
         # Profile tags are journal-only. These switches must not become a gate.
@@ -344,6 +346,13 @@ class ModelBEngine:
         self.stop_slip = slip_mode
         self.stop_slip_bps = str(stop_slip_bps or "")
         self.htf_stop = htf_mode
+        style_name = str(style or "scalp").strip().lower()
+        if style_name not in ("scalp", "swing"):
+            raise ValueError("style must be scalp|swing")
+        self.style = style_name
+        self.swing_params = swing_params
+        # Coin -> pending wide-reclaim retest. Empty unless that flag is on.
+        self.swing_retest = {}
         # coin -> (1h bucket, MacroRead): one read + one MACRO line per 1h bar.
         self._macro_cache: dict[str, tuple[int, MacroRead]] = {}
 
@@ -434,8 +443,28 @@ class ModelBEngine:
 
         ``leverage`` is that coin's max, used only for the notional cap
         and the margin on the intent. It does not move the stop or the
-        target. Unknown meta passes 20.
+        target.         Unknown meta passes 20.
         """
+        if self.style == "swing":
+            from hl_bot.strategy.model_b.swing import evaluate_swing
+
+            return evaluate_swing(
+                self,
+                coin,
+                now=now,
+                prints=prints,
+                bars=bars,
+                pools=pools,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                equity=equity,
+                tick=tick,
+                mark=mark,
+                leverage=leverage,
+                htf_bars=htf_bars,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
+            )
         coin_u = canon_coin(coin)
         _dist = _bound_distance(maker_fee, taker_fee)
         window = window_prints(prints, coin=coin_u, now=now)

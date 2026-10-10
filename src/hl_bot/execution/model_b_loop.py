@@ -130,6 +130,10 @@ def model_b_hunt_coins(
         return resolve_hunt_coins(coins)
     if (settings.entry_mode or "").strip().lower() == "model_b" and _env_symbols_set():
         return resolve_hunt_coins(settings.symbols)
+    if str(getattr(settings, "model_b_style", "scalp") or "scalp").strip().lower() == "swing":
+        from hl_bot.strategy.model_b.swing import SWING_COINS
+
+        return resolve_hunt_coins(SWING_COINS)
     return DEFAULT_HUNT_COINS
 
 
@@ -247,14 +251,24 @@ def build_model_b_engine(settings: Settings, hunt_coins, book: ThesisBook | None
         stop_slip=str(getattr(settings, "model_b_stop_slip", "shadow")),
         stop_slip_bps=str(getattr(settings, "model_b_stop_slip_bps", "") or ""),
         htf_stop=str(getattr(settings, "model_b_htf_stop", "shadow")),
+        style=str(getattr(settings, "model_b_style", "scalp") or "scalp"),
+        swing_params=_swing_params(settings),
     )
+
+
+def _swing_params(settings: Settings):
+    if str(getattr(settings, "model_b_style", "scalp") or "scalp").strip().lower() != "swing":
+        return None
+    from hl_bot.strategy.model_b.swing import SwingParams
+
+    return SwingParams.from_settings(settings)
 
 
 MACRO_BARS_DAYS = 40
 MACRO_REFRESH_SEC = 600.0
 
 
-def _macro_bars(info, coin: str, now: float, cache: dict) -> list:
+def _macro_bars(info, coin: str, now: float, cache: dict, days: int = MACRO_BARS_DAYS) -> list:
     """~40 days of 1h candles for the 1h/4h ADX macro read.
 
     Refetched only on a new 1h bar or every 10 min, so
@@ -273,7 +287,7 @@ def _macro_bars(info, coin: str, now: float, cache: dict) -> list:
     try:
         end_ms = int(now * 1000)
         bars = info.get_candles(
-            coin, interval="1h", start_ms=end_ms - MACRO_BARS_DAYS * 86_400_000, end_ms=end_ms
+            coin, interval="1h", start_ms=end_ms - int(days) * 86_400_000, end_ms=end_ms
         ) or []
     except Exception:
         logger.exception("macro 1h candles failed for %s", coin)
@@ -371,11 +385,36 @@ def _run_model_b(
     )
     assert_leverage(settings.leverage)
     settings.validate()
+    swing_on = str(getattr(settings, "model_b_style", "scalp") or "scalp").strip().lower() == "swing"
+    if bool(getattr(settings, "model_b_paper", False)):
+        from dataclasses import replace
+
+        logger.warning(
+            "MODEL_B_PAPER=1 — simulated fills against %s prices, journal=%s, no real orders",
+            settings.network,
+            settings.journal_path,
+        )
+        settings = replace(settings, trading_mode="paper", i_understand_live_trading=False)
+    if swing_on and bool(getattr(settings, "model_b_swing_runner", False)):
+        from dataclasses import replace
+
+        settings = replace(
+            settings,
+            model_b_tp_runner="on",
+            model_b_tp_runner_frac=float(settings.model_b_swing_runner_frac),
+        )
     mode = "LIVE" if settings.is_live else "PAPER"
-    if mode == "PAPER":
+    if mode == "PAPER" and not swing_on:
         logger.warning(
             "Model B paper run is for unit tests. Desk start is "
             "TRADING_MODE=live HL_NETWORK=testnet ENTRY_MODE=model_b LEVERAGE=20"
+        )
+    elif mode == "PAPER":
+        logger.warning(
+            "MODEL_B SWING PAPER style=swing risk=%.4f confirm=%s journal=%s",
+            settings.risk_per_trade,
+            getattr(settings, "model_b_swing_confirm", "15m"),
+            settings.journal_path,
         )
     clock = now_fn or time.time
     info = info or InfoClient(base_url=settings.api_url)
@@ -408,6 +447,8 @@ def _run_model_b(
             )
 
     book = ThesisBook(work_sec=settings.model_b_alo_timeout_sec)
+    if swing_on:
+        book.work_sec = float(getattr(settings, "model_b_swing_fill_hours", 24.0) or 24.0) * 3600.0
     engine = build_model_b_engine(settings, hunt_coins, book)
     # Account rails only. Position size is spot USDC × RISK_PER_TRADE / stop.
     # Paper tests pass the running equity in place of that balance. Live
@@ -443,6 +484,8 @@ def _run_model_b(
         strategy_kill=False,
         flow_exit=False,
         market_fallback=False,
+        style=getattr(settings, "model_b_style", "scalp"),
+        paper=bool(getattr(settings, "model_b_paper", False)),
     )
 
     equity = float(settings.starting_equity)
@@ -939,6 +982,17 @@ def _run_model_b(
                             applied.remainder, applied.reason, remainder=True
                         )
 
+        if swing_on and live is not None:
+            for held in book.open_positions():
+                if (
+                    getattr(held, "needs_stop_resize", False)
+                    and not held.adopted
+                    and held.stop > 0
+                    and held.size > 0
+                ):
+                    _resize_brackets(live, held)
+                    held.needs_stop_resize = False
+                    held.stop_size = float(held.size)
         if settings.is_live and (
             getattr(info, "has_injected_account", False)
             or (settings.account_address or getattr(live, "account_address", "") or "").strip()
@@ -1167,9 +1221,10 @@ def _run_model_b(
         for coin in active:
             prints = feed.prints(coin)
             if not settings.is_live:
-                pos = book.try_fill_from_prints(prints)
-                if pos is not None:
-                    summary["opens"] += 1
+                pos = book.try_fill_from_prints(prints, partial=swing_on)
+                if pos is not None and (pos.just_opened or not swing_on):
+                    if pos.just_opened or not swing_on:
+                        summary["opens"] += 1
                     journal.log(
                         "open",
                         symbol=pos.coin,
@@ -1178,6 +1233,7 @@ def _run_model_b(
                         price=pos.entry,
                         stop=pos.stop,
                         tp=pos.take_profit,
+                        stop_size=getattr(pos, "stop_size", pos.size),
                         entry_mode="model_b",
                         reason="alo_fill",
                         network=settings.network,
@@ -1192,18 +1248,75 @@ def _run_model_b(
                         pos.stop,
                         pos.take_profit,
                     )
+                elif pos is not None and swing_on:
+                    journal.log(
+                        "model_b_partial",
+                        symbol=pos.coin,
+                        side=pos.side,
+                        size=pos.size,
+                        stop=pos.stop,
+                        stop_size=getattr(pos, "stop_size", pos.size),
+                        added=pos.fill_added,
+                        remainder_size=pos.remainder_size,
+                        entry_mode="model_b",
+                    )
 
             for order in book.cancel_if_stale(coin, prints):
                 _cancel_working(order, "thesis_stale")
 
             last = prints[-1].price if prints else None
+            if swing_on and last is not None:
+                for order in book.cancel_if_target_traded(coin, last):
+                    _cancel_working(order, "tp_before_fill")
+                    summary["cancels"] += 1
             # Paper exits on price. Live exits come from user fills (stop/TP
             # brackets). Public delta never closes a position.
             if last is not None and not settings.is_live:
+                if swing_on and bool(getattr(settings, "model_b_swing_runner", False)):
+                    book.paper_tp1(
+                        coin,
+                        last,
+                        runner_frac=float(getattr(settings, "model_b_swing_runner_frac", 0.5) or 0.5),
+                    )
                 closed = book.try_exit(coin, last)
+                if closed is None and swing_on and (scratch_pos := book.position(coin)) is not None:
+                    if not scratch_pos.adopted and engine.swing_params is not None:
+                        from hl_bot.strategy.model_b.swing import paper_scratch_exit
+
+                        scratch_px = paper_scratch_exit(scratch_pos, float(last), now, engine.swing_params)
+                        if scratch_px is not None and scratch_px > 0:
+                            closed = book.force_flat(coin, scratch_px, reason="scratch")
+                if (
+                    closed is None
+                    and swing_on
+                    and (held_now_pos := book.position(coin)) is not None
+                    and not held_now_pos.adopted
+                    and held_now_pos.stop > 0
+                    and now - held_now_pos.opened_at
+                    >= float(settings.model_b_swing_hold_days) * 86400.0
+                ):
+                    closed = book.force_flat(coin, last, reason="max_hold")
                 if closed is not None:
-                    equity += closed.pnl
-                    risk.record_trade_close(closed.pnl)
+                    pnl = closed.pnl
+                    if swing_on:
+                        from hl_bot.strategy.model_b.swing import SwingParams, exit_net, exit_slip_bps
+
+                        maker_fee, taker_fee = fee_book.pair(closed.coin)
+                        params = engine.swing_params or SwingParams()
+                        pnl = exit_net(
+                            side=closed.side,
+                            size=closed.size,
+                            entry=closed.entry,
+                            exit_px=closed.exit,
+                            reason=closed.reason,
+                            maker_fee=maker_fee,
+                            taker_fee=taker_fee,
+                            slip_bps=exit_slip_bps(
+                                closed.coin, params, getattr(closed, "exit_slip_bps", None)
+                            ),
+                        )
+                    equity += pnl
+                    risk.record_trade_close(pnl)
                     summary["closes"] += 1
                     journal.log(
                         "close",
@@ -1211,7 +1324,7 @@ def _run_model_b(
                         side=closed.side,
                         size=closed.size,
                         price=closed.exit,
-                        pnl=closed.pnl,
+                        pnl=pnl,
                         reason=closed.reason,
                         entry_mode="model_b",
                     )
@@ -1249,9 +1362,14 @@ def _run_model_b(
 
             try:
                 end_ms = int(now * 1000)
-                start_ms = end_ms - 14 * 24 * 3600 * 1000
+                if swing_on:
+                    interval = str(getattr(settings, "model_b_swing_confirm", "15m") or "15m")
+                    start_ms = end_ms - 30 * 24 * 3600 * 1000
+                else:
+                    interval = "1m"
+                    start_ms = end_ms - 14 * 24 * 3600 * 1000
                 # Cached per coin. Do not retry here — a 429 must not spin.
-                bars = info.get_candles(coin, interval="1m", start_ms=start_ms, end_ms=end_ms)
+                bars = info.get_candles(coin, interval=interval, start_ms=start_ms, end_ms=end_ms)
             except Exception:
                 logger.exception("candles failed for %s", coin)
                 bars = []
@@ -1273,7 +1391,9 @@ def _run_model_b(
             coin_lev = usable_leverage(meta_lev, None)
             maker_fee, taker_fee = fee_book.pair(coin)
             extra: dict = {}
-            if getattr(engine, "macro_side_only", "off") != "off":
+            if swing_on:
+                extra["htf_bars"] = _macro_bars(info, coin, now, macro_bars_cache, days=120)
+            elif getattr(engine, "macro_side_only", "off") != "off":
                 extra["htf_bars"] = _macro_bars(info, coin, now, macro_bars_cache)
             decision = engine.evaluate(
                 coin,
@@ -2590,7 +2710,10 @@ def _prepare_fill_targets(
 
     The stop is never written. A failed re-pick keeps the planned TP, and
     a failure here must not skip the stop the caller places next.
+    Swing keeps the opposite higher-timeframe level it armed with.
     """
+    if str(getattr(settings, "model_b_style", "scalp") or "scalp").strip().lower() == "swing":
+        return
     refresh = str(getattr(settings, "model_b_tp_refresh_on_fill", "on") or "off")
     runner_mode = str(getattr(settings, "model_b_tp_runner", "shadow") or "off")
     planned = float(pos.take_profit)
