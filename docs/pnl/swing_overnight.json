@@ -1,0 +1,173 @@
+{
+  "days": 90.0,
+  "variants": [
+    {
+      "name": "a-hold",
+      "hold_overnight": "always",
+      "trades": 16,
+      "win_rate": 0.3125,
+      "avg_win_r": 1.8751754009428718,
+      "avg_loss_r": -1.834236813611534,
+      "expectancy_r": -0.6750454965632822,
+      "net_pct": -6.493283456437915,
+      "max_dd_pct": 6.522526303198756,
+      "avg_hold_hours": 17.8125,
+      "span_days": 90.0,
+      "exits": {
+        "stop": 11,
+        "tp": 4,
+        "max_hold": 1
+      },
+      "per_coin": {
+        "BTC": {
+          "trades": 2,
+          "expectancy_r": -0.26674227106272846,
+          "net": -26.995639143569264,
+          "win_rate": 0.5,
+          "avg_hold_hours": 41.0
+        },
+        "ETH": {
+          "trades": 0,
+          "expectancy_r": 0.0,
+          "net": 0.0,
+          "win_rate": 0.0
+        },
+        "SOL": {
+          "trades": 1,
+          "expectancy_r": -1.2875558758307792,
+          "net": -98.34899735114416,
+          "win_rate": 0.0,
+          "avg_hold_hours": 0.0
+        },
+        "xyz:GOLD": {
+          "trades": 3,
+          "expectancy_r": -0.20142424698499148,
+          "net": -55.53069306155771,
+          "win_rate": 0.3333333333333333,
+          "avg_hold_hours": 9.333333333333334
+        },
+        "xyz:SP500": {
+          "trades": 7,
+          "expectancy_r": -0.9096710460352934,
+          "net": -363.57278698798916,
+          "win_rate": 0.2857142857142857,
+          "avg_hold_hours": 22.142857142857142
+        },
+        "xyz:XYZ100": {
+          "trades": 3,
+          "expectancy_r": -0.6692391546180835,
+          "net": -104.88022909953085,
+          "win_rate": 0.3333333333333333,
+          "avg_hold_hours": 6.666666666666667
+        }
+      },
+      "params": {
+        "confirm": "1h",
+        "macro": "4h,1d",
+        "macro_mode": "both",
+        "atr": "1hx0.5",
+        "min_r": 1.0,
+        "max_r": 3.0,
+        "risk": 0.01,
+        "hold_days": 3.0,
+        "runner": false,
+        "top_n": 2,
+        "level_set": "all",
+        "min_touches": 2,
+        "min_room_pct": 0.0,
+        "session": "09:30-16:00",
+        "max_lev": 10,
+        "max_positions": 1,
+        "major": true,
+        "hold_overnight": "always",
+        "side_only": "both",
+        "partial_r": 0.0,
+        "atr_frac": 0.5
+      }
+    },
+    {
+      "name": "b-breakeven",
+      "hold_overnight": "be",
+      "trades": 16,
+      "win_rate": 0.4375,
+      "avg_win_r": 0.9281726338166679,
+      "avg_loss_r": -1.0118283598595847,
+      "expectancy_r": -0.16307792512622418,
+      "net_pct": -1.6771757779714402,
+      "max_dd_pct": 3.9262772241398856,
+      "avg_hold_hours": 2.875,
+      "span_days": 90.0,
+      "exits": {
+        "SESSION_CLOSE": 10,
+        "stop": 4,
+        "tp": 2
+      },
+      "per_coin": {
+        "BTC": {
+          "trades": 2,
+          "expectancy_r": -0.011811677435422538,
+          "net": -0.0828948913272356,
+          "win_rate": 0.5,
+          "avg_hold_hours": 4.0
+        },
+        "ETH": {
+          "trades": 0,
+          "expectancy_r": 0.0,
+          "net": 0.0,
+          "win_rate": 0.0
+        },
+        "SOL": {
+          "trades": 1,
+          "expectancy_r": -1.2875558758307795,
+          "net": -98.90235652377042,
+          "win_rate": 0.0,
+          "avg_hold_hours": 0.0
+        },
+        "xyz:GOLD": {
+          "trades": 3,
+          "expectancy_r": 0.6050666249973521,
+          "net": 77.00048320311613,
+          "win_rate": 0.6666666666666666,
+          "avg_hold_hours": 5.666666666666667
+        },
+        "xyz:SP500": {
+          "trades": 7,
+          "expectancy_r": -0.4024048088124272,
+          "net": -137.74310901417414,
+          "win_rate": 0.2857142857142857,
+          "avg_hold_hours": 2.5714285714285716
+        },
+        "xyz:XYZ100": {
+          "trades": 3,
+          "expectancy_r": -0.09881126154100951,
+          "net": -7.989700570987222,
+          "win_rate": 0.6666666666666666,
+          "avg_hold_hours": 1.0
+        }
+      },
+      "params": {
+        "confirm": "1h",
+        "macro": "4h,1d",
+        "macro_mode": "both",
+        "atr": "1hx0.5",
+        "min_r": 1.0,
+        "max_r": 3.0,
+        "risk": 0.01,
+        "hold_days": 3.0,
+        "runner": false,
+        "top_n": 2,
+        "level_set": "all",
+        "min_touches": 2,
+        "min_room_pct": 0.0,
+        "session": "09:30-16:00",
+        "max_lev": 10,
+        "max_positions": 1,
+        "major": true,
+        "hold_overnight": "be",
+        "side_only": "both",
+        "partial_r": 0.0,
+        "atr_frac": 0.5
+      }
+    }
+  ]
+}

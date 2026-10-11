@@ -115,7 +115,7 @@ python -m hl_bot.research.sweep_tape_backtest \
   --out docs/pnl/sweep_tape_sample
 ```
 
-A desk test can cap swing leverage at 10x (`MODEL_B_SWING_MAX_LEV=10`), keep a single open or pending swing (`MODEL_B_SWING_MAX_POSITIONS=1`), take only a major 4h level or a prior-day/week level (`MODEL_B_SWING_MAJOR=1`, `MODEL_B_SWING_MIN_TOUCHES=2`), and trade the cash session `MODEL_B_SWING_SESSION=09:30-16:00` in America/Toronto. That session flattens an open swing at 16:00 and does not hold overnight. Unset, those flags do nothing: the notional cap stays 20x, each coin can still work its own idea, and the 3-day hold stays. `LEVERAGE` stays 20.
+A desk test can cap swing leverage at 10x (`MODEL_B_SWING_MAX_LEV=10`), keep a single open or pending swing (`MODEL_B_SWING_MAX_POSITIONS=1`), take only a major 4h level or a prior-day/week level (`MODEL_B_SWING_MAJOR=1`, `MODEL_B_SWING_MIN_TOUCHES=2`), and trade the cash session `MODEL_B_SWING_SESSION=09:30-16:00` in America/Toronto. That session flattens an open swing at 16:00 and does not hold overnight. `MODEL_B_SWING_HOLD_OVERNIGHT=1` keeps the position through the close. `be` holds only when the 16:00 price is at least +1R and then moves the stop to entry. Entries stay inside the window either way. `MODEL_B_SWING_RR_MAX=3` caps targets at 3R. Unset, those flags do nothing: the notional cap stays 20x, each coin can still work its own idea, targets stay 1R to 5R, and the 3-day hold stays. `LEVERAGE` stays 20.
 
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 

@@ -146,6 +146,9 @@ class OpenPosition:
     mae_r: float = 0.0
     # None uses the coin slip. Copied from the working order on fill.
     exit_slip_bps: float | None = None
+    # Local date of the cash close already decided for an overnight hold.
+    # Empty means the next 16:00 still owes a flatten or a breakeven move.
+    session_close_id: str = ""
 
 
 @dataclass
