@@ -1272,6 +1272,19 @@ def _run_model_b(
             # Paper exits on price. Live exits come from user fills (stop/TP
             # brackets). Public delta never closes a position.
             if last is not None and not settings.is_live:
+                r_entry = r_stop = r_size = 0.0
+                if swing_on and (pre_pos := book.position(coin)) is not None:
+                    r_entry = float(pre_pos.entry)
+                    r_stop = float(pre_pos.stop)
+                    r_size = float(pre_pos.size)
+                if swing_on and engine.swing_params is not None:
+                    from hl_bot.strategy.model_b.swing import session_flat_due
+
+                    if session_flat_due(now, engine.swing_params.session):
+                        for order in list(book.resting_orders()):
+                            if canon_coin(order.coin) == canon_coin(coin):
+                                _cancel_working(order, "SESSION_CLOSE")
+                                summary["cancels"] += 1
                 if swing_on and bool(getattr(settings, "model_b_swing_runner", False)):
                     book.paper_tp1(
                         coin,
@@ -1286,6 +1299,17 @@ def _run_model_b(
                         scratch_px = paper_scratch_exit(scratch_pos, float(last), now, engine.swing_params)
                         if scratch_px is not None and scratch_px > 0:
                             closed = book.force_flat(coin, scratch_px, reason="scratch")
+                if (
+                    closed is None
+                    and swing_on
+                    and engine.swing_params is not None
+                    and (held_session := book.position(coin)) is not None
+                    and not held_session.adopted
+                ):
+                    from hl_bot.strategy.model_b.swing import session_flat_due
+
+                    if session_flat_due(now, engine.swing_params.session):
+                        closed = book.force_flat(coin, last, reason="SESSION_CLOSE")
                 if (
                     closed is None
                     and swing_on
@@ -1318,16 +1342,18 @@ def _run_model_b(
                     equity += pnl
                     risk.record_trade_close(pnl)
                     summary["closes"] += 1
-                    journal.log(
-                        "close",
-                        symbol=closed.coin,
-                        side=closed.side,
-                        size=closed.size,
-                        price=closed.exit,
-                        pnl=pnl,
-                        reason=closed.reason,
-                        entry_mode="model_b",
-                    )
+                    close_fields = {
+                        "symbol": closed.coin,
+                        "side": closed.side,
+                        "size": closed.size,
+                        "price": closed.exit,
+                        "pnl": pnl,
+                        "reason": closed.reason,
+                        "entry_mode": "model_b",
+                    }
+                    if closed.reason == "SESSION_CLOSE" and r_size > 0 and abs(r_entry - r_stop) > 0:
+                        close_fields["r"] = pnl / (r_size * abs(r_entry - r_stop))
+                    journal.log("close", **close_fields)
                     logger.info(
                         "MODEL_B %s %s @ %s pnl=%s",
                         closed.reason.upper(),
@@ -1532,6 +1558,37 @@ def _run_model_b(
                 )
 
         hunts = rank_armed_hunts(hunts, quality_mode)
+        if swing_on and engine.swing_params is not None:
+            from hl_bot.strategy.model_b.swing import swing_slot
+
+            slot_cap = int(getattr(engine.swing_params, "max_positions", 0) or 0)
+            if slot_cap >= 1:
+                armed = [
+                    (float(hunt["decision"].quality or hunt["decision"].score), hunt["coin"])
+                    for hunt in hunts
+                    if hunt.get("post") and hunt["decision"].armed
+                ]
+                slot = swing_slot(
+                    armed,
+                    open_coins=[pos.coin for pos in book.open_positions()],
+                    pending=[
+                        (order.coin, float(order.quality or 0.0))
+                        for order in book.resting_orders()
+                    ],
+                    cap=slot_cap,
+                )
+                if slot.limited and slot.cancel and not settings.is_live:
+                    for name in slot.cancel:
+                        released = book.release_for_closer(name)
+                        if released is not None:
+                            _cancel_working(released, "ONE_POSITION")
+                allow = set(slot.allow)
+                if slot.limited:
+                    for hunt in hunts:
+                        decision = hunt["decision"]
+                        if hunt.get("post") and decision.armed and hunt["coin"] not in allow:
+                            hunt["post"] = False
+                            hunt["exposure"] = "ONE_POSITION"
         for hunt in hunts:
             if not hunt["post"]:
                 reason = hunt.get("exposure")

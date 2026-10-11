@@ -114,6 +114,13 @@ class SwingParams:
     trap_min_stop_atr: float = 0.0
     trap_slip_bps: float = 0.0  # 0 = the coin allowance (25 main, 30 xyz)
     trap_slip_mode: str = "flat"  # flat | proportional
+    # Desk test flags. Defaults leave Monday's paper book unchanged.
+    # max_lev only lowers the swing notional cap. It cannot raise the 20x global cap.
+    # max_positions 0 means one working idea per coin, which is the current book.
+    # major keeps a level only when it has enough 4h pivots or a prior-day/week print.
+    max_lev: int = 20
+    max_positions: int = 0
+    major: bool = False
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -163,6 +170,12 @@ class SwingParams:
             trap_min_stop_atr=float(getattr(settings, "model_b_swing_trap_min_stop_atr", 0.0) or 0.0),
             trap_slip_bps=float(getattr(settings, "model_b_swing_trap_slip_bps", 0.0) or 0.0),
             trap_slip_mode=str(getattr(settings, "model_b_swing_trap_slip_mode", "flat") or "flat"),
+            level_set=str(getattr(settings, "model_b_swing_level_set", "all") or "all"),
+            min_touches=int(getattr(settings, "model_b_swing_min_touches", 0) or 0),
+            session=str(getattr(settings, "model_b_swing_session", "all") or "all"),
+            max_lev=int(getattr(settings, "model_b_swing_max_lev", 20) or 20),
+            max_positions=int(getattr(settings, "model_b_swing_max_positions", 0) or 0),
+            major=bool(getattr(settings, "model_b_swing_major", False)),
         )
 
 
@@ -230,15 +243,111 @@ def _labeled_adx(label: str, tf: str) -> float | None:
     return float(match.group(1))
 
 
-def session_open(now: float, session: str) -> bool:
-    """US cash session is 13:30–20:00 UTC. Any other value keeps every hour."""
-    if session != "us":
-        return True
-    from datetime import datetime, timezone
+def parse_session_clock(session: str) -> tuple[int, int] | None:
+    """``09:30-16:00`` as minutes from midnight. ``all`` and ``us`` are not clocks."""
+    import re
 
-    dt = datetime.fromtimestamp(float(now), timezone.utc)
-    minutes = dt.hour * 60 + dt.minute
-    return 13 * 60 + 30 <= minutes < 20 * 60
+    text = str(session or "").strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})", text)
+    if match is None:
+        return None
+    sh, sm, eh, em = (int(part) for part in match.groups())
+    if sh > 23 or eh > 23 or sm > 59 or em > 59:
+        return None
+    start = sh * 60 + sm
+    end = eh * 60 + em
+    if end <= start:
+        return None
+    return start, end
+
+
+def _toronto(now: float):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.fromtimestamp(float(now), ZoneInfo("America/Toronto"))
+
+
+def session_open(now: float, session: str) -> bool:
+    """True when a new entry is allowed.
+
+    ``all`` (and anything that is not a known window) keeps every hour.
+    ``us`` stays the old study window, 13:30–20:00 UTC, with no flatten.
+    ``HH:MM-HH:MM`` is America/Toronto, Monday to Friday, start inclusive
+    and end exclusive. 09:30-16:00 is the cash session.
+    """
+    text = str(session or "all").strip() or "all"
+    if text == "us":
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(float(now), timezone.utc)
+        minutes = dt.hour * 60 + dt.minute
+        return 13 * 60 + 30 <= minutes < 20 * 60
+    clock = parse_session_clock(text)
+    if clock is None:
+        return True
+    local = _toronto(now)
+    if local.weekday() >= 5:
+        return False
+    minutes = local.hour * 60 + local.minute
+    start, end = clock
+    return start <= minutes < end
+
+
+def session_flat_due(now: float, session: str) -> bool:
+    """Flatten an open swing when a clock session is outside its window.
+
+    ``all`` and ``us`` do not flatten. A clock such as 09:30-16:00 flattens
+    at the end, overnight, and across the weekend.
+    """
+    if parse_session_clock(str(session or "").strip()) is None:
+        return False
+    return not session_open(now, session)
+
+
+@dataclass(frozen=True)
+class SwingSlot:
+    """Which new swing entries may arm when the book allows only a few.
+
+    ``limited`` is false when the cap is off, and the caller keeps every hunt.
+    ``allow`` is the coins that may arm. ``cancel`` are pending entries that
+    lose to a strictly higher-quality setup. An open position allows nothing.
+    """
+
+    limited: bool
+    allow: tuple[str, ...]
+    cancel: tuple[str, ...]
+
+
+def swing_slot(
+    candidates: list[tuple[float, str]],
+    *,
+    open_coins: list[str],
+    pending: list[tuple[str, float]],
+    cap: int,
+) -> SwingSlot:
+    """Pick the highest-quality swing setup when only ``cap`` may be working.
+
+    ``candidates`` are ``(quality, coin)`` armed on this pass. ``pending`` is
+    ``(coin, quality)`` of a resting entry. Cap below 1 leaves the book alone.
+    """
+    if int(cap) < 1:
+        return SwingSlot(False, (), ())
+    if open_coins:
+        return SwingSlot(True, (), ())
+    ranked = sorted(candidates, key=lambda item: (-float(item[0]), str(item[1])))
+    if not ranked:
+        return SwingSlot(True, (), ())
+    best_q, best_coin = float(ranked[0][0]), str(ranked[0][1])
+    if pending:
+        pend_coin, pend_q = max(pending, key=lambda item: (float(item[1]), str(item[0])))
+        if best_coin == pend_coin:
+            return SwingSlot(True, (best_coin,), ())
+        if best_q > float(pend_q) + 1e-9:
+            return SwingSlot(True, (best_coin,), tuple(str(coin) for coin, _q in pending))
+        return SwingSlot(True, (), ())
+    allow = tuple(str(coin) for _q, coin in ranked[: int(cap)])
+    return SwingSlot(True, allow, ())
 
 
 def slip_bps_for(coin: str, params: SwingParams) -> float:
@@ -406,6 +515,23 @@ def _cluster(raw: list[tuple[float, str, float]], bps: float) -> list[dict]:
     return groups
 
 
+def _is_major(group: dict, params: SwingParams) -> bool:
+    """A major level is several 4h pivots, or a prior-day / prior-week print.
+
+    ``min_touches`` is the 4h count. Zero uses 2. A prior-day or weekly
+    high or low qualifies on its own, so one touch of PDH is enough.
+    A lone daily fractal does not.
+    """
+    need = int(getattr(params, "min_touches", 0) or 0)
+    if need <= 0:
+        need = 2
+    sources = list(group.get("sources") or [])
+    if any(name in {"PDH", "PDL", "PWH", "PWL"} for name in sources):
+        return True
+    h4 = sum(1 for name in sources if str(name).startswith("4h_"))
+    return h4 >= need
+
+
 def _score_group(group: dict, candles_4h: list[dict], kind: str, bps: float) -> Level | None:
     """Score distinct swing and session events, not every bar that sat nearby.
 
@@ -455,6 +581,7 @@ def build_levels(
         round(float(params.min_score), 4),
         str(getattr(params, "level_set", "all") or "all"),
         int(getattr(params, "min_touches", 0) or 0),
+        bool(getattr(params, "major", False)),
     )
     cached = _LEVEL_CACHE.get(cache_key)
     if cached is not None:
@@ -498,7 +625,10 @@ def build_levels(
             level = _score_group(group, h4, kind, bps)
             if level is None or level.score + 1e-9 < float(params.min_score):
                 continue
-            if min_touches and level.touches < min_touches:
+            if bool(getattr(params, "major", False)):
+                if not _is_major(group, params):
+                    continue
+            elif min_touches and level.touches < min_touches:
                 continue
             ranked.append(level)
         ranked.sort(key=lambda level: (level.score, level.ts), reverse=True)
@@ -730,13 +860,18 @@ def size_swing(
     else:
         slip = float(slip_bps)
     risk = float(risk_pct)
+    # The swing cap only lowers the ticket. 20x stays the global ceiling.
+    swing_lev = int(getattr(params, "max_lev", 20) or 20)
+    if swing_lev < 1:
+        swing_lev = 20
+    notional_cap = min(20, int(max_leverage) if int(max_leverage) >= 1 else 20, swing_lev)
     size, _dollar = size_from_stop(
         equity,
         entry,
         stop,
         risk_pct=risk,
-        leverage=int(leverage),
-        notional_leverage=int(max_leverage),
+        leverage=min(int(leverage), 20) if int(leverage) >= 1 else 20,
+        notional_leverage=notional_cap,
         include_fees=True,
         maker_fee=maker,
         taker_fee=taker,

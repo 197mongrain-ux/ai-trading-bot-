@@ -360,6 +360,14 @@ class Settings:
     model_b_swing_trap_min_stop_atr: float = 0.0
     model_b_swing_trap_slip_bps: float = 0.0
     model_b_swing_trap_slip_mode: str = "flat"
+    # Desk test. Defaults keep Monday's paper book: 20x notional, no
+    # cross-coin position cap, every level, every hour.
+    model_b_swing_max_lev: int = 20
+    model_b_swing_max_positions: int = 0
+    model_b_swing_major: bool = False
+    model_b_swing_min_touches: int = 0
+    model_b_swing_session: str = "all"
+    model_b_swing_level_set: str = "all"
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -686,6 +694,23 @@ class Settings:
                     f"MODEL_B_SWING_TRAP_SLIP_MODE={self.model_b_swing_trap_slip_mode!r} "
                     "must be flat|proportional."
                 )
+            if not (1 <= int(self.model_b_swing_max_lev) <= 20):
+                raise ValueError(
+                    f"MODEL_B_SWING_MAX_LEV={self.model_b_swing_max_lev} must be in [1, 20]. "
+                    "The global 20x cap is not raised."
+                )
+            if int(self.model_b_swing_max_positions) < 0:
+                raise ValueError("MODEL_B_SWING_MAX_POSITIONS must be >= 0.")
+            if int(self.model_b_swing_min_touches) < 0:
+                raise ValueError("MODEL_B_SWING_MIN_TOUCHES must be >= 0.")
+            session_text = str(self.model_b_swing_session or "all").strip()
+            if session_text not in ("all", "us"):
+                from hl_bot.strategy.model_b.swing import parse_session_clock
+
+                if parse_session_clock(session_text) is None:
+                    raise ValueError(
+                        f"MODEL_B_SWING_SESSION={session_text!r} must be all, us, or HH:MM-HH:MM."
+                    )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -920,6 +945,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_trap_slip_bps=_float("MODEL_B_SWING_TRAP_SLIP_BPS", 0.0),
         model_b_swing_trap_slip_mode=(os.getenv("MODEL_B_SWING_TRAP_SLIP_MODE") or "flat").strip().lower()
         or "flat",
+        model_b_swing_max_lev=_int("MODEL_B_SWING_MAX_LEV", 20),
+        model_b_swing_max_positions=_int("MODEL_B_SWING_MAX_POSITIONS", 0),
+        model_b_swing_major=_bool("MODEL_B_SWING_MAJOR", False),
+        model_b_swing_min_touches=_int("MODEL_B_SWING_MIN_TOUCHES", 0),
+        model_b_swing_session=(os.getenv("MODEL_B_SWING_SESSION") or "all").strip() or "all",
+        model_b_swing_level_set=(os.getenv("MODEL_B_SWING_LEVEL_SET") or "all").strip() or "all",
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

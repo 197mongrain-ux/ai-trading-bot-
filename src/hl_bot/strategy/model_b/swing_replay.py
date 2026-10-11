@@ -24,6 +24,7 @@ from hl_bot.strategy.model_b.swing import (
     funding_pnl,
     plan_trade,
     scratch_trigger,
+    session_flat_due,
     slip_bps_for,
 )
 
@@ -171,6 +172,9 @@ def _summarize(name: str, trades: list[ClosedTrade], equity0: float, equity1: fl
             "min_touches": params.min_touches,
             "min_room_pct": params.min_room_pct,
             "session": params.session,
+            "max_lev": int(getattr(params, "max_lev", 20) or 20),
+            "max_positions": int(getattr(params, "max_positions", 0) or 0),
+            "major": bool(getattr(params, "major", False)),
             "side_only": params.side_only,
             "partial_r": params.partial_r,
             "atr_frac": params.atr_frac,
@@ -272,6 +276,7 @@ def replay(
     risk_pct: float = 0.01,
     equity: float = 10_000.0,
     name: str = "swing",
+    since: float | None = None,
 ) -> Summary:
     """Walk the confirm bars. One position per coin. Shared equity."""
     _clear_swing_caches()
@@ -294,6 +299,11 @@ def replay(
                 span_end = now
             events.append((now, coin, idx))
     events.sort()
+    if since is not None:
+        events = [item for item in events if item[0] + 1e-9 >= float(since)]
+    if events:
+        span_start = events[0][0]
+        span_end = events[-1][0]
     state: dict[str, dict] = {coin: {"mode": "flat"} for coin in series}
     # One ticket per sweep. A close on the sweep bar must not re-arm that same wick.
     seen: dict[str, set] = {coin: set() for coin in series}
@@ -311,7 +321,34 @@ def replay(
         if peak > 0:
             max_dd = max(max_dd, (peak - marked) / peak)
 
+    arm_queue: list[tuple[Plan, str, int, float]] = []
+    stamp: float | None = None
+
+    def _flush_arms() -> None:
+        cap = int(getattr(params, "max_positions", 0) or 0)
+        queue = list(arm_queue)
+        arm_queue.clear()
+        if cap >= 1:
+            queue.sort(key=lambda item: (item[0].score, item[0].r_multiple, item[1]), reverse=True)
+        for planned, arm_coin, arm_idx, armed_now in queue:
+            if cap >= 1 and sum(1 for row in state.values() if row["mode"] != "flat") >= cap:
+                break
+            sid = (planned.side, round(planned.level, 6), int(planned.level_ts))
+            if sid in seen[arm_coin]:
+                continue
+            seen[arm_coin].add(sid)
+            state[arm_coin] = {
+                "mode": "retest" if planned.retest else "working",
+                "plan": planned,
+                "from_idx": arm_idx + 1,
+                "expire": armed_now + float(params.fill_hours) * 3600.0,
+                "left": False,
+            }
+
     for now, coin, idx in events:
+        if stamp is not None and now != stamp:
+            _flush_arms()
+        stamp = now
         item = series[coin]
         confirm = item[params.confirm_tf]
         bar = confirm[idx]
@@ -325,7 +362,7 @@ def replay(
 
         if st["mode"] == "retest" and idx >= st["from_idx"]:
             plan = st["plan"]
-            if now > st["expire"]:
+            if now > st["expire"] or session_flat_due(now, params.session):
                 st["mode"] = "flat"
             else:
                 if plan.side == "long":
@@ -348,7 +385,7 @@ def replay(
 
         if st["mode"] == "working" and idx >= st["from_idx"]:
             plan: Plan = st["plan"]
-            if now > st["expire"]:
+            if now > st["expire"] or session_flat_due(now, params.session):
                 st["mode"] = "flat"
             else:
                 if plan.side == "long":
@@ -434,6 +471,11 @@ def replay(
                     trades, coin, plan, st, scratch_px, "scratch", now, fees, slip, rates, eq, exit_close=close
                 )
                 st["mode"] = "flat"
+            elif session_flat_due(now, params.session):
+                eq = _finish(
+                    trades, coin, plan, st, close, "SESSION_CLOSE", now, fees, slip, rates, eq, exit_close=close
+                )
+                st["mode"] = "flat"
             elif hit_tp and (not params.runner or st["tp1_done"] or not plan.runner_px or params.partial_r > 0):
                 eq = _finish(trades, coin, plan, st, tp, "tp", now, fees, slip, rates, eq, exit_close=close)
                 st["mode"] = "flat"
@@ -499,17 +541,7 @@ def replay(
                 max_leverage=20,
             )
             if isinstance(planned, Plan):
-                sid = (planned.side, round(planned.level, 6), int(planned.level_ts))
-                if sid in seen[coin]:
-                    continue
-                seen[coin].add(sid)
-                state[coin] = {
-                    "mode": "retest" if planned.retest else "working",
-                    "plan": planned,
-                    "from_idx": idx + 1,
-                    "expire": now + float(params.fill_hours) * 3600.0,
-                    "left": False,
-                }
+                arm_queue.append((planned, coin, idx, now))
 
         st = state[coin]
         if st["mode"] == "open":
@@ -528,6 +560,8 @@ def replay(
         else:
             unreal[coin] = 0.0
         _mark_dd()
+
+    _flush_arms()
 
     span_days = 0.0 if span_start is None or span_end is None else (span_end - span_start) / 86400.0
     return _summarize(name, trades, equity, eq, max_dd, params, risk_pct, span_days)
@@ -749,17 +783,99 @@ def run_grid(data: dict[str, dict], base: SwingParams | None = None, risk: float
     return out
 
 
+def desk_params() -> SwingParams:
+    """Chris's paper desk. Flags stay off unless this object is used."""
+    return SwingParams(
+        confirm_tf="1h",
+        flow="off",
+        max_lev=10,
+        max_positions=1,
+        major=True,
+        min_touches=2,
+        session="09:30-16:00",
+        min_r=1.0,
+        max_r=5.0,
+    )
+
+
+def _run_desk(data: dict, out: str, *, days: float) -> int:
+    """One book on the last ``days`` of the 1h candles. History before that still builds levels."""
+    end = 0.0
+    for item in data.values():
+        bars = item.get("1h") or []
+        if bars:
+            end = max(end, float(bars[-1]["t"]) / 1000.0 + 3600.0)
+    since = end - float(days) * 86400.0
+    summary = replay(data, desk_params(), risk_pct=0.01, equity=10_000.0, name="desk-90d", since=since)
+    closes = sum(1 for trade in summary.blotter if trade.reason == "SESSION_CLOSE")
+    lines = [
+        "# Swing desk replay",
+        "",
+        "Paper research only. This is not the Monday default. The book is 1h confirm, 4h+daily macro, flow off (no tape in the candle file), 1% risk, 10x swing cap, one position, major 4h or prior-day/week levels, and the 09:30-16:00 America/Toronto session.",
+        "",
+        f"- Window: last {days:.0f} days. Span walked: {summary.span_days:.1f} days.",
+        f"- Trades: {summary.trades}",
+        f"- Win rate: {summary.win_rate:.1%}",
+        f"- Average winner R: {summary.avg_win_r:.3f}",
+        f"- Average loser R: {summary.avg_loss_r:.3f}",
+        f"- Expectancy R: {summary.expectancy_r:.3f}",
+        f"- Net: {summary.net_pct:.2f}%",
+        f"- Max drawdown: {summary.max_dd_pct:.2f}%",
+        f"- SESSION_CLOSE exits: {closes}",
+        "",
+        "R is net dollars divided by size times the price-stop distance. A session flatten is logged as SESSION_CLOSE.",
+        "",
+    ]
+    text = "\n".join(lines)
+    dest = Path(out)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    payload = dest.with_suffix(".json")
+    payload.write_text(
+        json.dumps(
+            {
+                "name": summary.name,
+                "trades": summary.trades,
+                "win_rate": summary.win_rate,
+                "avg_win_r": summary.avg_win_r,
+                "avg_loss_r": summary.avg_loss_r,
+                "expectancy_r": summary.expectancy_r,
+                "net_pct": summary.net_pct,
+                "max_dd_pct": summary.max_dd_pct,
+                "span_days": summary.span_days,
+                "session_closes": closes,
+                "per_coin": summary.per_coin,
+                "params": summary.params,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(text)
+    print("wrote", dest)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Replay swing Model B on cached Hyperliquid candles")
     parser.add_argument("--cache", default="/tmp/hl_swing_cache")
     parser.add_argument("--out", default="docs/pnl/swing_replay.json")
+    parser.add_argument(
+        "--desk",
+        action="store_true",
+        help="Replay the 10x, one-position, major-level, cash-session book. Does not run the old grid.",
+    )
+    parser.add_argument("--days", type=float, default=90.0)
     args = parser.parse_args(argv)
     data = load_cache(args.cache)
     if not data:
         print("no candles in", args.cache)
         return 1
+    if args.desk:
+        desk_out = args.out if args.out != "docs/pnl/swing_replay.json" else "docs/pnl/swing_desk.md"
+        return _run_desk(data, desk_out, days=float(args.days))
     for coin, item in data.items():
         for interval in ("5m", "15m", "1h"):
             bars = item.get(interval) or []
