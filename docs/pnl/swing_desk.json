@@ -1,0 +1,78 @@
+{
+  "name": "desk-90d",
+  "trades": 23,
+  "win_rate": 0.34782608695652173,
+  "avg_win_r": 1.176275938944576,
+  "avg_loss_r": -1.3199611220981946,
+  "expectancy_r": -0.45170475303983965,
+  "net_pct": -5.021322742660428,
+  "max_dd_pct": 7.848774760635662,
+  "span_days": 90.0,
+  "session_closes": 13,
+  "per_coin": {
+    "BTC": {
+      "trades": 3,
+      "expectancy_r": -0.44217283929523665,
+      "net": -95.3072386752553,
+      "win_rate": 0.3333333333333333,
+      "avg_hold_hours": 3.3333333333333335
+    },
+    "ETH": {
+      "trades": 1,
+      "expectancy_r": -1.7046339682203362,
+      "net": -95.69148883409555,
+      "win_rate": 0.0,
+      "avg_hold_hours": 2.0
+    },
+    "SOL": {
+      "trades": 2,
+      "expectancy_r": -0.00017570646752529395,
+      "net": -10.50318408413186,
+      "win_rate": 0.5,
+      "avg_hold_hours": 1.0
+    },
+    "xyz:GOLD": {
+      "trades": 5,
+      "expectancy_r": 0.5827287607708984,
+      "net": 95.43589240478542,
+      "win_rate": 0.6,
+      "avg_hold_hours": 3.8
+    },
+    "xyz:SP500": {
+      "trades": 10,
+      "expectancy_r": -0.7544633297108124,
+      "net": -300.7373811623727,
+      "win_rate": 0.3,
+      "avg_hold_hours": 2.5
+    },
+    "xyz:XYZ100": {
+      "trades": 2,
+      "expectancy_r": -1.363357963810791,
+      "net": -95.32887391497239,
+      "win_rate": 0.0,
+      "avg_hold_hours": 3.5
+    }
+  },
+  "params": {
+    "confirm": "1h",
+    "macro": "4h,1d",
+    "macro_mode": "both",
+    "atr": "1hx0.5",
+    "min_r": 1.0,
+    "max_r": 5.0,
+    "risk": 0.01,
+    "hold_days": 3.0,
+    "runner": false,
+    "top_n": 2,
+    "level_set": "all",
+    "min_touches": 2,
+    "min_room_pct": 0.0,
+    "session": "09:30-16:00",
+    "max_lev": 10,
+    "max_positions": 1,
+    "major": true,
+    "side_only": "both",
+    "partial_r": 0.0,
+    "atr_frac": 0.5
+  }
+}

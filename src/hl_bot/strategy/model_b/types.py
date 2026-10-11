@@ -82,6 +82,9 @@ class AloIntent:
     # take_profit either way; runner_px is the second target when set.
     runner_px: float | None = None
     runner_mode: str = "off"
+    # Slip the size reserved. None keeps the coin allowance at the exit.
+    # Set on a trapped arm so the close pays the same allowance.
+    exit_slip_bps: float | None = None
 
 
 @dataclass

@@ -78,6 +78,45 @@ I_UNDERSTAND_LIVE_TRADING=true
 python -m hl_bot run
 ```
 
+Swing is a separate style of that same hunt. `MODEL_B_STYLE=scalp` (the default) does not change the book above. Swing stays in paper until `MODEL_B_PAPER=0`.
+
+```bash
+# Laptop paper. Live mainnet prices and trades, simulated fills, own journal.
+# No real orders. Going live later is MODEL_B_PAPER=0 plus the live gate.
+TRADING_MODE=paper
+HL_NETWORK=mainnet
+ENTRY_MODE=model_b
+MODEL_B_STYLE=swing
+MODEL_B_PAPER=1
+LEVERAGE=20
+RISK_PER_TRADE=0.01
+python -m hl_bot run
+```
+
+The swing journal is `logs/model_b_swing_paper.jsonl` (not `logs/trades.jsonl`). Coins default to BTC, ETH, SOL, xyz:GOLD, xyz:SP500, xyz:XYZ100. A wide-reclaim filter (`MODEL_B_SWING_RECLAIM_MODE=off`) and a fail-fast scratch (`MODEL_B_SWING_SCRATCH_MINUTES=0`, `MODEL_B_SWING_SCRATCH_MAE_R=0`) stay off, so this command does not skip a large reclaim bar or scratch a fill. `MODEL_B_SWING_ENTRY=sweep` (the default) is that reclaim. `MODEL_B_SWING_ENTRY=trapped` switches the paper entry to trapped sellers at support and trapped buyers at resistance. It stays off until set.
+
+Replay a recorded tape (no orders) with:
+
+```bash
+python -m hl_bot.research.trapped_backtest \
+  --tape /workspace/hl_tape --from 2026-10-09 --to 2026-10-09 \
+  --coins BTC,ETH,SOL,xyz:GOLD,xyz:SP500,xyz:XYZ100 \
+  --out docs/pnl/trapped_sample
+```
+
+That writes `trapped_trades.csv` and `trapped_summary.md`. The entry grid is bar 1m/3m/5m, imbalance 2.5/3/4, stacked 2/3/4, zone tolerance 10/20/40 bps. A second grid, only on the default cell, tries a stop beyond the zone and a minimum distance of max(20/30/40 bps, 0.5/1.0×ATR(14)), plus a flat 10 or 15 bp slip and a proportional slip. Those flags stay off (`MODEL_B_SWING_TRAP_STOP_ANCHOR=trap`, min distance 0, slip mode `flat`). R in that summary is net dollars divided by the risk budget, and an open trade at the end of the file is a mark inside the with-marks total.
+
+The same tape window can replay the sweep entry (15m confirm, 1h+4h with the 4h leading):
+
+```bash
+python -m hl_bot.research.sweep_tape_backtest \
+  --tape /workspace/hl_tape --from 2026-10-09 --to 2026-10-09 \
+  --coins BTC,ETH,SOL,xyz:GOLD,xyz:SP500,xyz:XYZ100 \
+  --out docs/pnl/sweep_tape_sample
+```
+
+A desk test can cap swing leverage at 10x (`MODEL_B_SWING_MAX_LEV=10`), keep a single open or pending swing (`MODEL_B_SWING_MAX_POSITIONS=1`), take only a major 4h level or a prior-day/week level (`MODEL_B_SWING_MAJOR=1`, `MODEL_B_SWING_MIN_TOUCHES=2`), and trade the cash session `MODEL_B_SWING_SESSION=09:30-16:00` in America/Toronto. That session flattens an open swing at 16:00 and does not hold overnight. Unset, those flags do nothing: the notional cap stays 20x, each coin can still work its own idea, and the 3-day hold stays. `LEVERAGE` stays 20.
+
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 
 BTC, ETH, SOL, NEAR, PUMP, LIT, AAVE, ONDO, WLD, TAO, xyz:GOLD, xyz:SP500, xyz:XYZ100
