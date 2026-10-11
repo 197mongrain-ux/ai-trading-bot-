@@ -368,6 +368,11 @@ class Settings:
     model_b_swing_min_touches: int = 0
     model_b_swing_session: str = "all"
     model_b_swing_level_set: str = "all"
+    # off flattens at the session end. always holds. be holds only at +1R
+    # and moves the stop to entry. Unset is off, so Monday's book is unchanged.
+    model_b_swing_hold_overnight: str = "off"
+    # None keeps MODEL_B_SWING_MAX_R (default 5). A set value is the target cap.
+    model_b_swing_rr_max: float | None = None
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -711,6 +716,19 @@ class Settings:
                     raise ValueError(
                         f"MODEL_B_SWING_SESSION={session_text!r} must be all, us, or HH:MM-HH:MM."
                     )
+            from hl_bot.strategy.model_b.swing import normalize_hold_overnight
+
+            hold_mode = normalize_hold_overnight(self.model_b_swing_hold_overnight)
+            if hold_mode not in ("off", "always", "be"):
+                raise ValueError(
+                    f"MODEL_B_SWING_HOLD_OVERNIGHT={self.model_b_swing_hold_overnight!r} "
+                    "must be 0, 1, or be."
+                )
+            if self.model_b_swing_rr_max is not None:
+                if not (1.0 <= self.model_b_swing_min_r <= float(self.model_b_swing_rr_max) <= 8.0):
+                    raise ValueError(
+                        "MODEL_B_SWING_RR_MAX must satisfy 1 <= MIN_R <= RR_MAX <= 8."
+                    )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -951,6 +969,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_min_touches=_int("MODEL_B_SWING_MIN_TOUCHES", 0),
         model_b_swing_session=(os.getenv("MODEL_B_SWING_SESSION") or "all").strip() or "all",
         model_b_swing_level_set=(os.getenv("MODEL_B_SWING_LEVEL_SET") or "all").strip() or "all",
+        model_b_swing_hold_overnight=(os.getenv("MODEL_B_SWING_HOLD_OVERNIGHT") or "off").strip() or "off",
+        model_b_swing_rr_max=_optional_float("MODEL_B_SWING_RR_MAX", None),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

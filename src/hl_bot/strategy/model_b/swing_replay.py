@@ -23,9 +23,12 @@ from hl_bot.strategy.model_b.swing import (
     exit_net,
     funding_pnl,
     plan_trade,
+    overnight_decision,
     scratch_trigger,
+    session_close_id,
     session_flat_due,
     slip_bps_for,
+    tighten_to_breakeven,
 )
 
 COINS = ("BTC", "ETH", "SOL", "xyz:GOLD", "xyz:SP500", "xyz:XYZ100")
@@ -175,6 +178,7 @@ def _summarize(name: str, trades: list[ClosedTrade], equity0: float, equity1: fl
             "max_lev": int(getattr(params, "max_lev", 20) or 20),
             "max_positions": int(getattr(params, "max_positions", 0) or 0),
             "major": bool(getattr(params, "major", False)),
+            "hold_overnight": str(getattr(params, "hold_overnight", "off") or "off"),
             "side_only": params.side_only,
             "partial_r": params.partial_r,
             "atr_frac": params.atr_frac,
@@ -455,6 +459,15 @@ def replay(
             tp = float(st["tp"])
             hold_limit = float(st["opened"]) + float(params.hold_days) * 86400.0
             scratch_px = _scratch_px(plan, st, high, low, close, now, params, prior_mfe)
+            action = overnight_decision(
+                now,
+                params,
+                side=plan.side,
+                entry=plan.entry,
+                risk_stop=plan.stop,
+                price=close,
+                decided=str(st.get("session_close_id") or ""),
+            )
             if plan.side == "long":
                 hit_stop = low <= stop + 1e-9
                 hit_tp = high >= tp - 1e-9
@@ -471,7 +484,7 @@ def replay(
                     trades, coin, plan, st, scratch_px, "scratch", now, fees, slip, rates, eq, exit_close=close
                 )
                 st["mode"] = "flat"
-            elif session_flat_due(now, params.session):
+            elif action == "flat":
                 eq = _finish(
                     trades, coin, plan, st, close, "SESSION_CLOSE", now, fees, slip, rates, eq, exit_close=close
                 )
@@ -524,6 +537,11 @@ def replay(
                     trades, coin, plan, st, close, "max_hold", now, fees, slip, rates, eq, exit_close=close
                 )
                 st["mode"] = "flat"
+            if state[coin]["mode"] == "open" and action == "be":
+                state[coin]["stop"] = tighten_to_breakeven(
+                    plan.side, plan.entry, float(state[coin]["stop"])
+                )
+                state[coin]["session_close_id"] = session_close_id(now, params.session) or ""
 
         st = state[coin]
         if st["mode"] == "flat" and eq > 0:
@@ -795,7 +813,49 @@ def desk_params() -> SwingParams:
         session="09:30-16:00",
         min_r=1.0,
         max_r=5.0,
+        hold_overnight="off",
     )
+
+
+def overnight_params(mode: str) -> SwingParams:
+    """Desk book with a 1–3R target cap and one overnight rule.
+
+    ``always`` holds through 16:00. ``be`` holds only when that close is
+    at least +1R and then rests the stop at entry.
+    """
+    return _variant(desk_params(), max_r=3.0, hold_overnight=mode)
+
+
+def _exit_counts(summary: Summary) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for trade in summary.blotter:
+        counts[trade.reason] = counts.get(str(trade.reason), 0) + 1
+    return counts
+
+
+def _variant_lines(title: str, blurb: str, summary: Summary) -> list[str]:
+    counts = _exit_counts(summary)
+    order = ("stop", "tp", "SESSION_CLOSE", "max_hold", "scratch")
+    shown = [name for name in order if counts.get(name)]
+    shown.extend(name for name in sorted(counts) if name not in order)
+    exit_text = ", ".join(f"{name} {counts[name]}" for name in shown) or "none"
+    return [
+        f"## {title}",
+        "",
+        blurb,
+        "",
+        f"- Trades: {summary.trades}",
+        f"- Win rate: {summary.win_rate:.1%}",
+        f"- Average winner R: {summary.avg_win_r:.3f}",
+        f"- Average loser R: {summary.avg_loss_r:.3f}",
+        f"- Expectancy R: {summary.expectancy_r:.3f}",
+        f"- Net: {summary.net_pct:.2f}%",
+        f"- Max drawdown: {summary.max_dd_pct:.2f}%",
+        f"- Average hold: {summary.avg_hold_hours:.1f}h",
+        f"- Exits: {exit_text}",
+        f"- Span walked: {summary.span_days:.1f} days",
+        "",
+    ]
 
 
 def _run_desk(data: dict, out: str, *, days: float) -> int:
@@ -856,6 +916,81 @@ def _run_desk(data: dict, out: str, *, days: float) -> int:
     return 0
 
 
+def _run_overnight(data: dict, out: str, *, days: float) -> int:
+    """Two 90-day books: hold every night, or hold only a +1R close at breakeven."""
+    end = 0.0
+    for item in data.values():
+        bars = item.get("1h") or []
+        if bars:
+            end = max(end, float(bars[-1]["t"]) / 1000.0 + 3600.0)
+    since = end - float(days) * 86400.0
+    specs = (
+        (
+            "a-hold",
+            "always",
+            "(a) Hold overnight",
+            "No flatten at 16:00. Entries are still only 09:30–16:00 America/Toronto, Monday to Friday. The 3-day max hold still applies.",
+        ),
+        (
+            "b-breakeven",
+            "be",
+            "(b) Hold only if +1R at 16:00",
+            "At 16:00, a close of at least +1R against the original stop moves the stop to entry and holds. Anything less flattens as SESSION_CLOSE. The next session close is checked again.",
+        ),
+    )
+    lines = [
+        "# Swing overnight replay",
+        "",
+        "Paper research only. This is not the Monday default. Both books keep the 10x swing cap, one position, major 4h or prior-day/week levels, 1% risk, the 2% loss cap, and targets of 1R to 3R. Confirm is 1h. Macro is 4h and daily, both. Flow is off.",
+        "",
+        f"Window: last {days:.0f} days of the cached 1h book. R is net dollars divided by size times the original price-stop distance.",
+        "",
+    ]
+    payload_rows = []
+    for name, mode, title, blurb in specs:
+        summary = replay(
+            data,
+            overnight_params(mode),
+            risk_pct=0.01,
+            equity=10_000.0,
+            name=name,
+            since=since,
+        )
+        lines.extend(_variant_lines(title, blurb, summary))
+        payload_rows.append(
+            {
+                "name": name,
+                "hold_overnight": mode,
+                "trades": summary.trades,
+                "win_rate": summary.win_rate,
+                "avg_win_r": summary.avg_win_r,
+                "avg_loss_r": summary.avg_loss_r,
+                "expectancy_r": summary.expectancy_r,
+                "net_pct": summary.net_pct,
+                "max_dd_pct": summary.max_dd_pct,
+                "avg_hold_hours": summary.avg_hold_hours,
+                "span_days": summary.span_days,
+                "exits": _exit_counts(summary),
+                "per_coin": summary.per_coin,
+                "params": summary.params,
+            }
+        )
+        print(summary.row(), flush=True)
+    lines.append("Neither book turns a flag on. Monday's paper stays on a 3-day hold, targets of 1R to 5R, and no session flatten.")
+    lines.append("")
+    text = "\n".join(lines)
+    dest = Path(out)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    dest.with_suffix(".json").write_text(
+        json.dumps({"days": days, "variants": payload_rows}, indent=2),
+        encoding="utf-8",
+    )
+    print(text)
+    print("wrote", dest)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -865,7 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--desk",
         action="store_true",
-        help="Replay the 10x, one-position, major-level, cash-session book. Does not run the old grid.",
+        help="Replay the overnight desk variants (hold always, and +1R breakeven). Does not run the old grid.",
     )
     parser.add_argument("--days", type=float, default=90.0)
     args = parser.parse_args(argv)
@@ -874,8 +1009,8 @@ def main(argv: list[str] | None = None) -> int:
         print("no candles in", args.cache)
         return 1
     if args.desk:
-        desk_out = args.out if args.out != "docs/pnl/swing_replay.json" else "docs/pnl/swing_desk.md"
-        return _run_desk(data, desk_out, days=float(args.days))
+        desk_out = args.out if args.out != "docs/pnl/swing_replay.json" else "docs/pnl/swing_overnight.md"
+        return _run_overnight(data, desk_out, days=float(args.days))
     for coin, item in data.items():
         for interval in ("5m", "15m", "1h"):
             bars = item.get(interval) or []

@@ -121,6 +121,10 @@ class SwingParams:
     max_lev: int = 20
     max_positions: int = 0
     major: bool = False
+    # off flattens at the session end. always holds through the close.
+    # be holds only when the close is at least +1R and moves the stop to entry.
+    # Entries still use the session clock in every mode.
+    hold_overnight: str = "off"
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
@@ -134,7 +138,7 @@ class SwingParams:
             atr_tf=str(getattr(settings, "model_b_swing_atr_tf", "1h") or "1h"),
             atr_frac=float(getattr(settings, "model_b_swing_atr_frac", 0.5) or 0.5),
             min_r=float(getattr(settings, "model_b_swing_min_r", 1.0) or 1.0),
-            max_r=float(getattr(settings, "model_b_swing_max_r", 5.0) or 5.0),
+            max_r=_swing_max_r(settings),
             top_n=int(getattr(settings, "model_b_swing_top_n", 2) or 2),
             min_score=float(getattr(settings, "model_b_swing_min_score", 3.0) or 3.0),
             cluster_bps=float(getattr(settings, "model_b_swing_cluster_bps", 20.0) or 20.0),
@@ -176,7 +180,30 @@ class SwingParams:
             max_lev=int(getattr(settings, "model_b_swing_max_lev", 20) or 20),
             max_positions=int(getattr(settings, "model_b_swing_max_positions", 0) or 0),
             major=bool(getattr(settings, "model_b_swing_major", False)),
+            hold_overnight=normalize_hold_overnight(
+                getattr(settings, "model_b_swing_hold_overnight", "off")
+            ),
         )
+
+
+def _swing_max_r(settings) -> float:
+    """``MODEL_B_SWING_RR_MAX`` wins when it is set. Otherwise the 5R default."""
+    override = getattr(settings, "model_b_swing_rr_max", None)
+    if override is not None and str(override).strip() != "":
+        return float(override)
+    return float(getattr(settings, "model_b_swing_max_r", 5.0) or 5.0)
+
+
+def normalize_hold_overnight(value: object) -> str:
+    """``off``, ``always``, or ``be``. Unknown text is returned for validation."""
+    raw = str("off" if value is None else value).strip().lower()
+    if raw in ("", "0", "false", "no", "off"):
+        return "off"
+    if raw in ("1", "true", "yes", "on", "always"):
+        return "always"
+    if raw in ("be", "1r", "breakeven"):
+        return "be"
+    return raw
 
 
 @dataclass(frozen=True)
@@ -298,11 +325,94 @@ def session_flat_due(now: float, session: str) -> bool:
     """Flatten an open swing when a clock session is outside its window.
 
     ``all`` and ``us`` do not flatten. A clock such as 09:30-16:00 flattens
-    at the end, overnight, and across the weekend.
+    at the end, overnight, and across the weekend. ``hold_overnight`` can
+    keep the position; this clock check itself does not change.
     """
     if parse_session_clock(str(session or "").strip()) is None:
         return False
     return not session_open(now, session)
+
+
+def session_close_id(now: float, session: str) -> str | None:
+    """Weekday date of the cash close an open position still owes.
+
+    None while the session is open, and for ``all`` / ``us``. After the end
+    the id is that weekday. The next morning and the weekend keep the
+    previous session day's id, so the 16:00 decision happens once.
+    """
+    text = str(session or "").strip()
+    clock = parse_session_clock(text)
+    if clock is None or session_open(now, text):
+        return None
+    from datetime import timedelta
+
+    local = _toronto(float(now))
+    start, _end = clock
+    day = local
+    if day.weekday() < 5 and (day.hour * 60 + day.minute) < start:
+        day = day - timedelta(days=1)
+    while day.weekday() >= 5:
+        day = day - timedelta(days=1)
+    return day.date().isoformat()
+
+
+def price_r(side: str, entry: float, risk_stop: float, price: float) -> float | None:
+    """Unrealized R against the original stop. None when the risk is zero."""
+    dist = abs(float(entry) - float(risk_stop))
+    if dist <= 0 or float(price) <= 0:
+        return None
+    if side == "long":
+        return (float(price) - float(entry)) / dist
+    if side == "short":
+        return (float(entry) - float(price)) / dist
+    return None
+
+
+def tighten_to_breakeven(side: str, entry: float, stop: float) -> float:
+    """Move the stop to entry when that tightens it. Never widen a stop."""
+    entry = float(entry)
+    stop = float(stop)
+    if side == "long":
+        return stop if stop >= entry else entry
+    if side == "short":
+        if 0 < stop <= entry:
+            return stop
+        return entry
+    return stop
+
+
+def overnight_decision(
+    now: float,
+    params: SwingParams,
+    *,
+    side: str,
+    entry: float,
+    risk_stop: float,
+    price: float,
+    decided: str = "",
+) -> str:
+    """What an open swing does at ``now``: ``flat``, ``be``, or ``hold``.
+
+    ``off`` flattens whenever the session clock is closed. ``always`` never
+    flattens for the clock. ``be`` decides once per session date: at least
+    +1R against the original stop holds and the caller moves the stop to
+    entry; anything less flattens. Entries stay on ``session_open``.
+    """
+    mode = normalize_hold_overnight(getattr(params, "hold_overnight", "off"))
+    session = str(getattr(params, "session", "all") or "all")
+    if mode == "always":
+        return "hold"
+    if mode == "off":
+        return "flat" if session_flat_due(now, session) else "hold"
+    if mode != "be":
+        return "flat" if session_flat_due(now, session) else "hold"
+    close_id = session_close_id(now, session)
+    if not close_id or close_id == str(decided or ""):
+        return "hold"
+    gained = price_r(side, entry, risk_stop, price)
+    if gained is not None and gained + 1e-9 >= 1.0:
+        return "be"
+    return "flat"
 
 
 @dataclass(frozen=True)

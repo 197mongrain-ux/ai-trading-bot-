@@ -1275,11 +1275,13 @@ def _run_model_b(
                 r_entry = r_stop = r_size = 0.0
                 if swing_on and (pre_pos := book.position(coin)) is not None:
                     r_entry = float(pre_pos.entry)
-                    r_stop = float(pre_pos.stop)
+                    r_stop = float(getattr(pre_pos, "planned_stop", 0.0) or 0.0) or float(pre_pos.stop)
                     r_size = float(pre_pos.size)
                 if swing_on and engine.swing_params is not None:
                     from hl_bot.strategy.model_b.swing import session_flat_due
 
+                    # Unfilled entries do not rest through the close. An overnight
+                    # hold applies to an open position, not to a pending order.
                     if session_flat_due(now, engine.swing_params.session):
                         for order in list(book.resting_orders()):
                             if canon_coin(order.coin) == canon_coin(coin):
@@ -1306,10 +1308,40 @@ def _run_model_b(
                     and (held_session := book.position(coin)) is not None
                     and not held_session.adopted
                 ):
-                    from hl_bot.strategy.model_b.swing import session_flat_due
+                    from hl_bot.strategy.model_b.swing import (
+                        overnight_decision,
+                        session_close_id,
+                        tighten_to_breakeven,
+                    )
 
-                    if session_flat_due(now, engine.swing_params.session):
+                    risk_stop = float(getattr(held_session, "planned_stop", 0.0) or 0.0) or float(
+                        held_session.stop
+                    )
+                    decision = overnight_decision(
+                        now,
+                        engine.swing_params,
+                        side=held_session.side,
+                        entry=float(held_session.entry),
+                        risk_stop=risk_stop,
+                        price=float(last),
+                        decided=str(getattr(held_session, "session_close_id", "") or ""),
+                    )
+                    if decision == "flat":
                         closed = book.force_flat(coin, last, reason="SESSION_CLOSE")
+                    elif decision == "be":
+                        if float(held_session.planned_stop or 0.0) <= 0:
+                            held_session.planned_stop = risk_stop
+                        held_session.stop = tighten_to_breakeven(
+                            held_session.side, float(held_session.entry), float(held_session.stop)
+                        )
+                        held_session.session_close_id = session_close_id(
+                            now, engine.swing_params.session
+                        ) or held_session.session_close_id
+                        logger.info(
+                            "MODEL_B SESSION_BE %s stop=%s",
+                            coin,
+                            held_session.stop,
+                        )
                 if (
                     closed is None
                     and swing_on
