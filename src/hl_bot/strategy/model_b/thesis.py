@@ -85,6 +85,14 @@ class WorkingOrder:
     # None uses the coin slip at the paper close. A trapped arm stores
     # the allowance the size reserved.
     exit_slip_bps: float | None = None
+    # Swing paper log. The fill is still booked at limit_px.
+    signal_px: float | None = None
+    budget: float = 0.0
+    absorb: float | None = None
+    window_delta: float | None = None
+    last_15s_delta: float | None = None
+    print_count: int = 0
+    target_r: float | None = None
 
 
 @dataclass
@@ -149,6 +157,17 @@ class OpenPosition:
     # Local date of the cash close already decided for an overnight hold.
     # Empty means the next 16:00 still owes a flatten or a breakeven move.
     session_close_id: str = ""
+    # Swing paper. ``entry`` stays the booked limit. ``print_px`` is the
+    # trade that triggered the fill. ``signal_px`` is the level.
+    signal_px: float | None = None
+    print_px: float | None = None
+    limit_px: float | None = None
+    budget: float = 0.0
+    absorb: float | None = None
+    window_delta: float | None = None
+    last_15s_delta: float | None = None
+    print_count: int = 0
+    target_r: float | None = None
 
 
 @dataclass
@@ -165,6 +184,11 @@ class CloseEvent:
     remainder: WorkingOrder | None = None
     # Slip reserved at the arm. None keeps the coin allowance.
     exit_slip_bps: float | None = None
+    signal_px: float | None = None
+    print_px: float | None = None
+    limit_px: float | None = None
+    budget: float = 0.0
+    planned_stop: float = 0.0
 
 
 @dataclass
@@ -246,6 +270,13 @@ class ThesisBook:
             runner_px=getattr(intent, "runner_px", None),
             runner_mode=str(getattr(intent, "runner_mode", "off") or "off"),
             exit_slip_bps=getattr(intent, "exit_slip_bps", None),
+            signal_px=getattr(intent, "signal_px", None),
+            budget=float(getattr(intent, "budget", 0.0) or 0.0),
+            absorb=getattr(intent, "absorb", None),
+            window_delta=getattr(intent, "window_delta", None),
+            last_15s_delta=getattr(intent, "last_15s_delta", None),
+            print_count=int(getattr(intent, "print_count", 0) or 0),
+            target_r=getattr(intent, "target_r", None),
         )
         self._state(intent.coin).working = order
         return order
@@ -494,6 +525,7 @@ class ThesisBook:
         price: float,
         ts: float,
         size: float | None = None,
+        print_px: float | None = None,
     ) -> OpenPosition:
         st = self._state(order.coin)
         # Each user fill ``sz`` is that drip, not the cumulative position.
@@ -565,6 +597,15 @@ class ThesisBook:
                 armed_at=float(order.posted_at),
                 tick=float(order.tick or 0.0),
                 exit_slip_bps=getattr(order, "exit_slip_bps", None),
+                signal_px=getattr(order, "signal_px", None),
+                print_px=None if print_px is None else float(print_px),
+                limit_px=float(order.limit_px),
+                budget=float(getattr(order, "budget", 0.0) or 0.0),
+                absorb=getattr(order, "absorb", None),
+                window_delta=getattr(order, "window_delta", None),
+                last_15s_delta=getattr(order, "last_15s_delta", None),
+                print_count=int(getattr(order, "print_count", 0) or 0),
+                target_r=getattr(order, "target_r", None),
             )
             st.position = pos
         else:
@@ -674,16 +715,20 @@ class ThesisBook:
                 and print_.price <= order.limit_px + 1e-9
             ):
                 if partial:
-                    return self._fill(order, order.limit_px, print_.ts, size=float(print_.size))
-                return self._fill(order, order.limit_px, print_.ts)
+                    return self._fill(
+                        order, order.limit_px, print_.ts, size=float(print_.size), print_px=float(print_.price)
+                    )
+                return self._fill(order, order.limit_px, print_.ts, print_px=float(print_.price))
             if (
                 order.side == "short"
                 and print_.side == "buy"
                 and print_.price >= order.limit_px - 1e-9
             ):
                 if partial:
-                    return self._fill(order, order.limit_px, print_.ts, size=float(print_.size))
-                return self._fill(order, order.limit_px, print_.ts)
+                    return self._fill(
+                        order, order.limit_px, print_.ts, size=float(print_.size), print_px=float(print_.price)
+                    )
+                return self._fill(order, order.limit_px, print_.ts, print_px=float(print_.price))
         return None
 
     def cancel_if_target_traded(self, coin: str, price: float) -> list[WorkingOrder]:
@@ -708,6 +753,20 @@ class ThesisBook:
         st.consumed.add(order.swing_id)
         st.working = None
         return [order]
+
+    def take_working(self, coin: str) -> WorkingOrder | None:
+        """Detach a resting entry and consume that thesis.
+
+        Used at the cash close. An open position does not block this: a
+        remainder must not keep working after the session ends.
+        """
+        st = self._coins.get(canon_coin(coin))
+        if st is None or st.working is None:
+            return None
+        order = st.working
+        st.consumed.add(order.swing_id)
+        st.working = None
+        return order
 
     def paper_tp1(self, coin: str, price: float, *, runner_frac: float = 0.5) -> OpenPosition | None:
         """Paper partial at TP1 when a runner is on. Stop moves to the fill.
@@ -914,6 +973,11 @@ class ThesisBook:
             swing_id=pos.swing_id,
             remainder=remainder,
             exit_slip_bps=getattr(pos, "exit_slip_bps", None),
+            signal_px=getattr(pos, "signal_px", None),
+            print_px=getattr(pos, "print_px", None),
+            limit_px=getattr(pos, "limit_px", None),
+            budget=float(getattr(pos, "budget", 0.0) or 0.0),
+            planned_stop=float(getattr(pos, "planned_stop", 0.0) or 0.0) or float(pos.stop),
         )
         st.consumed.add(pos.swing_id)
         st.position = None
@@ -959,6 +1023,11 @@ class ThesisBook:
                     swing_id=pos.swing_id,
                     remainder=working,
                     exit_slip_bps=getattr(pos, "exit_slip_bps", None),
+                    signal_px=getattr(pos, "signal_px", None),
+                    print_px=getattr(pos, "print_px", None),
+                    limit_px=getattr(pos, "limit_px", None),
+                    budget=float(getattr(pos, "budget", 0.0) or 0.0),
+                    planned_stop=float(getattr(pos, "planned_stop", 0.0) or 0.0) or float(pos.stop),
                 )
             )
             st.consumed.add(pos.swing_id)

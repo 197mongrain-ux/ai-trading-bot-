@@ -8,7 +8,8 @@ Macro is ADX(14): with the trend, or both sides at the edges of a range.
 The entry is a sweep and reclaim of that level on the confirm timeframe,
 then the existing tape gates, then a post-only Alo at the level. The stop
 is beyond the sweep wick by an ATR buffer. The target is the opposite
-level when that distance is between 1R and 5R.
+level when that distance is between 1R and 5R. ``MODEL_B_SWING_ENTRY=touch``,
+``MACRO=none``, a stop beyond the level, and a fixed target stay off until set.
 """
 
 from __future__ import annotations
@@ -125,15 +126,25 @@ class SwingParams:
     # be holds only when the close is at least +1R and moves the stop to entry.
     # Entries still use the session clock in every mode.
     hold_overnight: str = "off"
+    # wick is beyond the sweep extreme. level is k×ATR beyond the level.
+    # level target is the nearest opposite print inside [min_r, max_r].
+    # fixed is exactly max_r and does not need an opposite level.
+    stop_anchor: str = "wick"  # wick | level
+    target: str = "level"  # level | fixed
 
     @classmethod
     def from_settings(cls, settings) -> SwingParams:
-        raw_tfs = str(getattr(settings, "model_b_swing_macro", "4h,1d") or "4h,1d")
-        tfs = tuple(part.strip() for part in raw_tfs.split(",") if part.strip())
+        raw_tfs = str(getattr(settings, "model_b_swing_macro", "4h,1d") or "4h,1d").strip()
+        if raw_tfs.lower() in ("none", "off"):
+            tfs = ()
+            macro_mode = "none"
+        else:
+            tfs = tuple(part.strip() for part in raw_tfs.split(",") if part.strip())
+            macro_mode = str(getattr(settings, "model_b_swing_macro_mode", "both") or "both")
         return cls(
             confirm_tf=str(getattr(settings, "model_b_swing_confirm", "15m") or "15m"),
-            macro_tfs=tfs or ("4h", "1d"),
-            macro_mode=str(getattr(settings, "model_b_swing_macro_mode", "both") or "both"),
+            macro_tfs=() if macro_mode == "none" else (tfs or ("4h", "1d")),
+            macro_mode=macro_mode,
             adx_min=float(getattr(settings, "model_b_macro_adx_min", 20.0) or 20.0),
             atr_tf=str(getattr(settings, "model_b_swing_atr_tf", "1h") or "1h"),
             atr_frac=float(getattr(settings, "model_b_swing_atr_frac", 0.5) or 0.5),
@@ -183,6 +194,10 @@ class SwingParams:
             hold_overnight=normalize_hold_overnight(
                 getattr(settings, "model_b_swing_hold_overnight", "off")
             ),
+            stop_anchor=str(getattr(settings, "model_b_swing_stop_anchor", "wick") or "wick").strip().lower()
+            or "wick",
+            target=str(getattr(settings, "model_b_swing_target", "level") or "level").strip().lower()
+            or "level",
         )
 
 
@@ -847,6 +862,31 @@ def _sweep_candle(candle: dict, level: float, side: str, min_bps: float) -> floa
     return None
 
 
+def touch_reclaim(candle: dict, level: float, side: str) -> bool:
+    """Same-bar touch of the level and a close back through it.
+
+    No minimum depth. A two-bar sweep that does not touch on the reclaim
+    bar is not a touch.
+    """
+    price = float(level)
+    if price <= 0:
+        return False
+    if side == "long":
+        return float(candle["l"]) <= price and float(candle["c"]) > price
+    return float(candle["h"]) >= price and float(candle["c"]) < price
+
+
+def find_touch(candles: list[dict], level: float, side: str) -> tuple[float, float] | None:
+    """Touch wick and the candle time. The last closed bar only."""
+    if not candles:
+        return None
+    last = candles[-1]
+    if not touch_reclaim(last, level, side):
+        return None
+    wick = float(last["l"] if side == "long" else last["h"])
+    return wick, float(last["t"])
+
+
 def find_sweep(candles: list[dict], level: float, side: str, min_bps: float) -> tuple[float, float] | None:
     """Sweep wick and the candle time. Same-bar reclaim, or sweep then the next close."""
     if len(candles) < 1:
@@ -891,6 +931,117 @@ def _nearest_room_pct(side: str, entry: float, levels: list[Level]) -> float:
     if nearest is None:
         return 1e9
     return nearest
+
+
+def stop_beyond_level(side: str, level: float, atr: float, k: float) -> float | None:
+    """Stop k×ATR beyond the level, on the loss side of the entry."""
+    buffer = float(k) * float(atr)
+    if buffer <= 0 or float(level) <= 0:
+        return None
+    if side == "long":
+        stop = float(level) - buffer
+        return stop if stop < float(level) else None
+    stop = float(level) + buffer
+    return stop if stop > float(level) else None
+
+
+def fixed_target(side: str, entry: float, stop: float, r_multiple: float) -> float | None:
+    """A target exactly ``r_multiple`` away. No opposite level required."""
+    dist = abs(float(entry) - float(stop))
+    if dist <= 0 or float(r_multiple) <= 0:
+        return None
+    if side == "long":
+        return float(entry) + float(r_multiple) * dist
+    return float(entry) - float(r_multiple) * dist
+
+
+def entry_slip_bps(side: str, signal_px: float | None, print_px: float | None) -> float | None:
+    """Adverse bps of a print versus the signal. Positive means worse.
+
+    A long is worse when the print is above the signal. A short is worse
+    when the print is below it. The paper ticket still fills at its limit.
+    """
+    if signal_px is None or print_px is None:
+        return None
+    signal = float(signal_px)
+    printed = float(print_px)
+    if signal <= 0 or printed <= 0:
+        return None
+    if side == "long":
+        return (printed - signal) / signal * 10_000.0
+    return (signal - printed) / signal * 10_000.0
+
+
+def swing_cancel_log(order) -> dict:
+    """Gate fields for a swing cancel. Empty for an order that has no signal."""
+    if getattr(order, "signal_px", None) is None:
+        return {}
+    fields = {
+        "side": order.side,
+        "absorb": getattr(order, "absorb", None),
+        "window_delta": getattr(order, "window_delta", None),
+        "last_15s_delta": getattr(order, "last_15s_delta", None),
+        "print_count": int(getattr(order, "print_count", 0) or 0),
+    }
+    target = getattr(order, "target_r", None)
+    if target is not None:
+        fields["target_r"] = target
+    return fields
+
+
+def swing_fill_log(pos) -> dict:
+    """Open-row fields. ``price`` stays the booked limit fill."""
+    signal = getattr(pos, "signal_px", None)
+    printed = getattr(pos, "print_px", None)
+    return {
+        "symbol": pos.coin,
+        "coin": pos.coin,
+        "side": pos.side,
+        "size": pos.size,
+        "price": pos.entry,
+        "fill_px": pos.entry,
+        "stop": pos.stop,
+        "tp": pos.take_profit,
+        "stop_size": getattr(pos, "stop_size", pos.size),
+        "signal_px": signal,
+        "limit_px": getattr(pos, "limit_px", None),
+        "print_px": printed,
+        "entry_slip_bps": entry_slip_bps(pos.side, signal, printed),
+    }
+
+
+def swing_close_log(closed, pnl: float, *, entry: float, stop: float, size: float) -> dict:
+    """Close row the nightly review can label.
+
+    ``r`` is price-stop R (net $ / size / original stop distance).
+    ``budget_r`` is net $ / the dollars ``size_swing`` reserved. ``planned_risk``
+    is left off so a reader that falls back to ``r`` still sees this R.
+    """
+    signal = getattr(closed, "signal_px", None)
+    printed = getattr(closed, "print_px", None)
+    fields = {
+        "symbol": getattr(closed, "coin", None),
+        "coin": getattr(closed, "coin", None),
+        "side": getattr(closed, "side", None),
+        "size": getattr(closed, "size", size),
+        "price": getattr(closed, "exit", None),
+        "pnl": float(pnl),
+        "reason": getattr(closed, "reason", None),
+        "entry_mode": "model_b",
+        "signal_px": signal,
+        "limit_px": getattr(closed, "limit_px", None),
+        "print_px": printed,
+        "fill_px": getattr(closed, "entry", entry),
+        "entry_slip_bps": entry_slip_bps(getattr(closed, "side", ""), signal, printed),
+    }
+    risk = float(size) * abs(float(entry) - float(stop)) if float(size) > 0 else 0.0
+    if risk > 0:
+        fields["r"] = float(pnl) / risk
+    budget = float(getattr(closed, "budget", 0.0) or 0.0)
+    if budget > 0:
+        fields["budget"] = budget
+        fields["budget_r"] = float(pnl) / budget
+    return fields
 
 
 def stop_beyond_wick(side: str, wick: float, entry: float, atr: float, frac: float) -> float | None:
@@ -1148,9 +1299,13 @@ def plan_trade(
     max_leverage: int = 20,
 ) -> Plan | str:
     """One swing plan, or a fail reason. No tape and no order yet."""
-    macro = read_swing_macro(hourly, now, params)
-    if macro.macro == "unknown":
-        return "MACRO_UNKNOWN"
+    mode = str(getattr(params, "macro_mode", "both") or "both")
+    if mode == "none" or not tuple(params.macro_tfs):
+        macro = MacroSnap("none", "macro=none")
+    else:
+        macro = read_swing_macro(hourly, now, params)
+        if macro.macro == "unknown":
+            return "MACRO_UNKNOWN"
     if not session_open(now, str(getattr(params, "session", "all") or "all")):
         return "OFF_SESSION"
     if bool(getattr(params, "trend_only", False)) and macro.macro == "range":
@@ -1183,8 +1338,9 @@ def plan_trade(
     # The sweep only looks at the last two closed bars.
     tail = confirm[-4:] if confirm and len(confirm) > 4 else confirm
     candles = closed_candles(tail, confirm_sec, now)
-    if len(candles) < 2:
-        return "NO_SWEEP"
+    entry_kind = str(getattr(params, "entry", "sweep") or "sweep")
+    if len(candles) < (1 if entry_kind == "touch" else 2):
+        return "NO_TOUCH" if entry_kind == "touch" else "NO_SWEEP"
     atr_sec = TF_SEC.get(params.atr_tf, 3600)
     atr_key = (
         id(hourly) if hourly is not None else 0,
@@ -1209,22 +1365,33 @@ def plan_trade(
     if atr is None or atr <= 0:
         return NO_ATR
     best: Plan | None = None
-    fail = "NO_SWEEP"
+    fail = "NO_TOUCH" if entry_kind == "touch" else "NO_SWEEP"
+    anchor = str(getattr(params, "stop_anchor", "wick") or "wick")
+    target_mode = str(getattr(params, "target", "level") or "level")
     for level in levels:
         side = "long" if level.kind == "support" else "short"
         if side not in allowed:
-            fail = fail if fail != "NO_SWEEP" else "MACRO_SIDE"
+            fail = fail if fail not in ("NO_SWEEP", "NO_TOUCH") else "MACRO_SIDE"
             continue
-        swept = find_sweep(candles, level.price, side, float(params.min_sweep_bps))
-        if swept is None:
-            continue
-        wick, sweep_ts = swept
-        sweep_bps = abs(level.price - wick) / level.price * 10_000.0
+        if entry_kind == "touch":
+            touched = find_touch(candles, level.price, side)
+            if touched is None:
+                continue
+            wick, sweep_ts = touched
+        else:
+            swept = find_sweep(candles, level.price, side, float(params.min_sweep_bps))
+            if swept is None:
+                continue
+            wick, sweep_ts = swept
+        sweep_bps = abs(level.price - wick) / level.price * 10_000.0 if level.price else 0.0
         cap = float(getattr(params, "max_sweep_bps", 0.0) or 0.0)
-        if cap > 0 and sweep_bps > cap + 1e-9:
+        if entry_kind != "touch" and cap > 0 and sweep_bps > cap + 1e-9:
             fail = "SWEEP_DEEP"
             continue
-        stop = stop_beyond_wick(side, wick, level.price, atr, float(params.atr_frac))
+        if anchor == "level":
+            stop = stop_beyond_level(side, level.price, atr, float(params.atr_frac))
+        else:
+            stop = stop_beyond_wick(side, wick, level.price, atr, float(params.atr_frac))
         if stop is None:
             fail = "BAD_STOP"
             continue
@@ -1232,15 +1399,19 @@ def plan_trade(
         if room > 0 and _nearest_room_pct(side, level.price, levels) + 1e-9 < room:
             fail = "TOO_CLOSE"
             continue
-        target = pick_targets(
-            side,
-            level.price,
-            stop,
-            levels,
-            float(params.min_r),
-            float(params.max_r),
-            bool(params.runner),
-        )
+        if target_mode == "fixed":
+            tp_px = fixed_target(side, level.price, stop, float(params.max_r))
+            target = "BAD_STOP" if tp_px is None else (tp_px, float(params.max_r), None)
+        else:
+            target = pick_targets(
+                side,
+                level.price,
+                stop,
+                levels,
+                float(params.min_r),
+                float(params.max_r),
+                bool(params.runner),
+            )
         if isinstance(target, str):
             fail = target
             continue
@@ -1309,6 +1480,7 @@ def _decision(
     prints_n: int = 0,
     min_prints: int = 30,
     extra: dict | None = None,
+    macro: str | None = None,
 ) -> Decision:
     return Decision(
         coin=canon_coin(coin),
@@ -1327,9 +1499,10 @@ def _decision(
         print_count=prints_n,
         min_prints=min_prints,
         side=None if plan is None else plan.side,
-        macro=None if plan is None else plan.macro,
+        macro=plan.macro if plan is not None else macro,
         extra=extra or {},
         quality=None if plan is None else plan.score,
+        target_r=None if plan is None else float(plan.r_multiple),
     )
 
 
@@ -1444,8 +1617,13 @@ def evaluate_swing(
             max_leverage=int(getattr(engine, "max_notional_leverage", 20) or 20),
         )
         if isinstance(planned, str):
-            macro = read_swing_macro(hourly, now, params).label if hourly else "macro=unknown"
-            return _decision(coin_u, planned, extra={"macro": macro})
+            if str(getattr(params, "macro_mode", "both") or "both") == "none":
+                label = "macro=none"
+            elif hourly:
+                label = read_swing_macro(hourly, now, params).label
+            else:
+                label = "macro=unknown"
+            return _decision(coin_u, planned, extra={"macro": label}, macro=label)
         if planned.retest:
             slot = {
                 "key": (planned.side, round(planned.level, 8), int(planned.level_ts)),
@@ -1501,7 +1679,16 @@ def evaluate_swing(
     sid = f"{coin_u}:swing:{planned.side}:{planned.level:.8f}:{int(planned.level_ts)}"
     blocked = engine.thesis.block_reason(coin_u, sid)
     if blocked:
-        return _decision(coin_u, blocked, plan=planned, absorb=absorb, window_delta=window_delta, last_15=last_15)
+        return _decision(
+            coin_u,
+            blocked,
+            plan=planned,
+            absorb=absorb,
+            window_delta=window_delta,
+            last_15=last_15,
+            prints_n=prints_n,
+            min_prints=min_prints,
+        )
     limit = alo_limit(
         planned.side,
         planned.level,
@@ -1510,9 +1697,27 @@ def evaluate_swing(
         tick if tick > 0 else planned.level * 1e-6,
     )
     if limit is None or abs(limit - planned.level) > max(tick, planned.level * 1e-8):
-        return _decision(coin_u, "NO_ALO", plan=planned, absorb=absorb, window_delta=window_delta, last_15=last_15)
+        return _decision(
+            coin_u,
+            "NO_ALO",
+            plan=planned,
+            absorb=absorb,
+            window_delta=window_delta,
+            last_15=last_15,
+            prints_n=prints_n,
+            min_prints=min_prints,
+        )
     if not (planned.stop > 0 and planned.stop != limit):
-        return _decision(coin_u, "BAD_STOP", plan=planned)
+        return _decision(
+            coin_u,
+            "BAD_STOP",
+            plan=planned,
+            absorb=absorb,
+            window_delta=window_delta,
+            last_15=last_15,
+            prints_n=prints_n,
+            min_prints=min_prints,
+        )
     intent = AloIntent(
         coin=coin_u,
         side=planned.side,
@@ -1531,6 +1736,13 @@ def evaluate_swing(
         tp_r=float(min(2.0, max(1.0, planned.r_multiple))),
         runner_px=planned.runner_px,
         runner_mode="on" if planned.runner_px else "off",
+        signal_px=float(planned.level),
+        budget=float(planned.budget),
+        absorb=absorb,
+        window_delta=window_delta,
+        last_15s_delta=last_15,
+        print_count=int(prints_n),
+        target_r=float(planned.r_multiple),
     )
     return _decision(
         coin_u,
