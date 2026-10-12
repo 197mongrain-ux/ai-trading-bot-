@@ -52,6 +52,9 @@ class RetestParams:
     entry_slip_bps: float = 2.0
     stop_slip_bps: float = 5.0
     retest_tf: int = H1  # 3600 or 900
+    # wick: retest-bar extreme + stop_atr x ATR. h1: last closed 1h bar extreme.
+    # h2: extreme of the last two closed 1h bars. lvl_atr: PDL/PDH + stop_atr x ATR.
+    stop_mode: str = "wick"
 
 
 LEVEL_PARAMS = SwingParams(
@@ -188,7 +191,15 @@ def find_setup(coin: str, hourly: list[dict], bars: list[dict], i: int, p: Retes
             continue
         atr = atr14_of(aggregate(hourly, H1, H1, now)) or 0.0
         entry = bar["c"]
-        stop = bar["h"] + p.stop_atr * atr if side == "short" else bar["l"] - p.stop_atr * atr
+        last = [b for b in aggregate(hourly, H1, H1, now)][-2:]
+        if p.stop_mode == "h1":
+            stop = last[-1]["h"] if side == "short" else last[-1]["l"]
+        elif p.stop_mode == "h2":
+            stop = max(b["h"] for b in last) if side == "short" else min(b["l"] for b in last)
+        elif p.stop_mode == "lvl_atr":
+            stop = lvl + p.stop_atr * atr if side == "short" else lvl - p.stop_atr * atr
+        else:
+            stop = bar["h"] + p.stop_atr * atr if side == "short" else bar["l"] - p.stop_atr * atr
         risk = abs(entry - stop)
         if risk <= 0:
             continue
@@ -362,3 +373,52 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+STOP_VARIANTS = {
+    "wick+0.1atr (baseline)": dict(stop_mode="wick", stop_atr=0.1),
+    "wick+0.25atr": dict(stop_mode="wick", stop_atr=0.25),
+    "wick+0.5atr": dict(stop_mode="wick", stop_atr=0.5),
+    "wick+0.75atr": dict(stop_mode="wick", stop_atr=0.75),
+    "last 1h high": dict(stop_mode="h1", stop_atr=0.0),
+    "last 2x1h high": dict(stop_mode="h2", stop_atr=0.0),
+    "PDL+1atr": dict(stop_mode="lvl_atr", stop_atr=1.0),
+}
+
+
+def _one(args):
+    name, kw, start, end, cache, tape = args
+    data = load(Path(cache))
+    for d in data.values():
+        d["15m"] = []  # 1h exits in both periods so they compare
+    r = replay(data, RetestParams(retest_tf=H1, **kw), start, end, tape_root=Path(tape))
+    r.pop("skips", None)
+    return name, r
+
+
+def stop_study(cache="/workspace/pdl_cache", tape="/workspace/hl_tape", split_days=90.0, warmup_days=31.0,
+               out="docs/pnl/pdl_retest_stops.json") -> dict:
+    from multiprocessing import Pool
+
+    data = load(Path(cache))
+    first = max(d["1h"][0]["t"] for d in data.values())
+    end = min(d["1h"][-1]["t"] + H1 for d in data.values())
+    split = end - split_days * DAY
+    ins = (first + warmup_days * DAY, split)
+    held = (split, end)
+    jobs = []
+    for name, kw in STOP_VARIANTS.items():
+        jobs.append(((name, "in"), kw, *ins, cache, tape))
+        jobs.append(((name, "held"), kw, *held, cache, tape))
+    with Pool(min(8, len(jobs))) as pool:
+        got = pool.map(_one, jobs)
+    res = {"in_sample": {}, "held_out": {},
+           "periods_utc": {k: [time.strftime("%Y-%m-%d", time.gmtime(a)), time.strftime("%Y-%m-%d", time.gmtime(b))]
+                           for k, (a, b) in (("in_sample", ins), ("held_out", held))}}
+    for (name, which), r in got:
+        res["in_sample" if which == "in" else "held_out"][name] = r
+    # Pick on in-sample only: total R, ties to lower drawdown.
+    best = max(res["in_sample"], key=lambda n: (res["in_sample"][n]["total_r"], -res["in_sample"][n]["max_dd_pct"]))
+    res["pick_in_sample"] = best
+    Path(out).write_text(json.dumps(res, indent=1))
+    return res
