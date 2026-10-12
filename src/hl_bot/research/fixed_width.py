@@ -81,15 +81,20 @@ def report(name, tr):
     for k in ("long", "short"): r[k] = stats([x for x in tr if x["side"] == k])
     return r
 
-res = {}
-for mh, lab in ((0, "no_limit"), (72, "72h")):
-    res[f"pdl_{lab}"] = report("pdl", t := pdl(mh)); res[f"pdl_{lab}"]["rows"] = t
-    t, n = lib(mh, False); res[f"lib_all_{lab}"] = report("lib", t); res[f"lib_all_{lab}"]["n_lib"] = n
-    t, _ = lib(mh, True); res[f"lib_seq_{lab}"] = report("lib", t)
-res["window"] = [time.strftime("%Y-%m-%d %H:%M", time.gmtime(x)) for x in (START, SPLIT, END)]
-Path("docs/pnl/pdl_retest_fixed_width.json").write_text(json.dumps(res, indent=1, default=str))
-for k, v in res.items():
-    if k == "window": print(v); continue
-    print("==", k, v.get("n_lib", ""))
-    for s in ("all", "first60", "last30", "BTC", "ETH", "SOL", "long", "short"):
-        a = v[s]; print(f" {s:7}", {kk: (round(vv, 2) if isinstance(vv, float) else vv) for kk, vv in a.items()})
+def main():
+    res = {}
+    for mh, lab in ((0, "no_limit"), (72, "72h")):
+        res[f"pdl_{lab}"] = report("pdl", t := pdl(mh)); res[f"pdl_{lab}"]["rows"] = t
+        t, n = lib(mh, False); res[f"lib_all_{lab}"] = report("lib", t); res[f"lib_all_{lab}"]["n_lib"] = n
+        t, _ = lib(mh, True); res[f"lib_seq_{lab}"] = report("lib", t)
+    res["window"] = [time.strftime("%Y-%m-%d %H:%M", time.gmtime(x)) for x in (START, SPLIT, END)]
+    Path("docs/pnl/pdl_retest_fixed_width.json").write_text(json.dumps(res, indent=1, default=str))
+    for k, v in res.items():
+        if k == "window": print(v); continue
+        print("==", k, v.get("n_lib", ""))
+        for s in ("all", "first60", "last30", "BTC", "ETH", "SOL", "long", "short"):
+            a = v[s]; print(f" {s:7}", {kk: (round(vv, 2) if isinstance(vv, float) else vv) for kk, vv in a.items()})
+
+
+if __name__ == "__main__":
+    main()
