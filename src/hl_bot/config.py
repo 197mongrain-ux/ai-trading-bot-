@@ -659,9 +659,9 @@ class Settings:
                 raise ValueError(
                     "MODEL_B_SWING_SCRATCH_MFE_R and MODEL_B_SWING_SCRATCH_MINUTES must be set together."
                 )
-            if self.model_b_swing_entry not in ("sweep", "trapped", "touch"):
+            if self.model_b_swing_entry not in ("sweep", "trapped", "touch", "pdl_retest"):
                 raise ValueError(
-                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped|touch."
+                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped|touch|pdl_retest (pdl_retest is replay-only)."
                 )
             if self.model_b_swing_trap_bar not in ("1m", "3m", "5m"):
                 raise ValueError(
