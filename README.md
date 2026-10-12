@@ -117,6 +117,16 @@ python -m hl_bot.research.sweep_tape_backtest \
 
 A desk test can cap swing leverage at 10x (`MODEL_B_SWING_MAX_LEV=10`), keep a single open or pending swing (`MODEL_B_SWING_MAX_POSITIONS=1`), take only a major 4h level or a prior-day/week level (`MODEL_B_SWING_MAJOR=1`, `MODEL_B_SWING_MIN_TOUCHES=2`), and trade the cash session `MODEL_B_SWING_SESSION=09:30-16:00` in America/Toronto. That session flattens an open swing at 16:00 and does not hold overnight. `MODEL_B_SWING_HOLD_OVERNIGHT=1` keeps the position through the close. `be` holds only when the 16:00 price is at least +1R and then moves the stop to entry. Entries stay inside the window either way. `MODEL_B_SWING_RR_MAX=3` caps targets at 3R. Unset, those flags do nothing: the notional cap stays 20x, each coin can still work its own idea, targets stay 1R to 5R, and the 3-day hold stays. `LEVERAGE` stays 20.
 
+Monday can run two paper books side by side. Neither places an order and neither needs a key. `default` is the unset swing spec. `touch4h` is a same-bar touch at a major 4h level, 15m confirm, macro off, stop 1.5×ATR beyond the level, fixed 3R, and the +1R-or-flatten close. Both leave the tape gates on (absorption, prints, delta). Each arm, fail, and cancel logs those four values. A fill records the signal, the limit, the print that traded, and the booked fill. The booked price stays the limit.
+
+```bash
+python -m hl_bot.research.monday_paper start
+python -m hl_bot.research.monday_paper board
+python -m hl_bot.research.monday_paper stop
+```
+
+Journals are `logs/monday/default.jsonl` and `logs/monday/touch4h.jsonl`. `board` prints each book and the Book B size table for $250 and $5000.
+
 NY hours and after hours hunt the same list. With `ENTRY_MODE=model_b`, a set `SYMBOLS` (or `SYMBOL`) is that list, dex prefix left lowercase (`xyz:GOLD`, not `XYZ:GOLD`). When `SYMBOLS` is unset, the hunt is the built-in mainnet universe — not the breakout default `BTC, SOL, XRP`:
 
 BTC, ETH, SOL, NEAR, PUMP, LIT, AAVE, ONDO, WLD, TAO, xyz:GOLD, xyz:SP500, xyz:XYZ100

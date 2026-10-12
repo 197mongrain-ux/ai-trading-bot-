@@ -85,6 +85,14 @@ class AloIntent:
     # Slip the size reserved. None keeps the coin allowance at the exit.
     # Set on a trapped arm so the close pays the same allowance.
     exit_slip_bps: float | None = None
+    # Swing paper. The booked fill stays ``limit_px``. These are the log.
+    signal_px: float | None = None
+    budget: float = 0.0
+    absorb: float | None = None
+    window_delta: float | None = None
+    last_15s_delta: float | None = None
+    print_count: int = 0
+    target_r: float | None = None
 
 
 @dataclass
@@ -165,6 +173,9 @@ class Decision:
     # Not an arm gate. ``quality_parts`` is the component breakdown.
     quality: float | None = None
     quality_parts: dict | None = None
+    # Swing target in R. Omitted from the log when null so a scalp row
+    # does not grow a key. Arms and tape blocks already carry the gates.
+    target_r: float | None = None
 
     def to_log(self) -> dict:
         def _num(value: float | None) -> float | None:
@@ -215,6 +226,7 @@ class Decision:
             "counter_flow": self.counter_flow,
             "structure_shadow": self.structure_shadow,
             "sizing_dist": _num(self.sizing_dist),
+            **({"target_r": _num(self.target_r)} if self.target_r is not None else {}),
             **({"trend": self.trend} if self.trend is not None else {}),
             **({"macro": self.macro} if self.macro is not None else {}),
             **(

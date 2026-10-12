@@ -373,6 +373,10 @@ class Settings:
     model_b_swing_hold_overnight: str = "off"
     # None keeps MODEL_B_SWING_MAX_R (default 5). A set value is the target cap.
     model_b_swing_rr_max: float | None = None
+    # wick stops beyond the sweep. level stops k×ATR beyond the level.
+    # level targets the nearest opposite print. fixed targets exactly max R.
+    model_b_swing_stop_anchor: str = "wick"
+    model_b_swing_target: str = "level"
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -609,11 +613,13 @@ class Settings:
                     f"MODEL_B_SWING_MACRO_MODE={self.model_b_swing_macro_mode!r} "
                     "must be both|4h_lead|4h_only|4h_lead_1h_fill."
                 )
-            tfs = tuple(part.strip() for part in self.model_b_swing_macro.split(",") if part.strip())
-            if len(tfs) != 2 or any(tf not in ("1h", "4h", "1d") for tf in tfs):
-                raise ValueError(
-                    f"MODEL_B_SWING_MACRO={self.model_b_swing_macro!r} must be two of 1h,4h,1d."
-                )
+            macro_text = str(self.model_b_swing_macro or "").strip().lower()
+            if macro_text not in ("none", "off"):
+                tfs = tuple(part.strip() for part in self.model_b_swing_macro.split(",") if part.strip())
+                if len(tfs) != 2 or any(tf not in ("1h", "4h", "1d") for tf in tfs):
+                    raise ValueError(
+                        f"MODEL_B_SWING_MACRO={self.model_b_swing_macro!r} must be two of 1h,4h,1d, or none."
+                    )
             if not (0.05 <= self.model_b_swing_atr_frac <= 3.0):
                 raise ValueError(
                     f"MODEL_B_SWING_ATR_FRAC={self.model_b_swing_atr_frac} must be in [0.05, 3]."
@@ -653,9 +659,9 @@ class Settings:
                 raise ValueError(
                     "MODEL_B_SWING_SCRATCH_MFE_R and MODEL_B_SWING_SCRATCH_MINUTES must be set together."
                 )
-            if self.model_b_swing_entry not in ("sweep", "trapped"):
+            if self.model_b_swing_entry not in ("sweep", "trapped", "touch"):
                 raise ValueError(
-                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped."
+                    f"MODEL_B_SWING_ENTRY={self.model_b_swing_entry!r} must be sweep|trapped|touch."
                 )
             if self.model_b_swing_trap_bar not in ("1m", "3m", "5m"):
                 raise ValueError(
@@ -729,6 +735,14 @@ class Settings:
                     raise ValueError(
                         "MODEL_B_SWING_RR_MAX must satisfy 1 <= MIN_R <= RR_MAX <= 8."
                     )
+            if self.model_b_swing_stop_anchor not in ("wick", "level"):
+                raise ValueError(
+                    f"MODEL_B_SWING_STOP_ANCHOR={self.model_b_swing_stop_anchor!r} must be wick|level."
+                )
+            if self.model_b_swing_target not in ("level", "fixed"):
+                raise ValueError(
+                    f"MODEL_B_SWING_TARGET={self.model_b_swing_target!r} must be level|fixed."
+                )
         if self.model_b_stop_slip_bps.strip():
             from hl_bot.strategy.model_b.stop_slip import _parse_spec
 
@@ -971,6 +985,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         model_b_swing_level_set=(os.getenv("MODEL_B_SWING_LEVEL_SET") or "all").strip() or "all",
         model_b_swing_hold_overnight=(os.getenv("MODEL_B_SWING_HOLD_OVERNIGHT") or "off").strip() or "off",
         model_b_swing_rr_max=_optional_float("MODEL_B_SWING_RR_MAX", None),
+        model_b_swing_stop_anchor=(os.getenv("MODEL_B_SWING_STOP_ANCHOR") or "wick").strip().lower() or "wick",
+        model_b_swing_target=(os.getenv("MODEL_B_SWING_TARGET") or "level").strip().lower() or "level",
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),

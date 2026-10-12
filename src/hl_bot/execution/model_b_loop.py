@@ -752,6 +752,10 @@ def _run_model_b(
             if is_remainder:
                 payload["remainder"] = "cancelled"
                 payload["position_kept"] = kept
+            if getattr(order, "signal_px", None) is not None:
+                from hl_bot.strategy.model_b.swing import swing_cancel_log
+
+                payload.update(swing_cancel_log(order))
             journal.log(
                 "model_b_cancel",
                 coin=order.coin,
@@ -793,14 +797,31 @@ def _run_model_b(
         if flatten:
             for event in book.flatten({}):
                 equity += event.pnl
-                journal.log(
-                    "close",
-                    symbol=event.coin,
-                    side=event.side,
-                    reason=reason or event.reason,
-                    pnl=event.pnl,
-                    entry_mode="model_b",
-                )
+                if swing_on:
+                    from hl_bot.strategy.model_b.swing import swing_close_log
+
+                    if reason:
+                        event.reason = reason
+                    stop_px = float(getattr(event, "planned_stop", 0.0) or 0.0)
+                    journal.log(
+                        "close",
+                        **swing_close_log(
+                            event,
+                            event.pnl,
+                            entry=float(event.entry),
+                            stop=stop_px,
+                            size=float(event.size),
+                        ),
+                    )
+                else:
+                    journal.log(
+                        "close",
+                        symbol=event.coin,
+                        side=event.side,
+                        reason=reason or event.reason,
+                        pnl=event.pnl,
+                        entry_mode="model_b",
+                    )
                 summary["closes"] += 1
                 _release_margin(event.coin, reason or event.reason)
                 if event.remainder is not None:
@@ -1225,20 +1246,32 @@ def _run_model_b(
                 if pos is not None and (pos.just_opened or not swing_on):
                     if pos.just_opened or not swing_on:
                         summary["opens"] += 1
-                    journal.log(
-                        "open",
-                        symbol=pos.coin,
-                        side=pos.side,
-                        size=pos.size,
-                        price=pos.entry,
-                        stop=pos.stop,
-                        tp=pos.take_profit,
-                        stop_size=getattr(pos, "stop_size", pos.size),
-                        entry_mode="model_b",
-                        reason="alo_fill",
-                        network=settings.network,
-                        account=settings.account_address or "",
-                    )
+                    if swing_on:
+                        from hl_bot.strategy.model_b.swing import swing_fill_log
+
+                        journal.log(
+                            "open",
+                            entry_mode="model_b",
+                            reason="alo_fill",
+                            network=settings.network,
+                            account=settings.account_address or "",
+                            **swing_fill_log(pos),
+                        )
+                    else:
+                        journal.log(
+                            "open",
+                            symbol=pos.coin,
+                            side=pos.side,
+                            size=pos.size,
+                            price=pos.entry,
+                            stop=pos.stop,
+                            tp=pos.take_profit,
+                            stop_size=getattr(pos, "stop_size", pos.size),
+                            entry_mode="model_b",
+                            reason="alo_fill",
+                            network=settings.network,
+                            account=settings.account_address or "",
+                        )
                     logger.info(
                         "MODEL_B FILL %s %s size=%s @ %s stop=%s tp=%s",
                         pos.coin,
@@ -1284,9 +1317,13 @@ def _run_model_b(
                     # hold applies to an open position, not to a pending order.
                     if session_flat_due(now, engine.swing_params.session):
                         for order in list(book.resting_orders()):
-                            if canon_coin(order.coin) == canon_coin(coin):
-                                _cancel_working(order, "SESSION_CLOSE")
-                                summary["cancels"] += 1
+                            if canon_coin(order.coin) != canon_coin(coin):
+                                continue
+                            released = book.take_working(order.coin)
+                            if released is None:
+                                continue
+                            _cancel_working(released, "SESSION_CLOSE")
+                            summary["cancels"] += 1
                 if swing_on and bool(getattr(settings, "model_b_swing_runner", False)):
                     book.paper_tp1(
                         coin,
@@ -1374,17 +1411,26 @@ def _run_model_b(
                     equity += pnl
                     risk.record_trade_close(pnl)
                     summary["closes"] += 1
-                    close_fields = {
-                        "symbol": closed.coin,
-                        "side": closed.side,
-                        "size": closed.size,
-                        "price": closed.exit,
-                        "pnl": pnl,
-                        "reason": closed.reason,
-                        "entry_mode": "model_b",
-                    }
-                    if closed.reason == "SESSION_CLOSE" and r_size > 0 and abs(r_entry - r_stop) > 0:
-                        close_fields["r"] = pnl / (r_size * abs(r_entry - r_stop))
+                    if swing_on:
+                        from hl_bot.strategy.model_b.swing import swing_close_log
+
+                        close_fields = swing_close_log(
+                            closed,
+                            pnl,
+                            entry=r_entry or float(closed.entry),
+                            stop=r_stop or float(getattr(closed, "planned_stop", 0.0) or 0.0),
+                            size=r_size or float(closed.size),
+                        )
+                    else:
+                        close_fields = {
+                            "symbol": closed.coin,
+                            "side": closed.side,
+                            "size": closed.size,
+                            "price": closed.exit,
+                            "pnl": pnl,
+                            "reason": closed.reason,
+                            "entry_mode": "model_b",
+                        }
                     journal.log("close", **close_fields)
                     logger.info(
                         "MODEL_B %s %s @ %s pnl=%s",
