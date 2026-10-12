@@ -63,7 +63,14 @@ def test_max_drawdown_kills():
     flatten, reason = rm.should_flatten(equity)
     assert flatten
     assert rm.killed
-    assert "kill" in reason.lower() or rm.killed
+    assert reason == "max drawdown"
+
+
+def test_env_kill_switch_reason_stays_distinct_from_drawdown():
+    rm = RiskManager(starting_equity=5000.0, max_drawdown_pct=0.08)
+    flatten, reason = rm.should_flatten(5000.0, env_kill=True)
+    assert flatten
+    assert reason == "kill switch"
 
 
 def test_max_trades_per_day_when_capped():

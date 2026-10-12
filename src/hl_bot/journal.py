@@ -22,6 +22,26 @@ class TradeJournal:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, default=str) + "\n")
 
+    def log_process_stop(self, *, naked_coins: list[str] | None = None, **fields: Any) -> bool:
+        """Journal a process ``stop`` only when no naked position remains.
+
+        A live position without full-size reduce-only TP/SL must not be
+        followed by ``stop`` — that is the BLUR failure (process exit, no
+        brackets, no ``open``). Returns False and writes ``halt_deferred``
+        instead when ``naked_coins`` is non-empty.
+        """
+        naked = [c for c in (naked_coins or []) if c]
+        if naked:
+            self.log(
+                "halt_deferred",
+                reason="open position without full-size reduce-only TP/SL",
+                naked_coins=naked,
+                **fields,
+            )
+            return False
+        self.log("stop", **fields)
+        return True
+
     def read_all(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
