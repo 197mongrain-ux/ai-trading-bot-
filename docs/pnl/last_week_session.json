@@ -1,0 +1,712 @@
+{
+  "coverage": "1h last close, earliest coin: 2026-10-12 02:00 UTC (covers Friday 16:00 ET). 15m last close, earliest coin: 2026-10-12 01:15 UTC (covers Friday 16:00 ET). 1m coins loaded: 13 of 13. 1m first opens: TAO 2026-10-08 06:31 ET through ONDO 2026-10-08 10:06 ET. This is after Monday's open, so earlier cash sessions are absent. 1m last close, earliest loaded coin: 2026-10-12 01:01 UTC (covers Friday 16:00 ET).",
+  "fetch_notes": [],
+  "swing": {
+    "cells": 2592,
+    "penalty": 0.19824460973091004,
+    "signals_1h": 259,
+    "signals_15m": 370,
+    "with_5": 489,
+    "positive": 678,
+    "positive_max_trades": 7,
+    "zero": 684,
+    "under_floor": 1419,
+    "top": [
+      {
+        "name": "touch/4h/15m/none/k1.5/tp3/be/all",
+        "confirm": "15m",
+        "session": "be",
+        "trades": 5,
+        "win_rate": 0.6,
+        "avg_win_r": 2.9663389602842574,
+        "avg_loss_r": -1.986360628959892,
+        "expectancy_r": 0.9852591245865977,
+        "net_pct": 5.372521602443747,
+        "max_dd_pct": 1.240930802074514,
+        "exits": {
+          "SESSION_CLOSE": 1,
+          "tp": 3,
+          "stop": 1
+        },
+        "per_coin": {
+          "BTC": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "ETH": {
+            "trades": 3,
+            "expectancy_r": 2.9663389602842574,
+            "net": 670.4657920973602
+          },
+          "SOL": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:GOLD": {
+            "trades": 1,
+            "expectancy_r": -0.5767404138946114,
+            "net": -31.490912224747138
+          },
+          "xyz:SP500": {
+            "trades": 1,
+            "expectancy_r": -3.3959808440251726,
+            "net": -101.7227196282397
+          },
+          "xyz:XYZ100": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        },
+        "per_day": [
+          {
+            "day": "2026-10-05",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -0.5767404138946114,
+            "net": -31.490912224747138
+          },
+          {
+            "day": "2026-10-06",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 2.9541709471766855,
+            "net": 199.15695800703327
+          },
+          {
+            "day": "2026-10-07",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -3.3959808440251726,
+            "net": -101.7227196282397
+          },
+          {
+            "day": "2026-10-08",
+            "trades": 2,
+            "win_rate": 1.0,
+            "expectancy_r": 2.9724229668380433,
+            "net": 471.308834090327
+          },
+          {
+            "day": "2026-10-09",
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        ]
+      },
+      {
+        "name": "touch/4h/15m/none/k1.5/tp3/overnight/all",
+        "confirm": "15m",
+        "session": "overnight",
+        "trades": 5,
+        "win_rate": 0.6,
+        "avg_win_r": 2.9663389602842574,
+        "avg_loss_r": -2.613448034846265,
+        "expectancy_r": 0.7344241622320484,
+        "net_pct": 4.648651689676053,
+        "max_dd_pct": 1.3579597423527412,
+        "exits": {
+          "stop": 2,
+          "tp": 3
+        },
+        "per_coin": {
+          "BTC": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "ETH": {
+            "trades": 3,
+            "expectancy_r": 2.9663389602842574,
+            "net": 665.8599002338324
+          },
+          "SOL": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:GOLD": {
+            "trades": 1,
+            "expectancy_r": -1.8309152256673578,
+            "net": -99.97078282254665
+          },
+          "xyz:SP500": {
+            "trades": 1,
+            "expectancy_r": -3.395980844025172,
+            "net": -101.02394844368158
+          },
+          "xyz:XYZ100": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        },
+        "per_day": [
+          {
+            "day": "2026-10-05",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -1.8309152256673578,
+            "net": -99.97078282254665
+          },
+          {
+            "day": "2026-10-06",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 2.954170947176685,
+            "net": 197.78879128642876
+          },
+          {
+            "day": "2026-10-07",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -3.395980844025172,
+            "net": -101.02394844368158
+          },
+          {
+            "day": "2026-10-08",
+            "trades": 2,
+            "win_rate": 1.0,
+            "expectancy_r": 2.9724229668380433,
+            "net": 468.0711089474037
+          },
+          {
+            "day": "2026-10-09",
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        ]
+      },
+      {
+        "name": "touch/session/1h/4h+1d/k1.5/tp3/overnight/all",
+        "confirm": "1h",
+        "session": "overnight",
+        "trades": 5,
+        "win_rate": 0.6,
+        "avg_win_r": 2.4598204468418166,
+        "avg_loss_r": -2.1113531384116957,
+        "expectancy_r": 0.6313510127404117,
+        "net_pct": 2.1706935449688602,
+        "max_dd_pct": 1.577239242350188,
+        "exits": {
+          "stop": 2,
+          "tp": 2,
+          "data_end": 1
+        },
+        "per_coin": {
+          "BTC": {
+            "trades": 1,
+            "expectancy_r": 1.6343551030809653,
+            "net": 116.25040368516986
+          },
+          "ETH": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "SOL": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:GOLD": {
+            "trades": 1,
+            "expectancy_r": 2.8888596928982717,
+            "net": 160.20556829738828
+          },
+          "xyz:SP500": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:XYZ100": {
+            "trades": 3,
+            "expectancy_r": -0.4554865774257261,
+            "net": -59.38661748567226
+          }
+        },
+        "per_day": [
+          {
+            "day": "2026-10-05",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -2.061764923534565,
+            "net": -100.03301084138467
+          },
+          {
+            "day": "2026-10-06",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 2.8888596928982717,
+            "net": 160.20556829738828
+          },
+          {
+            "day": "2026-10-07",
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          {
+            "day": "2026-10-08",
+            "trades": 2,
+            "win_rate": 0.5,
+            "expectancy_r": 0.34765259562869333,
+            "net": 40.646393355712405
+          },
+          {
+            "day": "2026-10-09",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 1.6343551030809653,
+            "net": 116.25040368516986
+          }
+        ]
+      },
+      {
+        "name": "touch/4h/15m/none/k1.5/tp2/be/all",
+        "confirm": "15m",
+        "session": "be",
+        "trades": 5,
+        "win_rate": 0.6,
+        "avg_win_r": 1.9662889602842573,
+        "avg_loss_r": -1.986360628959892,
+        "expectancy_r": 0.3852291245865976,
+        "net_pct": 3.0867455333317473,
+        "max_dd_pct": 1.2409307582107822,
+        "exits": {
+          "SESSION_CLOSE": 1,
+          "tp": 3,
+          "stop": 1
+        },
+        "per_coin": {
+          "BTC": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "ETH": {
+            "trades": 3,
+            "expectancy_r": 1.9662889602842573,
+            "net": 441.21361967980613
+          },
+          "SOL": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:GOLD": {
+            "trades": 1,
+            "expectancy_r": -0.5767404138946114,
+            "net": -31.490912224747138
+          },
+          "xyz:SP500": {
+            "trades": 1,
+            "expectancy_r": -3.3959808440251726,
+            "net": -101.04815412188557
+          },
+          "xyz:XYZ100": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        },
+        "per_day": [
+          {
+            "day": "2026-10-05",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -0.5767404138946114,
+            "net": -31.490912224747138
+          },
+          {
+            "day": "2026-10-06",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 1.9540209471766852,
+            "net": 131.73132993324216
+          },
+          {
+            "day": "2026-10-07",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -3.3959808440251726,
+            "net": -101.04815412188557
+          },
+          {
+            "day": "2026-10-08",
+            "trades": 2,
+            "win_rate": 1.0,
+            "expectancy_r": 1.9724229668380433,
+            "net": 309.482289746564
+          },
+          {
+            "day": "2026-10-09",
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        ]
+      },
+      {
+        "name": "sweep/session/1h/none/k1/tp1.5/overnight/crypto",
+        "confirm": "1h",
+        "session": "overnight",
+        "trades": 5,
+        "win_rate": 0.6,
+        "avg_win_r": 1.446138697953068,
+        "avg_loss_r": -1.450789003743353,
+        "expectancy_r": 0.28736761727449933,
+        "net_pct": 0.7797289008345754,
+        "max_dd_pct": 1.9897709401294335,
+        "exits": {
+          "tp": 3,
+          "stop": 2
+        },
+        "per_coin": {
+          "BTC": {
+            "trades": 3,
+            "expectancy_r": 0.4665893459890296,
+            "net": 78.65309298495465
+          },
+          "ETH": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "SOL": {
+            "trades": 2,
+            "expectancy_r": 0.01853502420270392,
+            "net": -0.6802029014958038
+          },
+          "xyz:GOLD": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:SP500": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          "xyz:XYZ100": {
+            "trades": 0,
+            "expectancy_r": null,
+            "net": 0
+          }
+        },
+        "per_day": [
+          {
+            "day": "2026-10-05",
+            "trades": 1,
+            "win_rate": 1.0,
+            "expectancy_r": 1.456037195121951,
+            "net": 100.31208065492466
+          },
+          {
+            "day": "2026-10-06",
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_r": null,
+            "net": 0
+          },
+          {
+            "day": "2026-10-07",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -1.4189671467165432,
+            "net": -100.99228355642046
+          },
+          {
+            "day": "2026-10-08",
+            "trades": 1,
+            "win_rate": 0.0,
+            "expectancy_r": -1.4826108607701631,
+            "net": -99.98079108683288
+          },
+          {
+            "day": "2026-10-09",
+            "trades": 2,
+            "win_rate": 1.0,
+            "expectancy_r": 1.441189449368626,
+            "net": 178.63388407178752
+          }
+        ]
+      }
+    ],
+    "anecdote": {
+      "name": "sweep/4h/1h/4h+1d/k1.5/tp3/overnight/crypto",
+      "confirm": "1h",
+      "session": "overnight",
+      "trades": 1,
+      "win_rate": 1.0,
+      "avg_win_r": 2.9807895758744145,
+      "avg_loss_r": 0.0,
+      "expectancy_r": 2.9807895758744145,
+      "net_pct": 2.497711622214216,
+      "max_dd_pct": 0.6326954552318141,
+      "exits": {
+        "tp": 1
+      },
+      "per_coin": {
+        "BTC": {
+          "trades": 0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        "ETH": {
+          "trades": 1,
+          "expectancy_r": 2.9807895758744145,
+          "net": 249.77116222142166
+        },
+        "SOL": {
+          "trades": 0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        "xyz:GOLD": {
+          "trades": 0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        "xyz:SP500": {
+          "trades": 0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        "xyz:XYZ100": {
+          "trades": 0,
+          "expectancy_r": null,
+          "net": 0
+        }
+      },
+      "per_day": [
+        {
+          "day": "2026-10-05",
+          "trades": 0,
+          "win_rate": 0.0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        {
+          "day": "2026-10-06",
+          "trades": 0,
+          "win_rate": 0.0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        {
+          "day": "2026-10-07",
+          "trades": 0,
+          "win_rate": 0.0,
+          "expectancy_r": null,
+          "net": 0
+        },
+        {
+          "day": "2026-10-08",
+          "trades": 1,
+          "win_rate": 1.0,
+          "expectancy_r": 2.9807895758744145,
+          "net": 249.77116222142166
+        },
+        {
+          "day": "2026-10-09",
+          "trades": 0,
+          "win_rate": 0.0,
+          "expectancy_r": null,
+          "net": 0
+        }
+      ]
+    }
+  },
+  "scalp": {
+    "signals": 509,
+    "skipped": 477,
+    "missing": [],
+    "loaded": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "NEAR",
+      "PUMP",
+      "LIT",
+      "AAVE",
+      "ONDO",
+      "WLD",
+      "TAO",
+      "xyz:GOLD",
+      "xyz:SP500",
+      "xyz:XYZ100"
+    ],
+    "trades": 19,
+    "win_rate": 0.3684210526315789,
+    "avg_win_r": 2.0227477183943887,
+    "avg_loss_r": -1.6338952981294457,
+    "expectancy_r": -0.28671102888382244,
+    "net_pct": -9.19396975402278,
+    "max_dd_pct": 13.742012255281788,
+    "exits": {
+      "stop": 12,
+      "tp": 7
+    },
+    "per_day": [
+      {
+        "day": "2026-10-05",
+        "trades": 0,
+        "win_rate": 0.0,
+        "expectancy_r": null,
+        "net": 0
+      },
+      {
+        "day": "2026-10-06",
+        "trades": 0,
+        "win_rate": 0.0,
+        "expectancy_r": null,
+        "net": 0
+      },
+      {
+        "day": "2026-10-07",
+        "trades": 0,
+        "win_rate": 0.0,
+        "expectancy_r": null,
+        "net": 0
+      },
+      {
+        "day": "2026-10-08",
+        "trades": 13,
+        "win_rate": 0.38461538461538464,
+        "expectancy_r": -0.14344406014285788,
+        "net": -449.5274874640535
+      },
+      {
+        "day": "2026-10-09",
+        "trades": 6,
+        "win_rate": 0.3333333333333333,
+        "expectancy_r": -0.5971227944892457,
+        "net": -469.8694879382243
+      }
+    ],
+    "signal_days": [
+      {
+        "day": "2026-10-05",
+        "signals": 0
+      },
+      {
+        "day": "2026-10-06",
+        "signals": 0
+      },
+      {
+        "day": "2026-10-07",
+        "signals": 0
+      },
+      {
+        "day": "2026-10-08",
+        "signals": 342
+      },
+      {
+        "day": "2026-10-09",
+        "signals": 167
+      }
+    ],
+    "per_coin": {
+      "BTC": {
+        "signals": 43,
+        "trades": 14,
+        "expectancy_r": -0.5967535195587332,
+        "net": -1219.3701811966966,
+        "missing": false
+      },
+      "ETH": {
+        "signals": 43,
+        "trades": 15,
+        "expectancy_r": -0.7764210282909407,
+        "net": -1646.9379582568033,
+        "missing": false
+      },
+      "SOL": {
+        "signals": 37,
+        "trades": 13,
+        "expectancy_r": -0.26773490658889904,
+        "net": -603.1384215295737,
+        "missing": false
+      },
+      "NEAR": {
+        "signals": 45,
+        "trades": 21,
+        "expectancy_r": -0.6153088828558227,
+        "net": -2000.0410095932382,
+        "missing": false
+      },
+      "PUMP": {
+        "signals": 51,
+        "trades": 13,
+        "expectancy_r": -0.7570898039208489,
+        "net": -1548.5854827769485,
+        "missing": false
+      },
+      "LIT": {
+        "signals": 50,
+        "trades": 22,
+        "expectancy_r": -0.8680402321002394,
+        "net": -2605.873676584509,
+        "missing": false
+      },
+      "AAVE": {
+        "signals": 42,
+        "trades": 21,
+        "expectancy_r": -1.2835957217365541,
+        "net": -3390.2967105378757,
+        "missing": false
+      },
+      "ONDO": {
+        "signals": 51,
+        "trades": 23,
+        "expectancy_r": -1.0305716943366994,
+        "net": -3031.242215136037,
+        "missing": false
+      },
+      "WLD": {
+        "signals": 42,
+        "trades": 24,
+        "expectancy_r": -0.8776272767526393,
+        "net": -2749.7962015579196,
+        "missing": false
+      },
+      "TAO": {
+        "signals": 40,
+        "trades": 19,
+        "expectancy_r": -1.0015020821237681,
+        "net": -2527.2287099208106,
+        "missing": false
+      },
+      "xyz:GOLD": {
+        "signals": 18,
+        "trades": 5,
+        "expectancy_r": -0.26704270546939013,
+        "net": -183.51728074908374,
+        "missing": false
+      },
+      "xyz:SP500": {
+        "signals": 25,
+        "trades": 7,
+        "expectancy_r": -1.6799795813969618,
+        "net": -1325.1390367795648,
+        "missing": false
+      },
+      "xyz:XYZ100": {
+        "signals": 22,
+        "trades": 8,
+        "expectancy_r": -1.1500878330230493,
+        "net": -1095.291555101306,
+        "missing": false
+      }
+    }
+  }
+}

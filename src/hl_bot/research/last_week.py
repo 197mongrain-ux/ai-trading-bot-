@@ -965,6 +965,14 @@ def _signal_days(signals: list[ScalpSignal]) -> list[dict]:
     return [{"day": day, "signals": buckets[day]} for day in DAYS]
 
 
+def _family(name: str) -> str:
+    """Cell identity ignoring target and the 16:00 rule. Those share entries."""
+    parts = str(name).split("/")
+    if len(parts) < 8:
+        return str(name)
+    return "/".join(parts[:5] + parts[7:])
+
+
 def _fmt_e(value: float | None) -> str:
     if value is None:
         return "—"
@@ -1004,9 +1012,13 @@ def _day_table(rows: list[dict]) -> list[str]:
 
 
 def _setup_line(row: dict) -> str:
+    trades = int(row["trades"])
+    win = float(row["win_rate"])
+    avg_w = "—" if trades and win <= 0 else _fmt_e(row["avg_win_r"])
+    avg_l = "—" if trades and win >= 1 else _fmt_e(row["avg_loss_r"])
     return (
-        f"{row['trades']} trades, win {_fmt_pct(100.0 * float(row['win_rate']))}, "
-        f"avg winner {_fmt_e(row['avg_win_r'])} R, avg loser {_fmt_e(row['avg_loss_r'])} R, "
+        f"{trades} trades, win {_fmt_pct(100.0 * win)}, "
+        f"avg winner {avg_w} R, avg loser {avg_l} R, "
         f"expectancy {_fmt_e(row['expectancy_r'])} R, net {row['net_pct']:.2f}%, "
         f"max DD {row['max_dd_pct']:.2f}%"
     )
@@ -1044,7 +1056,7 @@ def render(result: dict) -> str:
         "",
         "## Candles",
         "",
-        "1h and 15m come from the local cache, extended from Hyperliquid `candleSnapshot` when Friday's 16:00 ET close was missing. 1m was not in the cache and was fetched the same way. Public snapshots keep about 5,000 bars per call, so 1m is requested in chunks. Nothing fetched is committed.",
+        "1h and 15m come from the local cache, extended from Hyperliquid `candleSnapshot` when Friday's 16:00 ET close was missing. Both cover Monday's open through Friday's close. 1m was not in the cache and was fetched the same way. The public 1m snapshot only keeps about 5,000 bars, which from this fetch reaches back to Thursday 8 Oct and no further. Requests for Monday through Wednesday returned no bars. Nothing fetched is committed.",
         "",
         result.get("coverage", ""),
         "",
@@ -1063,6 +1075,24 @@ def render(result: dict) -> str:
         lines.append("")
     lines.append(f"Top {min(TOP_N, len(top))} by expectancy, among cells with at least {WEEK_MIN_TRADES} trades. This is not a pick for Monday.")
     lines.append("")
+    if top and all(int(row["trades"]) == WEEK_MIN_TRADES for row in top):
+        lines.append(
+            f"Each of these cells has {WEEK_MIN_TRADES} trades, the ranking floor. "
+            f"That is what the best of {cells} cells looks like on five sessions."
+        )
+        lines.append("")
+    families: dict[str, list[int]] = {}
+    for i, row in enumerate(top, start=1):
+        families.setdefault(_family(row["name"]), []).append(i)
+    for fam, idxs in families.items():
+        if len(idxs) < 2:
+            continue
+        listed = ", ".join(str(i) for i in idxs)
+        lines.append(
+            f"Rows {listed} share entries (`{fam}`). Only the target or the 16:00 rule changes. "
+            "They are one sample counted more than once, not separate setups."
+        )
+        lines.append("")
     if not top:
         lines.append(f"No cell produced {WEEK_MIN_TRADES} trades.")
         lines.append("")
@@ -1091,6 +1121,8 @@ def render(result: dict) -> str:
             "## Scalp, structural, tape off",
             "",
             "Reference only, against the live rules, not a reconstruction of the live tickets. Live hunts the same coins after 16:00. This replay does not take those entries. Fills have to print on a later bar that is still inside the cash session. An open position is not flattened at 16:00. It runs to the stop, the target, or the last 1m bar.",
+            "",
+            "Monday, Tuesday, and Wednesday have no 1m candles, so a zero on those days is a missing file, not a day without a setup. Thursday starts when each coin's file starts (late morning for BTC). Friday is covered.",
             "",
             "What is on, from the current live defaults: latest confirmed 1m swing at least 3 ticks from the close; wick at least 1 tick and 0.3 bp through that swing with the close back through it; 15m and 1h structure filter (a long is blocked when either is bearish, a short when either is bullish); stop past the wick by `max(3 ticks, 2 bp, 0.5×ATR14)`, then the 15 bp minimum-stop walk; take-profit is the next untaken confirmed swing that clears the fee and 1R, walked out to 1.5R when the nearest is closer, skipped when that walk is countertrend and too far, otherwise the 1.5R fallback inside [1, 2]. One thesis per swing. One open position for the headline book, majors first when two coins signal on the same minute.",
             "",
@@ -1145,7 +1177,7 @@ def render(result: dict) -> str:
 
 
 def _coverage_line(hourly: dict, m15: dict, minutes: dict) -> str:
-    def _span(book: dict, sec: int) -> str:
+    def _last(book: dict, sec: int) -> str:
         if not book:
             return "missing"
         last = min(last_close(rows, sec) for rows in book.values())
@@ -1153,11 +1185,30 @@ def _coverage_line(hourly: dict, m15: dict, minutes: dict) -> str:
         flag = "covers Friday 16:00 ET" if last + 1e-6 >= week_end() else "DOES NOT cover Friday 16:00 ET"
         return f"{stamp} ({flag})"
 
+    def _open_span(book: dict) -> str:
+        if not book:
+            return "missing"
+        ranked = sorted(
+            ((coin, bar_open_sec(float(rows[0]["t"]))) for coin, rows in book.items() if rows),
+            key=lambda item: item[1],
+        )
+        if not ranked:
+            return "missing"
+        early_coin, early = ranked[0]
+        late_coin, late = ranked[-1]
+        early_s = datetime.fromtimestamp(early, TZ).strftime("%Y-%m-%d %H:%M ET")
+        late_s = datetime.fromtimestamp(late, TZ).strftime("%Y-%m-%d %H:%M ET")
+        note = ""
+        if early > week_start() + 60:
+            note = " This is after Monday's open, so earlier cash sessions are absent."
+        return f"{early_coin} {early_s} through {late_coin} {late_s}.{note}"
+
     return (
-        f"1h last close, earliest coin: {_span(hourly, 3600)}. "
-        f"15m last close, earliest coin: {_span(m15, 900)}. "
+        f"1h last close, earliest coin: {_last(hourly, 3600)}. "
+        f"15m last close, earliest coin: {_last(m15, 900)}. "
         f"1m coins loaded: {len(minutes)} of {len(DEFAULT_HUNT_COINS)}. "
-        f"1m last close, earliest loaded coin: {_span(minutes, 60)}."
+        f"1m first opens: {_open_span(minutes)} "
+        f"1m last close, earliest loaded coin: {_last(minutes, 60)}."
     )
 
 

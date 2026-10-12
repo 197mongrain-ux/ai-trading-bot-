@@ -86,6 +86,87 @@ def test_structural_scalp_needs_a_reclaim_and_does_not_invent_prints():
     assert scalp_candidate("BTC", flat, flat_now) is None
 
 
+def test_coverage_flags_1m_that_starts_after_monday():
+    from datetime import timezone
+
+    from hl_bot.research.last_week import _coverage_line
+
+    early = int(datetime(2026, 10, 8, 10, 31, tzinfo=timezone.utc).timestamp() * 1000)
+    late = int(datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    rows = [
+        {"t": early, "o": 1, "h": 2, "l": 1, "c": 1, "v": 1},
+        {"t": late, "o": 1, "h": 2, "l": 1, "c": 1, "v": 1},
+    ]
+    text = _coverage_line({"BTC": rows}, {"BTC": rows}, {"TAO": rows})
+    assert "after Monday's open" in text
+    assert "earlier cash sessions are absent" in text
+
+
+def test_shared_entries_are_not_counted_as_separate_setups():
+    day = {
+        "day": "2026-10-05",
+        "trades": 5,
+        "win_rate": 0.6,
+        "expectancy_r": 0.2,
+        "net": 10.0,
+    }
+
+    def setup(name: str) -> dict:
+        return {
+            "name": name,
+            "trades": 5,
+            "win_rate": 0.6,
+            "avg_win_r": 2.0,
+            "avg_loss_r": -1.0,
+            "expectancy_r": 0.2,
+            "net_pct": 1.0,
+            "max_dd_pct": 1.0,
+            "exits": {"tp": 3, "stop": 2},
+            "per_coin": {},
+            "per_day": [day],
+        }
+
+    text = render(
+        {
+            "coverage": "cache check",
+            "swing": {
+                "cells": 2592,
+                "penalty": 0.2,
+                "zero": 0,
+                "under_floor": 0,
+                "with_5": 2,
+                "positive": 2,
+                "positive_max_trades": 5,
+                "signals_1h": 1,
+                "signals_15m": 1,
+                "top": [
+                    setup("touch/4h/15m/none/k1.5/tp3/be/all"),
+                    setup("touch/4h/15m/none/k1.5/tp3/overnight/all"),
+                ],
+                "anecdote": {
+                    **setup("sweep/4h/1h/4h+1d/k1.5/tp3/overnight/crypto"),
+                    "trades": 1,
+                    "win_rate": 1.0,
+                },
+            },
+            "scalp": {
+                "trades": 0,
+                "signals": 0,
+                "skipped": 0,
+                "exits": {},
+                "missing": [],
+                "per_day": [day],
+                "signal_days": [{"day": "2026-10-05", "signals": 0}],
+                "per_coin": {},
+            },
+        }
+    )
+    assert "one sample counted more than once" in text
+    assert "ranking floor" in text
+    assert "avg loser — R" in text
+    assert "Monday, Tuesday, and Wednesday have no 1m candles" in text
+
+
 def test_report_says_one_week_is_not_a_verdict_and_counts_the_cells():
     day = {
         "day": "2026-10-05",
