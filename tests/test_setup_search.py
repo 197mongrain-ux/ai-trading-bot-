@@ -38,3 +38,17 @@ def test_feature_stats_flags_separating_feature():
     lib = [_s(i, adx_1h=float(i)) for i in range(6)]
     top = feature_stats(lib)[0]
     assert top["feature"] == "adx_1h" and top["auc"] == 1.0
+
+
+def test_double_top_detected_at_level():
+    from hl_bot.research.patterns import detect
+    hs = [100, 101, 103, 101, 100, 98, 97, 98, 100, 101, 103.1, 101, 100, 99, 98.5, 98.8]
+    bars = [{"h": h, "l": h - 1, "c": h - 0.5} for h in hs]
+    r = detect(bars, len(bars), "short", 103.0, 1.0, 2, 0.3)
+    assert r["dt"] == 1 and r["dt_at"] == 1
+
+
+def test_no_pattern_on_trend():
+    from hl_bot.research.patterns import detect
+    bars = [{"h": 100 + k, "l": 99 + k, "c": 99.5 + k} for k in range(40)]
+    assert detect(bars, 40, "short", 120, 1.0, 2, 0.3)["dt"] == 0

@@ -19,3 +19,17 @@ The sweep, the close location on the retest bar, the number of closes beyond the
 - **Scan:** the top 15 setups most similar to the average winner had 4 winners (27%), the same as the base rate.
 
 Treat this as a lookup tool for context, not a signal. Don't trade it.
+
+## Chart patterns (definitions fixed before outcomes; see `patterns.py`)
+Run with `python -m hl_bot.research.pattern_study`; the full table is in `setup_search_patterns.md`.
+- **Patterns tested:** double top and H&S for shorts; double bottom and inverse H&S for longs.
+- **Pivots:** 1h fractal pivots, 48h window.
+- **Two settings:** A (n=2, 0.3 ATR) and B (n=3, 0.5 ATR).
+
+Results across the 340 setups:
+- **Double top/bottom:** they did *not* help. The +2R rate was 15% with vs 30% without (A, Fisher p=0.02) and 20% vs 30% (B, p=0.11). Avg R differences have 95% CIs that include 0. With 18 comparisons, p=0.02 is not convincing; at most it suggests these setups are worse.
+- **H&S / inverse H&S:** too rare to judge (15-19 setups; at the level, 1-2).
+- **"At the level":** too rare (8-10 setups).
+- **Neckline broken:** no reliable effect, and the sign flips between settings for avg R.
+
+Verdict: no evidence that these patterns improve the PDL/PDH retest. Setting A flags (`pat_any`, `pat_at_level`, `pat_neck_broken`) are now kNN features.

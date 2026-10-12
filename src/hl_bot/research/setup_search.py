@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from hl_bot.research.patterns import SETTINGS, detect
 from hl_bot.research.pdl_retest import LEVEL_PARAMS, load, tape_delta
 from hl_bot.strategy.model_b.swing import aggregate, build_levels
 from hl_bot.strategy.model_b.trend import adx_series
@@ -53,6 +54,9 @@ FEATURES = [
     "dow",
     "vwap_dist_atr",   # (close - UTC-day VWAP) / ATR, signed in trade direction
     "pd_range_atr",    # prior-day range / ATR
+    "pat_any",         # double top/H&S (shorts) or double bottom/inverse H&S (longs), setting A
+    "pat_at_level",
+    "pat_neck_broken",
 ]
 
 
@@ -221,6 +225,13 @@ class CoinCtx:
             "vwap_dist_atr": sgn * (vwap - entry) / atr * -1,
             "pd_range_atr": (prev["h"] - prev["l"]) / atr,
         }
+        for name, (n, tol) in SETTINGS.items():
+            pat = detect(h1, i, side, lvl, atr, n, tol)
+            for k, v in pat.items():
+                f[f"{k}_{name}"] = v
+        f["pat_any"] = max(f["dt_A"], f["hs_A"])
+        f["pat_at_level"] = max(f["dt_at_A"], f["hs_at_A"])
+        f["pat_neck_broken"] = max(f["dt_neck_A"], f["hs_neck_A"])
         return Setup(self.coin, side, now, lvl, entry, stop, target, f)
 
     def outcome(self, s: Setup, max_h: int = 72) -> None:
