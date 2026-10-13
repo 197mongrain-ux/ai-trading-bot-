@@ -1,6 +1,6 @@
 # Reference trade: BTC PDL breakdown-retest short (Chris, manual) — 2026-10-12
 
-Status: OPEN (outcome TBD)
+Status: CLOSED, WIN (+$81.41, about +5.2R)
 
 ## Context
 - 4h/1h trend: down (ADX>20, 4h-led).
@@ -19,4 +19,20 @@ Status: OPEN (outcome TBD)
 
 ## Lessons for bot
 - Same idea as PR #26 pdl_retest, but rule version had no edge (90d + held-out); discretionary context (trend, sweep of PDL, room to 4h support) mattered.
-- Outcome: TBD
+- Outcome: WIN. See below.
+
+## Outcome (final)
+- **Entry:** 82,827.2 average for 0.0447 BTC. The fills came in around 82,836 at 12:36 PM ET.
+- **Stop:** originally 83,176, later 83,173. Moved to 82,780 at 8:04 PM ET, which is under entry and locks in profit.
+- **Take-profit:** adjusted to 81,022 and filled at 81,006 at 8:52 PM ET.
+- **Result:** closed PnL +$81.41 after a $1.56 fee. That is about +5.2R on the original stop distance.
+
+Key events, ET:
+1. **Breakdown:** 1h closes under PDL 82,746 before noon.
+2. **Bull trap:** a retest sweep up to 83,153 that failed. The HL 15m high was 83,116 at 4:45 PM.
+3. **Back under PDL:** the 5 PM 15m bar printed −675 BTC delta on 5x volume. The 5–6 PM 1h bar closed 82,536, back under PDL.
+4. **82k breaks:** around 8 PM.
+5. **Long liquidation flush:** at 8:05 PM through the 81,865 long-liquidation cluster (Coinglass). The low was 81,339, on about 6x volume.
+6. **TP fill:** 81,006 at 8:52 PM.
+
+Playback of the whole session: `2026-10-12_btc_playback.md`.
