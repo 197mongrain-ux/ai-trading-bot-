@@ -1,0 +1,59 @@
+Library: 342 PDL/PDH retest setups (340 resolved, 93 reached +2R). Stop = retest wick + 0.25 ATR.
+
+
+### BTC short vs PDL 82,746 (last close 82,833, 2026-10-12 16:00 ET) - no retest on the last bar; 5 1h closes beyond PDL
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.00 | BTC | short | 2026-10-12 16:00 ET | 82,746 | 5 | +1 | 19 | 0.33 | 1 | 0.10 | 0.8 | 15.0 | 1.05 | open | - | - |
+
+8 nearest: 3/8 resolved reached +2R.
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.65 | BTC | short | 2026-05-18 14:00 ET | 76,700 | 3 | +1 | 40 | 0.09 | 1 | 0.14 | 0.7 | 11.2 | 1.10 | WIN | -1.0 | 3.4 |
+| 0.69 | SOL | short | 2026-09-08 18:00 ET | 102.96 | 4 | +1 | 15 | 0.35 | 1 | 0.62 | 0.3 | 15.0 | 1.06 | loss | -1.0 | 0.1 |
+| 0.70 | BTC | short | 2026-06-17 10:00 ET | 65,320 | 5 | +1 | 24 | 0.09 | 1 | 0.16 | 1.6 | 15.0 | 0.88 | WIN | -1.0 | 3.0 |
+| 0.70 | SOL | short | 2026-09-08 10:00 ET | 102.96 | 4 | +1 | 17 | 0.21 | 1 | 0.33 | 3.1 | 15.0 | 0.88 | loss | -1.0 | 0.0 |
+| 0.72 | ETH | short | 2026-06-09 14:00 ET | 1,644 | 2 | +1 | 32 | 0.27 | 1 | 0.38 | 2.0 | 10.0 | 1.19 | loss | -1.0 | 0.0 |
+| 0.72 | SOL | short | 2026-06-09 20:00 ET | 64.94 | 3 | +1 | 30 | 0.24 | 1 | 0.44 | 0.9 | 10.0 | 1.04 | WIN | -1.0 | 5.1 |
+| 0.74 | ETH | short | 2026-07-13 13:00 ET | 1,779 | 2 | +1 | 21 | 0.15 | 1 | 0.64 | 1.2 | 9.9 | 0.98 | loss | -1.0 | 1.8 |
+| 0.77 | SOL | short | 2026-06-09 14:00 ET | 64.94 | 2 | +1 | 31 | 0.22 | 1 | 0.34 | 1.5 | 10.0 | 1.14 | loss | -1.0 | 0.0 |
+
+### ETH short vs PDL 2,496 (last close 2,520, 2026-10-12 16:00 ET) - no retest on the last bar; 0 1h closes beyond PDL
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.00 | ETH | short | 2026-10-12 16:00 ET | 2,496 | 0 | +1 | 25 | 1.53 | 1 | 0.09 | 1.3 | 10.2 | 1.03 | open | - | - |
+
+8 nearest: 0/8 resolved reached +2R.
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1.88 | ETH | short | 2026-05-13 18:00 ET | 2,255 | 2 | +1 | 26 | 0.48 | 1 | 0.80 | 0.5 | 6.3 | 1.17 | loss | -1.0 | 0.4 |
+| 2.00 | SOL | short | 2026-08-06 14:00 ET | 73.23 | 2 | +1 | 12 | 0.65 | 1 | 0.73 | 0.7 | 1.1 | 0.88 | loss | +1.1 | 1.1 |
+| 2.01 | ETH | short | 2026-05-08 10:00 ET | 2,279 | 2 | +1 | 22 | 0.54 | 1 | 0.61 | 1.3 | 0.9 | 0.78 | loss | -1.0 | 0.0 |
+| 2.01 | SOL | short | 2026-04-29 18:00 ET | 82.94 | 3 | +1 | 18 | 0.35 | 1 | 0.47 | 0.6 | 0.5 | 1.17 | loss | -1.0 | 0.2 |
+| 2.02 | BTC | short | 2026-09-13 19:00 ET | 77,034 | 6 | -1 | 18 | 0.99 | 1 | 0.91 | 3.7 | 0.5 | 0.61 | loss | +0.5 | 0.5 |
+| 2.04 | ETH | short | 2026-04-29 18:00 ET | 2,255 | 3 | +1 | 16 | 0.31 | 1 | 0.42 | 1.2 | 1.5 | 1.34 | loss | -1.0 | 0.2 |
+| 2.07 | ETH | short | 2026-06-09 14:00 ET | 1,644 | 2 | +1 | 32 | 0.27 | 1 | 0.38 | 2.0 | 10.0 | 1.19 | loss | -1.0 | 0.0 |
+| 2.07 | SOL | short | 2026-05-26 02:00 ET | 84.67 | 5 | +1 | 15 | 0.49 | 1 | 0.48 | 2.2 | 0.6 | 0.90 | loss | +0.6 | 1.1 |
+
+### SOL short vs PDL 108.92 (last close 108.30, 2026-10-12 16:00 ET) - no retest on the last bar; 5 1h closes beyond PDL
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.00 | SOL | short | 2026-10-12 16:00 ET | 108.92 | 5 | +1 | 25 | -0.59 | 0 | 0.07 | 2.7 | 15.0 | 1.01 | open | - | - |
+
+8 nearest: 2/8 resolved reached +2R.
+
+| dist | coin | side | retest close | level | closes | 4h trend with | ADX4h | depth ATR | swept | CLV with | relVol | room R | ATR regime | reached +2R | R at stop/target | MFE R |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1.33 | ETH | short | 2026-07-13 20:00 ET | 1,779 | 8 | +1 | 22 | -0.03 | 0 | 0.07 | 0.7 | 15.0 | 1.12 | loss | -1.0 | 0.0 |
+| 1.38 | BTC | short | 2026-09-07 19:00 ET | 79,214 | 5 | +1 | 14 | -0.13 | 0 | 0.62 | 1.9 | 0.8 | 0.79 | loss | -1.0 | 0.0 |
+| 1.41 | BTC | short | 2026-10-08 08:00 ET | 82,741 | 3 | +1 | 30 | -0.09 | 0 | 0.54 | 1.3 | 14.1 | 1.02 | WIN | -1.0 | 6.2 |
+| 1.44 | BTC | short | 2026-09-08 11:00 ET | 78,632 | 4 | +1 | 16 | -0.08 | 0 | 0.09 | 1.8 | 5.3 | 1.21 | loss | -1.0 | 0.0 |
+| 1.45 | BTC | short | 2026-07-06 11:00 ET | 62,434 | 2 | -1 | 34 | -0.03 | 0 | 0.52 | 1.7 | 5.4 | 1.04 | loss | -1.0 | 0.0 |
+| 1.49 | ETH | short | 2026-06-01 09:00 ET | 1,993 | 6 | +1 | 19 | 0.03 | 0 | 0.18 | 2.2 | 2.7 | 1.19 | WIN | +2.7 | 3.9 |
+| 1.50 | ETH | short | 2026-07-24 12:00 ET | 1,868 | 2 | +1 | 21 | 0.03 | 0 | 0.47 | 1.1 | 15.0 | 1.00 | loss | -1.0 | 1.1 |
+| 1.51 | SOL | short | 2026-07-31 18:00 ET | 73.11 | 3 | +1 | 17 | -0.08 | 0 | 0.73 | 1.1 | 0.9 | 0.73 | loss | -1.0 | 0.1 |
