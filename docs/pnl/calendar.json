@@ -1,8 +1,8 @@
 {
  "address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541",
  "network": "mainnet",
- "generated_ms": 1792443382813,
- "generated_et": "2026-10-19 16:56:22",
+ "generated_ms": 1792444023770,
+ "generated_et": "2026-10-19 17:07:03",
  "history_days": 90,
  "history_from_et": "2026-10-06 23:58",
  "kpis": {
@@ -14,9 +14,9 @@
   "wins": 1,
   "losses": 18,
   "closed": 19,
-  "open_upnl": 29.05,
-  "equity_spot_usdc": 1194.310779,
-  "perp_account_value": 233.47,
+  "open_upnl": 26.32,
+  "equity_spot_usdc": 1191.614834,
+  "perp_account_value": 230.77,
   "today_key": "2026-10-19",
   "week_start": "2026-10-19"
  },
@@ -28,7 +28,9 @@
    "trades": 5,
    "wins": 1,
    "losses": 4,
-   "risk": 85.98
+   "risk": 85.98,
+   "best": 78.35,
+   "worst": -32.1
   },
   "2026-10-13": {
    "net": -6.18,
@@ -37,7 +39,9 @@
    "trades": 1,
    "wins": 0,
    "losses": 1,
-   "risk": 4.75
+   "risk": 4.75,
+   "best": -6.18,
+   "worst": -6.18
   },
   "2026-10-14": {
    "net": -3.14,
@@ -46,7 +50,9 @@
    "trades": 1,
    "wins": 0,
    "losses": 1,
-   "risk": 2.06
+   "risk": 2.06,
+   "best": -3.14,
+   "worst": -3.14
   },
   "2026-10-15": {
    "net": -30.78,
@@ -55,7 +61,9 @@
    "trades": 5,
    "wins": 0,
    "losses": 5,
-   "risk": 29.47
+   "risk": 29.47,
+   "best": -0.66,
+   "worst": -14.56
   },
   "2026-10-16": {
    "net": -30.08,
@@ -64,7 +72,9 @@
    "trades": 2,
    "wins": 0,
    "losses": 2,
-   "risk": 27.0
+   "risk": 27.0,
+   "best": -5.24,
+   "worst": -24.84
   },
   "2026-10-17": {
    "net": -5.64,
@@ -73,7 +83,9 @@
    "trades": 1,
    "wins": 0,
    "losses": 1,
-   "risk": 4.6
+   "risk": 4.6,
+   "best": -5.64,
+   "worst": -5.64
   },
   "2026-10-18": {
    "net": -35.12,
@@ -82,7 +94,9 @@
    "trades": 3,
    "wins": 0,
    "losses": 3,
-   "risk": 40.35
+   "risk": 40.35,
+   "best": -11.34,
+   "worst": -12.28
   },
   "2026-10-19": {
    "net": -11.7,
@@ -91,7 +105,9 @@
    "trades": 1,
    "wins": 0,
    "losses": 1,
-   "risk": 10.59
+   "risk": 10.59,
+   "best": -11.7,
+   "worst": -11.7
   }
  },
  "trades": [
@@ -614,13 +630,13 @@
    "n_fills": 1,
    "partial_history": false,
    "status": "open",
-   "upnl": 16.14416,
-   "mark": 81987.5,
-   "liq": 85908.5517458073,
+   "upnl": 15.59722,
+   "mark": 82012.5,
+   "liq": 85909.5643271409,
    "leverage": "20x isolated",
    "target": 80840.0,
-   "funding_since_open": 0.232687,
-   "net_if_closed_now": 15.9192
+   "funding_since_open": 0.252023,
+   "net_if_closed_now": 15.3722
   },
   {
    "coin": "ETH",
@@ -645,13 +661,13 @@
    "n_fills": 4,
    "partial_history": false,
    "status": "open",
-   "upnl": 10.76292,
-   "mark": 2399.85,
-   "liq": 2496.4466649221,
+   "upnl": 10.297381,
+   "mark": 2400.75,
+   "liq": 2496.4682560451,
    "leverage": "20x isolated",
    "target": 2326.9,
-   "funding_since_open": 0.202785,
-   "net_if_closed_now": 10.6138
+   "funding_since_open": 0.212191,
+   "net_if_closed_now": 10.1483
   },
   {
    "coin": "SOL",
@@ -676,13 +692,13 @@
    "n_fills": 3,
    "partial_history": false,
    "status": "open",
-   "upnl": 2.142,
-   "mark": 104.435,
-   "liq": 107.1160396256,
+   "upnl": 0.4284,
+   "mark": 104.545,
+   "liq": 107.1161347271,
    "leverage": "20x isolated",
    "target": 100.56,
-   "funding_since_open": -0.0,
-   "net_if_closed_now": 1.927
+   "funding_since_open": 0.001392,
+   "net_if_closed_now": 0.2134
   }
  ],
  "pending": [],
@@ -696,167 +712,5 @@
   "from_et": "2026-10-06 23:58",
   "to_et": "2026-10-09 12:51"
  },
- "filter_note": "Manual trades only (bot trades hidden)",
- "pairs": [
-  {
-   "coin": "BTC",
-   "mid": 81987.5,
-   "tfs": {
-    "15m": {
-     "di_plus": 17.9,
-     "di_minus": 22.8,
-     "spread": -4.9,
-     "lead": "DI-",
-     "adx": 14.1,
-     "adx_prev": 14.3,
-     "adx_dir": "falling",
-     "side": 0,
-     "read": "ADX 14, DI- above DI+: weak / ranging"
-    },
-    "1h": {
-     "di_plus": 17.4,
-     "di_minus": 19.0,
-     "spread": -1.6,
-     "lead": "DI-",
-     "adx": 18.1,
-     "adx_prev": 19.1,
-     "adx_dir": "falling",
-     "side": 0,
-     "read": "ADX 18, DI- above DI+: weak / ranging"
-    },
-    "4h": {
-     "di_plus": 18.1,
-     "di_minus": 22.5,
-     "spread": -4.4,
-     "lead": "DI-",
-     "adx": 32.8,
-     "adx_prev": 34.5,
-     "adx_dir": "falling",
-     "side": -1,
-     "read": "ADX 33, DI- above DI+: downtrend, strong"
-    }
-   },
-   "mb_bias": "none"
-  },
-  {
-   "coin": "ETH",
-   "mid": 2399.85,
-   "tfs": {
-    "15m": {
-     "di_plus": 16.0,
-     "di_minus": 24.9,
-     "spread": -8.9,
-     "lead": "DI-",
-     "adx": 19.0,
-     "adx_prev": 18.8,
-     "adx_dir": "rising",
-     "side": 0,
-     "read": "ADX 19, DI- above DI+: weak / ranging"
-    },
-    "1h": {
-     "di_plus": 13.3,
-     "di_minus": 22.4,
-     "spread": -9.1,
-     "lead": "DI-",
-     "adx": 21.6,
-     "adx_prev": 21.3,
-     "adx_dir": "rising",
-     "side": -1,
-     "read": "ADX 22, DI- above DI+: downtrend, trend forming"
-    },
-    "4h": {
-     "di_plus": 16.1,
-     "di_minus": 30.0,
-     "spread": -13.9,
-     "lead": "DI-",
-     "adx": 30.8,
-     "adx_prev": 30.8,
-     "adx_dir": "flat",
-     "side": -1,
-     "read": "ADX 31, DI- above DI+: downtrend, strong"
-    }
-   },
-   "mb_bias": "short"
-  },
-  {
-   "coin": "SOL",
-   "mid": 104.435,
-   "tfs": {
-    "15m": {
-     "di_plus": 23.1,
-     "di_minus": 21.8,
-     "spread": 1.3,
-     "lead": "DI+",
-     "adx": 9.4,
-     "adx_prev": 9.9,
-     "adx_dir": "falling",
-     "side": 0,
-     "read": "ADX 9, DI+ above DI-: weak / ranging"
-    },
-    "1h": {
-     "di_plus": 18.3,
-     "di_minus": 18.8,
-     "spread": -0.5,
-     "lead": "DI-",
-     "adx": 15.5,
-     "adx_prev": 16.6,
-     "adx_dir": "falling",
-     "side": 0,
-     "read": "ADX 16, DI- above DI+: weak / ranging"
-    },
-    "4h": {
-     "di_plus": 15.9,
-     "di_minus": 26.1,
-     "spread": -10.2,
-     "lead": "DI-",
-     "adx": 32.9,
-     "adx_prev": 33.6,
-     "adx_dir": "falling",
-     "side": -1,
-     "read": "ADX 33, DI- above DI+: downtrend, strong"
-    }
-   },
-   "mb_bias": "none"
-  },
-  {
-   "coin": "PUMP",
-   "mid": 0.004358,
-   "tfs": {
-    "15m": {
-     "di_plus": 14.8,
-     "di_minus": 22.9,
-     "spread": -8.1,
-     "lead": "DI-",
-     "adx": 18.4,
-     "adx_prev": 18.1,
-     "adx_dir": "rising",
-     "side": 0,
-     "read": "ADX 18, DI- above DI+: weak / ranging"
-    },
-    "1h": {
-     "di_plus": 20.3,
-     "di_minus": 22.4,
-     "spread": -2.1,
-     "lead": "DI-",
-     "adx": 21.3,
-     "adx_prev": 22.5,
-     "adx_dir": "falling",
-     "side": -1,
-     "read": "ADX 21, DI- above DI+: downtrend, trend forming"
-    },
-    "4h": {
-     "di_plus": 16.2,
-     "di_minus": 25.8,
-     "spread": -9.6,
-     "lead": "DI-",
-     "adx": 27.6,
-     "adx_prev": 27.9,
-     "adx_dir": "falling",
-     "side": -1,
-     "read": "ADX 28, DI- above DI+: downtrend, strong"
-    }
-   },
-   "mb_bias": "short"
-  }
- ]
+ "filter_note": "Manual trades only (bot trades hidden)"
 }
