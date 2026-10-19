@@ -1,0 +1,129 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Open positions · live</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b0e13;color:#d8dee9;font-family:"Segoe UI",Arial,sans-serif;font-size:13px}
+.g{color:#22c55e}.r{color:#ef4444}.mut{color:#7b8496}.mono{font-family:Consolas,monospace}
+#hdr{display:flex;align-items:center;gap:14px;padding:8px 12px;background:#121722;border-bottom:1px solid #222a38;position:sticky;top:0;z-index:5}
+#hdr h1{font-size:16px;margin:0}.pill{padding:4px 11px;border-radius:20px;font-weight:700;font-size:12px;background:#2a3140}
+a.btn,button{background:#1b2230;color:#cbd5e1;border:1px solid #334;border-radius:6px;padding:4px 10px;cursor:pointer;text-decoration:none;font-size:12px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:8px;padding:8px}
+@media(min-width:1700px){#grid{grid-template-columns:repeat(3,1fr)}}
+.card{background:#121722;border:1px solid #222a38;border-radius:8px;padding:8px;display:flex;flex-direction:column;min-width:0}
+.ch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.coin{font-size:18px;font-weight:800}
+.side{padding:2px 10px;border-radius:5px;font-weight:800;font-size:12px}.LONG{background:#14532d;color:#86efac}.SHORT{background:#7f1d1d;color:#fca5a5}.PEND{background:#1e3a8a;color:#bfdbfe}
+.tfs{margin-left:auto;display:flex;gap:3px}.tfs button{padding:1px 8px;font-weight:700}.tfs button.on{background:#2563eb;color:#fff}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px 10px;margin:6px 0;font-size:12px}.stats .l{color:#7b8496;font-size:10px;text-transform:uppercase;letter-spacing:.05em}.stats .v{font-family:Consolas,monospace;font-weight:700;font-size:13px}
+.cw{position:relative;height:380px}.cw canvas.ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+.empty{padding:40px;text-align:center;color:#7b8496;font-size:15px}
+</style></head><body>
+<div id="hdr"><h1>Open positions · Hyperliquid mainnet</h1><span class="pill mono" id="acct"></span><span class="pill" id="tot">-</span>
+<div style="flex:1"></div><span class="mut" id="upd">loading…</span><a class="btn" id="back" href="/">← Live board</a></div>
+<div id="grid"><div class="empty">Loading positions…</div></div>
+<div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders.
+Boxes = TradingView Long/Short Position style: green = entry → TP (reward), red = entry → SL (risk), starting at the fill time. Dotted orange = liquidation, dashed blue = resting entry limit (pending). Prices tick every 5s, candles reload every 30s, positions/orders re-discovered every 10s.</div>
+<script>
+const ADDR=new URLSearchParams(location.search).get("address")||"0x052091F7bc55779D8D83546D8B9BCf9A9956d541";
+const API="https://api.hyperliquid.xyz/info",DEXES=["","xyz"],TFMS={"5m":3e5,"15m":9e5,"1h":36e5,"4h":144e5};
+const $=id=>document.getElementById(id);$("acct").textContent=ADDR.slice(0,6)+"…"+ADDR.slice(-4);
+if(location.hostname.endsWith("github.io"))$("back").style.display="none";
+async function q(b){const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw new Error("HL "+r.status);return r.json()}
+const dp=v=>{const a=Math.abs(v);return a>=1000?1:a>=100?2:a>=1?3:a>=0.01?5:7};
+const fp=(v,d)=>v==null||isNaN(v)?"-":(+v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const money=v=>v==null?"-":(v<0?"−$":"+$")+Math.abs(v).toFixed(2);
+const tvSym=c=>c.includes(":")?null:"HYPERLIQUID:"+c+"USDC.P";
+let MIDS={},CARDS={},FILLS=[];
+
+async function discover(){
+  const pos=[],orders=[];
+  for(const d of DEXES){const ex=d?{dex:d}:{};
+    try{const ch=await q({type:"clearinghouseState",user:ADDR,...ex});for(const ap of ch.assetPositions||[]){const p=ap.position;if(Math.abs(+p.szi)>0)pos.push(p)}}catch(e){}
+    try{orders.push(...await q({type:"frontendOpenOrders",user:ADDR,...ex}))}catch(e){}}
+  try{FILLS=await q({type:"userFillsByTime",user:ADDR,startTime:Date.now()-30*864e5,aggregateByTime:false})}catch(e){}
+  const items={};
+  for(const p of pos){const szi=+p.szi,side=szi>0?"LONG":"SHORT",cls=szi>0?"A":"B";
+    const ro=orders.filter(o=>o.coin===p.coin&&o.reduceOnly&&o.side===cls);
+    const sl=ro.find(o=>(o.orderType||"").startsWith("Stop")),tp=ro.find(o=>(o.orderType||"").startsWith("Take"));
+    // fill time = first fill of the current position (walk back to where it opened from flat)
+    const fs=FILLS.filter(f=>f.coin===p.coin).sort((a,b)=>a.time-b.time);let t0=null;
+    for(let i=fs.length-1;i>=0;i--){const f=fs[i];const st=+f.startPosition;if(Math.abs(st)<1e-12||(st>0)!==(szi>0)){t0=f.time;break}}
+    items["P:"+p.coin]={key:"P:"+p.coin,coin:p.coin,kind:"pos",side,size:Math.abs(szi),entry:+p.entryPx,liq:p.liquidationPx?+p.liquidationPx:null,upnl:+p.unrealizedPnl,
+      sl:sl?+sl.triggerPx:null,tp:tp?+tp.triggerPx:null,t0:t0||Date.now(),lev:p.leverage?`${p.leverage.value}x ${p.leverage.type}`:""}}
+  const pend=orders.filter(o=>!o.reduceOnly&&!o.isTrigger);
+  for(const o of pend){const k="P:"+o.coin; const kids=o.children||[];
+    const pe={px:+o.limitPx,sz:+o.sz,side:o.side==="B"?"LONG":"SHORT",sl:(kids.find(c=>(c.orderType||"").startsWith("Stop"))||{}).triggerPx,tp:(kids.find(c=>(c.orderType||"").startsWith("Take"))||{}).triggerPx,t:o.timestamp};
+    if(items[k])(items[k].pend??=[]).push(pe);
+    else{items["O:"+o.coin]??={key:"O:"+o.coin,coin:o.coin,kind:"pend",side:pe.side,size:pe.sz,entry:pe.px,sl:pe.sl?+pe.sl:null,tp:pe.tp?+pe.tp:null,t0:o.timestamp,pend:[]};items["O:"+o.coin].pend.push(pe)}}
+  return items}
+
+function makeCard(it){
+  const el=document.createElement("div");el.className="card";el.innerHTML=`<div class="ch"><span class="coin">${it.coin.replace("xyz:","")}${it.coin.includes(":")?' <span class="mut" style="font-size:11px">xyz</span>':""}</span><span class="side"></span><span class="mut lev"></span>
+   ${tvSym(it.coin)?`<a class="btn" target="_blank" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(it.coin))}">Open in TradingView ↗</a>`:""}
+   <span class="tfs">${Object.keys(TFMS).map(t=>`<button data-tf="${t}">${t}</button>`).join("")}</span></div><div class="stats"></div><div class="cw"><canvas class="ov"></canvas></div>`;
+  $("grid").appendChild(el);const cw=el.querySelector(".cw");
+  const chart=LightweightCharts.createChart(cw,{autoSize:true,layout:{background:{color:"#05070a"},textColor:"#9aa4b5",fontSize:11},grid:{vertLines:{color:"rgba(255,255,255,.04)"},horzLines:{color:"rgba(255,255,255,.04)"}},
+    rightPriceScale:{borderColor:"#222a38",scaleMargins:{top:.08,bottom:.08}},timeScale:{borderColor:"#222a38",timeVisible:true,secondsVisible:false,rightOffset:8},crosshair:{mode:0},
+    localization:{timeFormatter:t=>new Date(t*1000).toLocaleString("en-CA",{timeZone:"America/Toronto",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false})}});
+  const s=chart.addCandlestickSeries({upColor:"#22c55e",downColor:"#ef4444",borderVisible:false,wickUpColor:"#22c55e",wickDownColor:"#ef4444"});
+  s.applyOptions({autoscaleInfoProvider:orig=>{const r=orig();const it=C.it;const ps=[it.entry,it.sl,it.tp,...(it.pend||[]).map(p=>p.px)].filter(v=>v!=null&&!isNaN(v)).map(Number);
+    if(!r||!ps.length)return r;const pr=r.priceRange;const lo=Math.min(pr.minValue,...ps),hi=Math.max(pr.maxValue,...ps),pad=(hi-lo)*0.04;return {priceRange:{minValue:lo-pad,maxValue:hi+pad},margins:r.margins}}});
+  const C={el,chart,s,cw,ov:el.querySelector("canvas.ov"),tf:localStorage["ptf_"+it.coin]||"15m",lines:[],bars:[],it};
+  el.querySelectorAll(".tfs button").forEach(b=>b.onclick=()=>{C.tf=b.dataset.tf;localStorage["ptf_"+it.coin]=C.tf;loadCandles(C,true)});
+  chart.timeScale().subscribeVisibleLogicalRangeChange(()=>drawBox(C));new ResizeObserver(()=>drawBox(C)).observe(cw);
+  return C}
+
+function setLines(C){const it=C.it,s=C.s;C.lines.forEach(l=>s.removePriceLine(l));C.lines=[];
+  const d=dp(it.entry),L=(price,color,title,style=0,w=1)=>{if(price!=null&&!isNaN(price))C.lines.push(s.createPriceLine({price:+price,color,lineWidth:w,lineStyle:style,axisLabelVisible:true,title}))};
+  if(it.kind==="pos"){L(it.entry,"#e5e7eb","ENTRY",0,2);L(it.sl,"#ef4444","SL",0,1);L(it.tp,"#22c55e","TP",0,1);L(it.liq,"#f97316","LIQ",1,1)}
+  else{L(it.sl,"#ef4444","SL",2,1);L(it.tp,"#22c55e","TP",2,1)}
+  (it.pend||[]).forEach(p=>L(p.px,"#60a5fa",`PENDING ${p.side} ${p.sz}`,2,2))}
+
+function drawBox(C){const cv=C.ov,r=C.cw.getBoundingClientRect(),dpr=window.devicePixelRatio||1;cv.width=r.width*dpr;cv.height=r.height*dpr;cv.style.width=r.width+"px";cv.style.height=r.height+"px";
+  const x=cv.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,r.width,r.height);const it=C.it;if(!C.bars.length)return;
+  const ts=C.chart.timeScale(),tfS=TFMS[C.tf]/1000,t0=Math.floor(it.t0/1000/tfS)*tfS;
+  let x0=ts.timeToCoordinate(t0);if(x0==null){const first=C.bars[0].time;x0=t0<first?0:null}if(x0==null)return;
+  const plotW=r.width-C.chart.priceScale("right").width(),x1=plotW;if(x1<=x0)return;
+  const y=p=>C.s.priceToCoordinate(p),ye=y(it.entry);if(ye==null)return;
+  const box=(p,fill,stroke)=>{if(p==null)return;const yp=y(p);if(yp==null)return;x.fillStyle=fill;x.fillRect(x0,Math.min(ye,yp),x1-x0,Math.abs(yp-ye));x.strokeStyle=stroke;x.lineWidth=1;x.strokeRect(x0+.5,Math.min(ye,yp)+.5,x1-x0-1,Math.abs(yp-ye)-1)};
+  const dash=it.kind==="pend";if(dash)x.setLineDash([4,3]);
+  box(it.tp,"rgba(34,197,94,.16)","rgba(34,197,94,.55)");box(it.sl,"rgba(239,68,68,.16)","rgba(239,68,68,.55)");x.setLineDash([]);
+  // labels like TV: target / stop with % and R
+  x.font="bold 11px Segoe UI,Arial";const lab=(p,txt,col)=>{if(p==null)return;const yp=y(p);if(yp==null)return;const w=x.measureText(txt).width+10,cx=x0+(x1-x0)/2-w/2,cy=it.side==="LONG"?(p>it.entry?yp-18:yp+3):(p<it.entry?yp+3:yp-18);x.fillStyle=col;x.fillRect(cx,cy,w,15);x.fillStyle="#fff";x.fillText(txt,cx+5,cy+11)};
+  const pc=p=>((p-it.entry)/it.entry*100).toFixed(2)+"%",rr=it.sl&&it.tp?Math.abs(it.tp-it.entry)/Math.abs(it.entry-it.sl):null;
+  lab(it.tp,`Target ${fp(it.tp,dp(it.tp))} (${pc(it.tp)})${rr?` · ${rr.toFixed(2)}R`:""}`,"rgba(22,163,74,.9)");lab(it.sl,`Stop ${fp(it.sl,dp(it.sl))} (${pc(it.sl)})`,"rgba(220,38,38,.9)");
+  // entry marker at fill bar
+  x.fillStyle="#e5e7eb";x.beginPath();x.arc(x0,ye,3.5,0,7);x.fill()}
+
+function stats(C){const it=C.it,m=MIDS[it.coin]?+MIDS[it.coin]:null,el=C.el,d=dp(it.entry);el.querySelector(".side").className="side "+(it.kind==="pend"?"PEND":it.side);
+  el.querySelector(".side").textContent=it.kind==="pend"?"PENDING "+it.side:it.side;el.querySelector(".lev").textContent=it.lev||"";
+  const sgn=it.side==="LONG"?1:-1,up=it.kind==="pos"&&m?sgn*(m-it.entry)*it.size:null,risk=it.sl?Math.abs(it.entry-it.sl)*it.size:null;
+  const dist=p=>p==null||!m?"-":`${((p-m)/m*100>=0?"+":"")}${((p-m)/m*100).toFixed(2)}%`;
+  const cell=(l,v,c="")=>`<div><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`;
+  el.querySelector(".stats").innerHTML=[cell("Size",it.size.toLocaleString("en-US",{maximumFractionDigits:6})),cell("Entry",fp(it.entry,d)),cell("Mark",fp(m,d)),
+   cell("uPnL",up==null?"-":money(up),up>0?"g":up<0?"r":""),cell("R multiple",up!=null&&risk?(up/risk>=0?"+":"")+(up/risk).toFixed(2)+"R":"-",up>0?"g":up<0?"r":""),
+   cell("To SL",`${fp(it.sl,dp(it.sl||1))} <span class=mut>${dist(it.sl)}</span>`,"r"),cell("To TP",`${fp(it.tp,dp(it.tp||1))} <span class=mut>${dist(it.tp)}</span>`,"g"),
+   cell(it.kind==="pos"?"Liq":"Risk $",it.kind==="pos"?fp(it.liq,d):(risk?"$"+risk.toFixed(2):"-"),"mut")].join("");return up}
+
+async function loadCandles(C,fit){C.el.querySelectorAll(".tfs button").forEach(b=>b.classList.toggle("on",b.dataset.tf===C.tf));
+  const ms=TFMS[C.tf],now=Date.now();
+  try{const raw=await q({type:"candleSnapshot",req:{coin:C.it.coin,interval:C.tf,startTime:now-300*ms,endTime:now}});
+    C.bars=raw.map(k=>({time:Math.floor(k.t/1000),open:+k.o,high:+k.h,low:+k.l,close:+k.c}));C.s.setData(C.bars);
+    C.s.applyOptions({priceFormat:{type:"price",precision:dp(C.it.entry),minMove:Math.pow(10,-dp(C.it.entry))}});
+    if(fit){const n=C.bars.length;const tb=Math.floor(C.it.t0/ms);const from=Math.max(0,Math.min(n-60,n-1-Math.round((now/ms)-tb)-15));C.chart.timeScale().setVisibleLogicalRange({from,to:n+8})}
+    drawBox(C)}catch(e){console.warn(e)}}
+
+function tick(C){const m=MIDS[C.it.coin];if(!m||!C.bars.length)return;const b=C.bars[C.bars.length-1],ms=TFMS[C.tf]/1000,t=Math.floor(Date.now()/1000/ms)*ms,p=+m;
+  if(t>b.time){const nb={time:t,open:b.close,high:Math.max(b.close,p),low:Math.min(b.close,p),close:p};C.bars.push(nb);C.s.update(nb)}else{b.close=p;b.high=Math.max(b.high,p);b.low=Math.min(b.low,p);C.s.update(b)}}
+
+async function mids(){for(const d of DEXES){try{Object.assign(MIDS,await q(d?{type:"allMids",dex:d}:{type:"allMids"}))}catch(e){}}}
+function totals(){let t=0;for(const C of Object.values(CARDS)){const u=stats(C);if(u!=null)t+=u}const n=Object.values(CARDS).filter(c=>c.it.kind==="pos").length;
+  $("tot").innerHTML=`${n} open · uPnL <b class="${t>=0?"g":"r"}">${money(t)}</b>`;$("upd").textContent="live · "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
+async function sync(){let items;try{items=await discover()}catch(e){$("upd").textContent="API error";return}
+  if(!Object.keys(items).length){Object.values(CARDS).forEach(C=>{C.chart.remove();C.el.remove()});CARDS={};$("grid").innerHTML='<div class="empty">Flat — no open positions or resting entries.</div>';return}
+  $("grid").querySelector(".empty")?.remove();
+  for(const k of Object.keys(CARDS))if(!items[k]){CARDS[k].chart.remove();CARDS[k].el.remove();delete CARDS[k]}
+  for(const [k,it] of Object.entries(items)){if(!CARDS[k]){CARDS[k]=makeCard(it);CARDS[k].it=it;setLines(CARDS[k]);await loadCandles(CARDS[k],true)}else{const C=CARDS[k];const ch=JSON.stringify([C.it.entry,C.it.sl,C.it.tp,C.it.liq,C.it.size,C.it.pend]),nw=JSON.stringify([it.entry,it.sl,it.tp,it.liq,it.size,it.pend]);C.it=it;if(ch!==nw){setLines(C);drawBox(C)}}}
+  totals()}
+(async()=>{await mids();await sync();setInterval(async()=>{await mids();Object.values(CARDS).forEach(tick);totals();Object.values(CARDS).forEach(drawBox)},5000);
+  setInterval(sync,10000);setInterval(()=>Object.values(CARDS).forEach(C=>loadCandles(C,false)),30000)})();
+</script></body></html>
