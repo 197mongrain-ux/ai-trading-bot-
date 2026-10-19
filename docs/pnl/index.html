@@ -3,193 +3,294 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>HL Testnet · PnL since Mon 9am ET</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+<title>Hyperliquid Mainnet · PnL Calendar</title>
 <style>
-:root {
-  --bg:#000; --bg2:#0b0b0b; --panel:#0e0e0e; --border:#1a1a1a; --border2:#262626;
-  --text:#e8e8e8; --muted:#8b8b8b; --dim:#5c5c5c;
-  --green:#00c805; --red:#ff4d4f; --amber:#e6c07b;
-  --mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
-  --sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif;
-}
+:root{--bg:#000;--bg2:#0b0b0b;--panel:#0e0e0e;--border:#1a1a1a;--border2:#262626;--text:#e8e8e8;--muted:#8b8b8b;--dim:#5c5c5c;
+--green:#00c805;--red:#ff4d4f;--amber:#e6c07b;--accent:#6ea8fe;
+--mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;--sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.dim{color:var(--dim)}.amber{color:var(--amber)}
 .topbar{display:flex;align-items:center;gap:1rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:20;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:.55rem;min-width:180px}
-.mark{color:var(--green);font-size:1.2rem}
-.brand-title{font-weight:650;font-size:14px}
-.brand-sub{color:var(--muted);font-size:10px}
+.brand{display:flex;align-items:center;gap:.55rem}.mark{color:var(--green);font-size:1.2rem}
+.brand-title{font-weight:650;font-size:14px}.brand-sub{color:var(--muted);font-size:10px;font-family:var(--mono)}
 .badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;border:1px solid #1a5c2a;color:var(--green);background:#06140a}
-.spacer{flex:1}
-.meta{color:var(--muted);font-size:11px}
-.wrap{max-width:1180px;margin:0 auto;padding:1rem 1.1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
+.badge.warn{border-color:#7a5a1a;color:var(--amber);background:#140e06}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;box-shadow:0 0 6px var(--green)}
+.dot.stale{background:var(--amber);box-shadow:none}
+.spacer{flex:1}.meta{color:var(--muted);font-size:11px;font-family:var(--mono)}
+button{font-family:var(--mono);font-size:11px;background:#111;color:var(--text);border:1px solid var(--border2);border-radius:5px;padding:.3rem .6rem;cursor:pointer}
+button:hover{border-color:#3a3a3a;background:#161616}
+.wrap{max-width:1240px;margin:0 auto;padding:1rem 1.1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.65rem}
-@media (max-width:960px){.kpis{grid-template-columns:repeat(3,1fr)}}
-@media (max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:960px){.kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
 .kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem .85rem}
 .kpi .lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.25rem}
-.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:650}
-.kpi .sub{color:var(--dim);font-size:10px;margin-top:.2rem;font-family:var(--mono)}
-.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:.85rem}
-@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:650}.kpi .sub{color:var(--dim);font-size:10px;margin-top:.2rem;font-family:var(--mono)}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.card-h{display:flex;align-items:center;justify-content:space-between;padding:.65rem .9rem;border-bottom:1px solid var(--border);background:#0a0a0a}
+.card-h{display:flex;align-items:center;gap:.6rem;padding:.65rem .9rem;border-bottom:1px solid var(--border);background:#0a0a0a}
 .card-h h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .card-b{padding:.85rem .9rem}
-.chart-box{height:260px;position:relative}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) 120px;gap:6px}
+@media(max-width:820px){.cal{grid-template-columns:repeat(7,minmax(0,1fr))}.wk{display:none!important}}
+.dow{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:0 .3rem .2rem}
+.cell{min-height:92px;border:1px solid var(--border);border-radius:6px;background:#0a0a0a;padding:.45rem .5rem;display:flex;flex-direction:column;gap:.2rem;position:relative}
+.cell.out{opacity:.25}.cell.empty .pnl{color:var(--dim)}
+.cell.has{cursor:pointer}.cell.has:hover{border-color:#3a3a3a;background:#111}
+.cell.win{background:linear-gradient(180deg,#04160a 0%,#0a0a0a 100%);border-color:#123d1c}
+.cell.loss{background:linear-gradient(180deg,#1a0809 0%,#0a0a0a 100%);border-color:#3d1418}
+.cell.today{outline:1px solid var(--accent);outline-offset:-1px}
+.cell .dn{font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+.cell.today .dn b{color:var(--accent)}
+.cell .pnl{font-family:var(--mono);font-size:16px;font-weight:650;margin-top:auto}
+.cell .cnt{font-family:var(--mono);font-size:10px;color:var(--dim)}
+.cell .live{font-family:var(--mono);font-size:10px}
+.wk{border:1px dashed var(--border2);border-radius:6px;padding:.45rem .5rem;display:flex;flex-direction:column;justify-content:center;gap:.15rem}
+.wk .l{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.07em}.wk .v{font-family:var(--mono);font-size:14px;font-weight:650}
 table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{padding:.45rem .55rem;border-bottom:1px solid var(--border);text-align:left}
-th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#0a0a0a;position:sticky;top:0}
-td.num,th.num{text-align:right;font-family:var(--mono)}
-tr:hover td{background:#111}
+th,td{padding:.42rem .5rem;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#0a0a0a}
+td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#111}
 .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:.12rem .4rem;border-radius:999px;border:1px solid var(--border2)}
-.pill.win{color:var(--green);border-color:#1a5c2a;background:#06140a}
-.pill.loss{color:var(--red);border-color:#7a3338;background:#1a0a0c}
-.pill.be{color:var(--amber);border-color:#7a5a1a;background:#140e06}
-.footer{color:var(--dim);font-size:11px;line-height:1.45}
-.footer code{font-family:var(--mono);font-size:10px;color:var(--muted)}
-.stat-row{display:flex;flex-wrap:wrap;gap:.75rem 1.25rem}
-.stat-row .s .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
-.stat-row .s .v{font-family:var(--mono);font-size:14px;font-weight:600;margin-top:.1rem}
-.empty{color:var(--dim);padding:1rem 0;text-align:center}
+.pill.win{color:var(--green);border-color:#1a5c2a;background:#06140a}.pill.loss{color:var(--red);border-color:#7a3338;background:#1a0a0c}
+.pill.be,.pill.open{color:var(--amber);border-color:#7a5a1a;background:#140e06}
+.side-long{color:var(--green)}.side-short{color:var(--red)}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none}.ov.on{display:block}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(1180px,100%);background:#070707;border-left:1px solid var(--border2);z-index:50;transform:translateX(100%);transition:transform .2s ease;display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.dr-h{display:flex;align-items:center;gap:.8rem;padding:.85rem 1rem;border-bottom:1px solid var(--border)}
+.dr-h h3{margin:0;font-size:15px}.dr-b{overflow:auto;padding:1rem;display:flex;flex-direction:column;gap:1rem}
+.stat-row{display:flex;flex-wrap:wrap;gap:.75rem 1.4rem}
+.stat-row .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}.stat-row .v{font-family:var(--mono);font-size:14px;font-weight:600;margin-top:.1rem}
+.tbl{overflow-x:auto;border:1px solid var(--border);border-radius:6px}
+.drawer th,.drawer td{padding:.38rem .4rem;font-size:11.5px}
+.drawer .rsub{display:block;font-size:9.5px}
+.empty{color:var(--dim);padding:1rem;text-align:center}
+.footer{color:var(--dim);font-size:11px;line-height:1.5}
+.nav{display:flex;gap:.4rem;align-items:center;margin-left:auto}
+.mon{font-family:var(--mono);font-size:13px;min-width:120px;text-align:center}
 </style>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand"><span class="mark">◆</span><div>
-    <div class="brand-title" id="title">PnL desk</div>
-    <div class="brand-sub" id="subtitle">since Mon 9:00 ET · Hyperliquid testnet</div>
-  </div></div>
-  <span class="badge" id="netBadge">TESTNET</span>
+<div class="topbar">
+  <div class="brand"><span class="mark">◆</span><div><div class="brand-title">PnL Calendar · Chris Mongrain</div><div class="brand-sub" id="addr"></div></div></div>
+  <span class="badge">HL MAINNET</span>
+  <span class="badge warn" id="srcBadge">SNAPSHOT</span>
   <div class="spacer"></div>
-  <div class="meta mono" id="generated">—</div>
-</header>
-<main class="wrap">
-  <section class="kpis" id="kpis"></section>
-  <section class="grid2">
-    <div class="card"><div class="card-h"><h2>Equity curve</h2><span class="meta mono" id="eqHint">start → now</span></div>
-      <div class="card-b"><div class="chart-box"><canvas id="eqChart"></canvas></div></div></div>
-    <div class="card"><div class="card-h"><h2>Session breakdown</h2></div>
-      <div class="card-b"><div class="stat-row" id="breakdown"></div>
-        <div style="height:180px;margin-top:1rem"><canvas id="wlChart"></canvas></div></div></div>
-  </section>
-  <section class="card">
-    <div class="card-h"><h2>Closed trades</h2><span class="meta mono" id="tradeCount">0</span></div>
-    <div class="card-b" style="padding:0;overflow:auto;max-height:420px">
-      <table><thead><tr>
-        <th>When (ET)</th><th>Symbol</th><th>Side</th><th>Result</th>
-        <th class="num">PnL</th><th class="num">Fees</th><th class="num">Net</th><th class="num">Size</th>
-      </tr></thead><tbody id="trades"></tbody></table>
-    </div>
-  </section>
-  <section class="card"><div class="card-h"><h2>Open positions</h2></div><div class="card-b" id="opens"></div></section>
-  <p class="footer" id="notes"></p>
-</main>
+  <span class="meta"><span class="dot stale" id="dot"></span><span id="upd">—</span></span>
+  <button id="refresh">↻ Refresh</button>
+</div>
+<div class="wrap">
+  <div class="kpis" id="kpis"></div>
+  <div class="card">
+    <div class="card-h"><h2>Calendar · America/Toronto</h2>
+      <div class="nav"><button id="prev">‹</button><span class="mon" id="monLbl"></span><button id="next">›</button><button id="todayBtn">Today</button></div></div>
+    <div class="card-b"><div class="cal" id="cal"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><h2>Open positions &amp; resting entries</h2></div>
+    <div class="card-b" id="openBox"></div>
+  </div>
+  <div class="footer" id="foot"></div>
+</div>
+<div class="ov" id="ov"></div>
+<aside class="drawer" id="drawer"><div class="dr-h"><h3 id="drTitle"></h3><div class="spacer"></div><button id="drClose">✕ Close</button></div><div class="dr-b" id="drBody"></div></aside>
+
 <script>
-const BOARD = {"title":"PnL board since Monday 9 AM ET","since_et":"2026-09-28T09:00:00-04:00","generated_et":"2026-10-03T14:28:56.502029-04:00","starting_equity":657.0,"network":"testnet","journal_path":"(local journal)","money_source":"hl_fills","hl":{"ok":true,"reason":null,"address_redacted":"0x0520\u2026d541","fills_n":352,"api":"https://api.hyperliquid-testnet.xyz"},"summary":{"trades":27,"wins":11,"losses":16,"breakeven":0,"win_rate_pct":40.7,"gross_pnl":-30.302388,"fees":23.610778,"funding":2.570214,"net_pnl":-51.342952,"vs_starting_usd":-51.342952,"vs_starting_pct":-7.815,"equity_now_spot_usdc":615.667454,"equity_vs_starting_usd":-41.332546,"equity_vs_starting_pct":-6.291},"closed_trades":[{"symbol":"BNB","dir":"Close Long","pnl":0.69611,"fees":0.052212,"fills":1,"sz":0.151,"closed_ts":1790610937.928,"result":"WIN","source":"hl_fills"},{"symbol":"ICP","dir":"Close Short","pnl":-5.628714,"fees":0.383319,"fills":3,"sz":287.88,"closed_ts":1790611218.14,"result":"LOSS","source":"hl_fills"},{"symbol":"BLUR","dir":"Close Long","pnl":-3.124216,"fees":0.517472,"fills":4,"sz":57406.0,"closed_ts":1790619631.955,"result":"LOSS","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-6.72677,"fees":0.981304,"fills":6,"sz":0.8176,"closed_ts":1790624234.745,"result":"LOSS","source":"hl_fills"},{"symbol":"ATOM","dir":"Close Long","pnl":1.297982,"fees":0.187713,"fills":3,"sz":240.68,"closed_ts":1790626830.454,"result":"WIN","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-5.2666,"fees":0.927285,"fills":1,"sz":0.7745,"closed_ts":1790633165.919,"result":"LOSS","source":"hl_fills"},{"symbol":"BTC","dir":"Close Long","pnl":8.56817,"fees":0.858777,"fills":5,"sz":0.0227,"closed_ts":1790636848.735,"result":"WIN","source":"hl_fills"},{"symbol":"HBAR","dir":"Close Long","pnl":0.43656,"fees":0.033015,"fills":1,"sz":642.0,"closed_ts":1790688302.173,"result":"WIN","source":"hl_fills"},{"symbol":"HBAR","dir":"Close Long","pnl":-0.24192,"fees":0.029587,"fills":1,"sz":576.0,"closed_ts":1790688782.49,"result":"LOSS","source":"hl_fills"},{"symbol":"SUI","dir":"Close Long","pnl":-0.08775,"fees":0.011785,"fills":1,"sz":22.5,"closed_ts":1790688788.419,"result":"LOSS","source":"hl_fills"},{"symbol":"KAITO","dir":"Close Long","pnl":-11.448405,"fees":0.294126,"fills":4,"sz":1917.0,"closed_ts":1790695442.152,"result":"LOSS","source":"hl_fills"},{"symbol":"ETH","dir":"Close Short","pnl":0.3266,"fees":0.027687,"fills":1,"sz":0.023,"closed_ts":1790717191.199,"result":"WIN","source":"hl_fills"},{"symbol":"BTC","dir":"Close Long","pnl":-0.85423,"fees":0.500359,"fills":5,"sz":0.01328,"closed_ts":1790727001.666,"result":"LOSS","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":10.1574,"fees":1.146347,"fills":5,"sz":21.39,"closed_ts":1790740635.667,"result":"WIN","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-15.11107,"fees":1.324005,"fills":5,"sz":1.0991,"closed_ts":1790778200.765,"result":"LOSS","source":"hl_fills"},{"symbol":"ONDO","dir":"Close Long","pnl":-17.05086,"fees":0.622193,"fills":5,"sz":2807.0,"closed_ts":1790793398.305,"result":"LOSS","source":"hl_fills"},{"symbol":"ETH","dir":"Close Long","pnl":-1.12014,"fees":0.32092,"fills":1,"sz":0.2667,"closed_ts":1790795715.025,"result":"LOSS","source":"hl_fills"},{"symbol":"BTC","dir":"Close Short","pnl":18.20755,"fees":2.844842,"fills":1,"sz":0.07555,"closed_ts":1790811206.744,"result":"WIN","source":"hl_fills"},{"symbol":"BTC","dir":"Close Short","pnl":-2.7218,"fees":3.133499,"fills":2,"sz":0.08324,"closed_ts":1790825951.297,"result":"LOSS","source":"hl_fills"},{"symbol":"AAVE","dir":"Close Short","pnl":0.8632,"fees":0.078895,"fills":1,"sz":1.04,"closed_ts":1790884656.057,"result":"WIN","source":"hl_fills"},{"symbol":"AAVE","dir":"Close Short","pnl":-9.0643,"fees":0.940999,"fills":5,"sz":12.29,"closed_ts":1790884866.056,"result":"LOSS","source":"hl_fills"},{"symbol":"SOL","dir":"Close Long","pnl":8.5016,"fees":1.088584,"fills":11,"sz":20.37,"closed_ts":1790904033.894,"result":"WIN","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":-0.5369,"fees":0.084355,"fills":4,"sz":1.51,"closed_ts":1790948231.065,"result":"LOSS","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":0.328615,"fees":0.086877,"fills":4,"sz":1.56,"closed_ts":1790949119.715,"result":"WIN","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":-0.7689,"fees":0.216609,"fills":12,"sz":4.01,"closed_ts":1790984709.5,"result":"LOSS","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":0.1428,"fees":0.01506,"fills":1,"sz":0.28,"closed_ts":1790985658.217,"result":"WIN","source":"hl_fills"},{"symbol":"SOL","dir":"Close Short","pnl":-0.0764,"fees":0.994413,"fills":10,"sz":18.39,"closed_ts":1790998528.774,"result":"LOSS","source":"hl_fills"}],"journal_closes_enriched":[{"trade_id":"899293c7","symbol":"BNB","side":"long","pnl":0.75106,"fee":0.063946,"reason":"take_profit","closed_ts":1790610932.8762608,"closed_et":"2026-09-28 11:55:32 ET","result":"WIN","source":"journal"},{"trade_id":"1ba6ed9b","symbol":"ICP","side":"short","pnl":-5.420955,"fee":0.391088,"reason":"kill switch","closed_ts":1790611214.8104095,"closed_et":"2026-09-28 12:00:14 ET","result":"LOSS","source":"journal"},{"trade_id":"c2749bc9","symbol":"0G","side":"long","pnl":0.0,"fee":0.006344,"reason":"exchange_flat","closed_ts":1790618789.899328,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"2a544201","symbol":"BTC","side":"short","pnl":0.0,"fee":0.117937,"reason":"tp","closed_ts":1790618789.9013393,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":null,"symbol":"KAITO","side":"long","pnl":0.0,"fee":0.0,"reason":"sl","closed_ts":1790618789.9023347,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"1f5b6752","symbol":"ETH","side":"short","pnl":0.0,"fee":0.148024,"reason":"exchange_flat","closed_ts":1790618789.9023347,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":"01d94a66","symbol":"MORPHO","side":"short","pnl":0.0,"fee":0.002763,"reason":"exchange_flat","closed_ts":1790618789.9033349,"closed_et":"2026-09-28 14:06:29 ET","result":"BE","source":"journal"},{"trade_id":null,"symbol":"BLUR","side":"long","pnl":-3.124216,"fee":0.517472,"reason":"exchange_flat","closed_ts":1790619655.161162,"closed_et":"2026-09-28 14:20:55 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"7b945784","symbol":"ETH","side":"long","pnl":-7.808221,"fee":1.309372,"reason":"sl","closed_ts":1790624248.0829701,"closed_et":"2026-09-28 15:37:28 ET","result":"LOSS","source":"journal"},{"trade_id":"ca6faeb4","symbol":"ATOM","side":"long","pnl":1.297982,"fee":0.187713,"reason":"exchange_flat","closed_ts":1790626835.0264409,"closed_et":"2026-09-28 16:20:35 ET","result":"WIN","source":"journal+hl"},{"trade_id":"ceb02e9a","symbol":"ETH","side":"long","pnl":-5.2666,"fee":0.927285,"reason":"sl","closed_ts":1790633168.2659514,"closed_et":"2026-09-28 18:06:08 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"1809462b","symbol":"BTC","side":"long","pnl":8.56817,"fee":0.858777,"reason":"exchange_flat","closed_ts":1790636850.1956823,"closed_et":"2026-09-28 19:07:30 ET","result":"WIN","source":"journal+hl"},{"trade_id":"91b8e7a5","symbol":"HBAR","side":"long","pnl":0.499801,"fee":0.043999,"reason":"tp","closed_ts":1790688313.5039895,"closed_et":"2026-09-29 09:25:13 ET","result":"WIN","source":"journal"},{"trade_id":null,"symbol":"HBAR","side":"long","pnl":-0.24192,"fee":0.029587,"reason":"exchange_flat","closed_ts":1790688783.956487,"closed_et":"2026-09-29 09:33:03 ET","result":"LOSS","source":"journal+hl"},{"trade_id":null,"symbol":"SUI","side":"long","pnl":-0.08775,"fee":0.011785,"reason":"exchange_flat","closed_ts":1790688791.2109904,"closed_et":"2026-09-29 09:33:11 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"3835fbb4","symbol":"KAITO","side":"long","pnl":-11.448405,"fee":0.294126,"reason":"sl","closed_ts":1790695443.9280202,"closed_et":"2026-09-29 11:24:03 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"0d5e9ba8","symbol":"ETH","side":"long","pnl":0.3266,"fee":0.027687,"reason":"exchange_flat","closed_ts":1790717191.7449775,"closed_et":"2026-09-29 17:26:31 ET","result":"WIN","source":"journal+hl"},{"trade_id":"ceab8a86","symbol":"BTC","side":"long","pnl":-1.022166,"fee":0.383805,"reason":"sl","closed_ts":1790727011.7311616,"closed_et":"2026-09-29 20:10:11 ET","result":"LOSS","source":"journal"},{"trade_id":"52e98de5","symbol":"SOL","side":"short","pnl":10.404877,"fee":1.170833,"reason":"exchange_flat","closed_ts":1790740635.580633,"closed_et":"2026-09-29 23:57:15 ET","result":"WIN","source":"journal"},{"trade_id":"4344fd2d","symbol":"ETH","side":"long","pnl":-16.931004,"fee":1.395787,"reason":"sl","closed_ts":1790778207.6911762,"closed_et":"2026-09-30 10:23:27 ET","result":"LOSS","source":"journal"},{"trade_id":"f32f116f","symbol":"ONDO","side":"long","pnl":-11.965047,"fee":0.654087,"reason":"exchange_flat","closed_ts":1790793401.5252993,"closed_et":"2026-09-30 14:36:41 ET","result":"LOSS","source":"journal"},{"trade_id":"067fc668","symbol":"ETH","side":"long","pnl":-1.427731,"fee":0.428068,"reason":"exchange_flat","closed_ts":1790795724.062683,"closed_et":"2026-09-30 15:15:24 ET","result":"LOSS","source":"journal"},{"trade_id":"a9e91884","symbol":"BTC","side":"short","pnl":15.559226,"fee":2.86993,"reason":"exchange_flat","closed_ts":1790811212.896303,"closed_et":"2026-09-30 19:33:32 ET","result":"WIN","source":"journal"},{"trade_id":"81762d79","symbol":"BTC","side":"short","pnl":-5.047657,"fee":3.144677,"reason":"sl","closed_ts":1790825953.8135278,"closed_et":"2026-09-30 23:39:13 ET","result":"LOSS","source":"journal"},{"trade_id":"161e3692","symbol":"AAVE","side":"short","pnl":0.836328,"fee":0.1053,"reason":"tp","closed_ts":1790884664.7930083,"closed_et":"2026-10-01 15:57:44 ET","result":"WIN","source":"journal"},{"trade_id":null,"symbol":"AAVE","side":"short","pnl":-9.0643,"fee":0.940999,"reason":"sl","closed_ts":1790884874.5087576,"closed_et":"2026-10-01 16:01:14 ET","result":"LOSS","source":"journal+hl"},{"trade_id":"b64add02","symbol":"SOL","side":"long","pnl":9.299261,"fee":1.096539,"reason":"sl","closed_ts":1790904036.8097193,"closed_et":"2026-10-01 21:20:36 ET","result":"WIN","source":"journal"},{"trade_id":"5befc346","symbol":"SOL","side":"short","pnl":-0.371144,"fee":0.112283,"reason":"exchange_flat","closed_ts":1790948233.4547899,"closed_et":"2026-10-02 09:37:13 ET","result":"LOSS","source":"journal"},{"trade_id":"73fccfe5","symbol":"SOL","side":"short","pnl":0.287542,"fee":0.115867,"reason":"exchange_flat","closed_ts":1790949122.364486,"closed_et":"2026-10-02 09:52:02 ET","result":"WIN","source":"journal"},{"trade_id":"f4fa2dc6","symbol":"SOL","side":"short","pnl":0.373466,"fee":0.237397,"reason":"sl","closed_ts":1790984712.3817308,"closed_et":"2026-10-02 19:45:12 ET","result":"WIN","source":"journal"},{"trade_id":"6a88d0fc","symbol":"SOL","side":"short","pnl":0.094124,"fee":0.020118,"reason":"exchange_flat","closed_ts":1790985663.0283132,"closed_et":"2026-10-02 20:01:03 ET","result":"WIN","source":"journal"},{"trade_id":"7a2a0631","symbol":"SOL","side":"short","pnl":2.685271,"fee":1.050586,"reason":"sl","closed_ts":1790998532.2089102,"closed_et":"2026-10-02 23:35:32 ET","result":"WIN","source":"journal"}],"open_positions":[],"journal_open_count":46,"notes":["Win rate uses closed round-trips only (HL Close-fill clusters when available).","Gross PnL = sum of HL closedPnl (or journal close/scale_out pnl fallback).","Net PnL = gross - fees + journal funding payments since window start.","Open positions prefer live HL user_state; journal open book may retain stale rows.","STARTING_EQUITY is the configured baseline (~657), not necessarily Mon 9am spot."]};
-function fmtUsd(n, signed=false){
-  if(n==null || Number.isNaN(n)) return "—";
-  const v = Number(n);
-  const s = (signed && v>0 ? "+" : "") + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-  return "$"+s;
+const SNAPSHOT = {"address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541", "network": "mainnet", "generated_ms": 1792419061117, "generated_et": "2026-10-19 10:11:01", "history_days": 90, "history_from_et": "2026-10-06 23:58", "kpis": {"today": -11.7, "week": -11.7, "mtd": -177.43, "all_time": -177.43, "win_rate": 22.5, "wins": 9, "losses": 31, "closed": 40, "open_upnl": 29.12, "equity_spot_usdc": 559.163783, "perp_account_value": 228.79, "today_key": "2026-10-19", "week_start": "2026-10-19"}, "days": {"2026-10-07": {"net": -40.77, "gross": -33.81, "fees": 6.96, "trades": 7, "wins": 4, "losses": 3, "risk": 1.64}, "2026-10-08": {"net": -25.01, "gross": -15.77, "fees": 9.24, "trades": 10, "wins": 3, "losses": 7, "risk": 34.31}, "2026-10-09": {"net": -0.56, "gross": 1.52, "fees": 2.08, "trades": 4, "wins": 1, "losses": 3, "risk": 10.08}, "2026-10-12": {"net": 11.54, "gross": 28.92, "fees": 17.38, "trades": 5, "wins": 1, "losses": 4, "risk": 85.98}, "2026-10-13": {"net": -6.18, "gross": -5.26, "fees": 0.92, "trades": 1, "wins": 0, "losses": 1, "risk": 4.75}, "2026-10-14": {"net": -3.14, "gross": -2.18, "fees": 0.96, "trades": 1, "wins": 0, "losses": 1, "risk": 2.06}, "2026-10-15": {"net": -30.78, "gross": -26.95, "fees": 3.82, "trades": 5, "wins": 0, "losses": 5, "risk": 29.47}, "2026-10-16": {"net": -30.08, "gross": -27.73, "fees": 2.34, "trades": 2, "wins": 0, "losses": 2, "risk": 27.0}, "2026-10-17": {"net": -5.64, "gross": -4.6, "fees": 1.04, "trades": 1, "wins": 0, "losses": 1, "risk": 4.6}, "2026-10-18": {"net": -35.12, "gross": -32.33, "fees": 2.79, "trades": 3, "wins": 0, "losses": 3, "risk": 40.35}, "2026-10-19": {"net": -11.7, "gross": -10.69, "fees": 1.01, "trades": 1, "wins": 0, "losses": 1, "risk": 10.59}}, "trades": [{"coin": "ETH", "side": "long", "size": 0.0558, "entry": 2610.8, "exit": 2605.5, "stop": 2605.5, "risk": 0.3, "initial_stop": 2605.5, "initial_risk": 0.3, "final_risk": 0.3, "fees": 0.0838, "gross": -0.2957, "net": -0.3795, "r_mult": -1.27, "open_ms": 1791345496861, "close_ms": 1791347495812, "open_et": "2026-10-06 23:58", "close_et": "2026-10-07 00:31", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-07"}, {"coin": "SOL", "side": "short", "size": 0.66, "entry": 118.28, "exit": 118.00999999999999, "stop": 118.53, "risk": 0.16, "initial_stop": 118.53, "initial_risk": 0.16, "final_risk": 0.16, "fees": 0.0449, "gross": 0.1782, "net": 0.1333, "r_mult": 0.83, "open_ms": 1791347304018, "close_ms": 1791347603978, "open_et": "2026-10-07 00:28", "close_et": "2026-10-07 00:33", "exit_type": "TP", "n_fills": 4, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-07"}, {"coin": "PUMP", "side": "short", "size": 20788.0, "entry": 0.006396, "exit": 0.006372999999999999, "stop": 0.00641, "risk": 0.29, "initial_stop": 0.00641, "initial_risk": 0.29, "final_risk": 0.29, "fees": 0.0764, "gross": 0.4781, "net": 0.4017, "r_mult": 1.39, "open_ms": 1791375054454, "close_ms": 1791375306776, "open_et": "2026-10-07 08:10", "close_et": "2026-10-07 08:15", "exit_type": "TP", "n_fills": 2, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-07"}, {"coin": "xyz:XYZ100", "side": "long", "size": 0.0055, "entry": 31008.0, "exit": 30986.000000000004, "stop": 30954.0, "risk": 0.3, "initial_stop": 30954.0, "initial_risk": 0.3, "final_risk": 0.3, "fees": 0.0196, "gross": -0.121, "net": -0.1406, "r_mult": -0.47, "open_ms": 1791375498904, "close_ms": 1791379937163, "open_et": "2026-10-07 08:18", "close_et": "2026-10-07 09:32", "exit_type": "Market", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-07"}, {"coin": "xyz:XYZ100", "side": "long", "size": 0.0054, "entry": 30949.999999999996, "exit": 31044.000000000004, "stop": 30896.0, "risk": 0.29, "initial_stop": 30896.0, "initial_risk": 0.29, "final_risk": 0.29, "fees": 0.0193, "gross": 0.5076, "net": 0.4883, "r_mult": 1.68, "open_ms": 1791381982826, "close_ms": 1791386025856, "open_et": "2026-10-07 10:06", "close_et": "2026-10-07 11:13", "exit_type": "TP", "n_fills": 2, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-07"}, {"coin": "xyz:XYZ100", "side": "long", "size": 0.0056, "entry": 31074.0, "exit": 31162.000000000004, "stop": 31020.0, "risk": 0.3, "initial_stop": 31020.0, "initial_risk": 0.3, "final_risk": 0.3, "fees": 0.0201, "gross": 0.4928, "net": 0.4727, "r_mult": 1.58, "open_ms": 1791392512659, "close_ms": 1791406767910, "open_et": "2026-10-07 13:01", "close_et": "2026-10-07 16:59", "exit_type": "TP", "n_fills": 2, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-07"}, {"coin": "BTC", "side": "long", "size": 0.1402, "entry": 83106.0, "exit": 82856.00000000001, "stop": null, "risk": null, "initial_stop": null, "initial_risk": null, "final_risk": null, "fees": 6.6961, "gross": -35.05, "net": -41.7461, "r_mult": null, "open_ms": 1791428570991, "close_ms": 1791429373608, "open_et": "2026-10-07 23:02", "close_et": "2026-10-07 23:16", "exit_type": "Market", "n_fills": 5, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-07"}, {"coin": "xyz:GOLD", "side": "short", "size": 0.5189, "entry": 4138.5, "exit": 4130.353343611486, "stop": 4145.3, "risk": 3.53, "initial_stop": 4145.3, "initial_risk": 3.53, "final_risk": 3.53, "fees": 2.4702, "gross": 4.2273, "net": 1.7571, "r_mult": 0.5, "open_ms": 1791470054254, "close_ms": 1791470460957, "open_et": "2026-10-08 10:34", "close_et": "2026-10-08 10:41", "exit_type": "TP", "n_fills": 6, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-08"}, {"coin": "ETH", "side": "short", "size": 0.8549, "entry": 2530.1, "exit": 2525.5, "stop": 2534.2, "risk": 3.51, "initial_stop": 2534.2, "initial_risk": 3.51, "final_risk": 3.51, "fees": 1.2442, "gross": 3.9325, "net": 2.6884, "r_mult": 0.77, "open_ms": 1791470976074, "close_ms": 1791471791470, "open_et": "2026-10-08 10:49", "close_et": "2026-10-08 11:03", "exit_type": "TP", "n_fills": 2, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-08"}, {"coin": "BTC", "side": "long", "size": 0.02644, "entry": 82618.0, "exit": 82462.99999999999, "stop": 82476.0, "risk": 3.75, "initial_stop": 82476.0, "initial_risk": 3.75, "final_risk": 3.75, "fees": 1.2565, "gross": -4.0982, "net": -5.3547, "r_mult": -1.43, "open_ms": 1791471716116, "close_ms": 1791471875052, "open_et": "2026-10-08 11:01", "close_et": "2026-10-08 11:04", "exit_type": "SL", "n_fills": 3, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "BTC", "side": "short", "size": 0.02287, "entry": 81509.0, "exit": 81231.0, "stop": 81671.0, "risk": 3.7, "initial_stop": 81671.0, "initial_risk": 3.7, "final_risk": 3.7, "fees": 1.071, "gross": 6.3579, "net": 5.2869, "r_mult": 1.43, "open_ms": 1791474657143, "close_ms": 1791474838515, "open_et": "2026-10-08 11:50", "close_et": "2026-10-08 11:53", "exit_type": "TP", "n_fills": 2, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-08"}, {"coin": "xyz:XYZ100", "side": "short", "size": 0.0704, "entry": 30971.0, "exit": 31027.000000000004, "stop": 31025.0, "risk": 3.8, "initial_stop": 31025.0, "initial_risk": 3.8, "final_risk": 3.8, "fees": 0.2515, "gross": -3.9424, "net": -4.1939, "r_mult": -1.1, "open_ms": 1791476231699, "close_ms": 1791476253542, "open_et": "2026-10-08 12:17", "close_et": "2026-10-08 12:17", "exit_type": "SL", "n_fills": 3, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "xyz:SKHX", "side": "short", "size": 1.723, "entry": 1196.6999999999998, "exit": 1200.6, "stop": 1198.8, "risk": 3.62, "initial_stop": 1198.8, "initial_risk": 3.62, "final_risk": 3.62, "fees": 0.2381, "gross": -6.7197, "net": -6.9578, "r_mult": -1.92, "open_ms": 1791483177943, "close_ms": 1791483327911, "open_et": "2026-10-08 14:12", "close_et": "2026-10-08 14:15", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "SOL", "side": "short", "size": 18.42, "entry": 109.0, "exit": 109.22841476655809, "stop": 109.19, "risk": 3.5, "initial_stop": 109.19, "initial_risk": 3.5, "final_risk": 3.5, "fees": 1.1583, "gross": -4.2074, "net": -5.3657, "r_mult": -1.53, "open_ms": 1791487877993, "close_ms": 1791488045348, "open_et": "2026-10-08 15:31", "close_et": "2026-10-08 15:34", "exit_type": "SL", "n_fills": 11, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "ETH", "side": "short", "size": 0.6371, "entry": 2460.1, "exit": 2464.9, "stop": 2464.9, "risk": 3.06, "initial_stop": 2464.9, "initial_risk": 3.06, "final_risk": 3.06, "fees": 0.9041, "gross": -3.0581, "net": -3.9622, "r_mult": -1.29, "open_ms": 1791488306076, "close_ms": 1791489528047, "open_et": "2026-10-08 15:38", "close_et": "2026-10-08 15:58", "exit_type": "SL", "n_fills": 9, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "xyz:SKHX", "side": "short", "size": 0.986, "entry": 1211.0, "exit": 1213.3892494929007, "stop": 1213.2, "risk": 2.17, "initial_stop": 1213.2, "initial_risk": 2.17, "final_risk": 2.17, "fees": 0.1378, "gross": -2.3558, "net": -2.4936, "r_mult": -1.15, "open_ms": 1791489690407, "close_ms": 1791491154819, "open_et": "2026-10-08 16:01", "close_et": "2026-10-08 16:25", "exit_type": "SL", "n_fills": 5, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "SOL", "side": "short", "size": 7.98, "entry": 109.96, "exit": 110.7, "stop": 110.42, "risk": 3.67, "initial_stop": 110.42, "initial_risk": 3.67, "final_risk": 3.67, "fees": 0.508, "gross": -5.9052, "net": -6.4132, "r_mult": -1.75, "open_ms": 1791494032879, "close_ms": 1791496292543, "open_et": "2026-10-08 17:13", "close_et": "2026-10-08 17:51", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-08"}, {"coin": "BTC", "side": "long", "size": 0.0186, "entry": 81715.0, "exit": 82182.52311827957, "stop": 81552.0, "risk": 3.03, "initial_stop": 81552.0, "initial_risk": 3.03, "final_risk": 3.03, "fees": 0.8792, "gross": 8.6969, "net": 7.8177, "r_mult": 2.58, "open_ms": 1791490924518, "close_ms": 1791550215761, "open_et": "2026-10-08 16:22", "close_et": "2026-10-09 08:50", "exit_type": "TP", "n_fills": 6, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-09"}, {"coin": "SOL", "side": "short", "size": 14.6, "entry": 109.46000000000001, "exit": 109.65, "stop": 109.66, "risk": 2.92, "initial_stop": 109.66, "initial_risk": 2.92, "final_risk": 2.92, "fees": 0.9217, "gross": -2.774, "net": -3.6957, "r_mult": -1.27, "open_ms": 1791553634062, "close_ms": 1791553746459, "open_et": "2026-10-09 09:47", "close_et": "2026-10-09 09:49", "exit_type": "SL", "n_fills": 5, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-09"}, {"coin": "xyz:SP500", "side": "short", "size": 0.154, "entry": 7786.6, "exit": 7799.899999999999, "stop": 7799.9, "risk": 2.05, "initial_stop": 7799.9, "initial_risk": 2.05, "final_risk": 2.05, "fees": 0.1383, "gross": -2.0482, "net": -2.1865, "r_mult": -1.07, "open_ms": 1791555202450, "close_ms": 1791557916883, "open_et": "2026-10-09 10:13", "close_et": "2026-10-09 10:58", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-09"}, {"coin": "xyz:XYZ100", "side": "short", "size": 0.0386, "entry": 30832.000000000004, "exit": 30893.0, "stop": 30886.0, "risk": 2.08, "initial_stop": 30886.0, "initial_risk": 2.08, "final_risk": 2.08, "fees": 0.1373, "gross": -2.3546, "net": -2.4919, "r_mult": -1.2, "open_ms": 1791556231390, "close_ms": 1791564690847, "open_et": "2026-10-09 10:30", "close_et": "2026-10-09 12:51", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-09"}, {"coin": "BTC", "side": "short", "size": 0.05381, "entry": 83891.00000000001, "exit": 84238.99999999999, "stop": 84250.0, "risk": 19.32, "initial_stop": 84208.0, "initial_risk": 17.06, "final_risk": 19.32, "fees": 3.9083, "gross": -18.7259, "net": -22.6342, "r_mult": -1.17, "open_ms": 1791767591640, "close_ms": 1791788209819, "open_et": "2026-10-11 21:13", "close_et": "2026-10-12 02:56", "exit_type": "SL", "n_fills": 7, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-12"}, {"coin": "BTC", "side": "long", "size": 0.09638, "entry": 83483.00000000001, "exit": 83222.0, "stop": 83251.0, "risk": 22.36, "initial_stop": 83251.0, "initial_risk": 22.36, "final_risk": 22.36, "fees": 6.941, "gross": -25.1552, "net": -32.0961, "r_mult": -1.44, "open_ms": 1791802453561, "close_ms": 1791807624240, "open_et": "2026-10-12 06:54", "close_et": "2026-10-12 08:20", "exit_type": "SL", "n_fills": 3, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-12"}, {"coin": "BTC", "side": "long", "size": 0.0404, "entry": 82924.0, "exit": 82836.0, "stop": 82332.0, "risk": 23.92, "initial_stop": 82332.0, "initial_risk": 23.92, "final_risk": 23.92, "fees": 2.893, "gross": -3.5552, "net": -6.4482, "r_mult": -0.27, "open_ms": 1791822067989, "close_ms": 1791823011050, "open_et": "2026-10-12 12:21", "close_et": "2026-10-12 12:36", "exit_type": "Market", "n_fills": 5, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-12"}, {"coin": "BTC", "side": "short", "size": 0.0447, "entry": 82827.2460850112, "exit": 81006.0, "stop": 82780.0, "risk": 15.59, "initial_stop": 83176.0, "initial_risk": 15.59, "final_risk": 0.0, "fees": 3.0612, "gross": 81.4076, "net": 78.3464, "r_mult": 5.03, "open_ms": 1791823011050, "close_ms": 1791852747603, "open_et": "2026-10-12 12:36", "close_et": "2026-10-12 20:52", "exit_type": "TP", "n_fills": 3, "partial_history": false, "status": "closed", "result": "WIN", "day": "2026-10-12"}, {"coin": "BTC", "side": "short", "size": 0.012, "entry": 83050.0, "exit": 83471.0, "stop": 83449.0, "risk": 4.79, "initial_stop": 83449.0, "initial_risk": 4.79, "final_risk": 4.79, "fees": 0.5762, "gross": -5.052, "net": -5.6282, "r_mult": -1.17, "open_ms": 1791862353572, "close_ms": 1791862521608, "open_et": "2026-10-12 23:32", "close_et": "2026-10-12 23:35", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-12"}, {"coin": "BTC", "side": "short", "size": 0.019, "entry": 83450.0, "exit": 83727.0, "stop": 83700.0, "risk": 4.75, "initial_stop": 83700.0, "initial_risk": 4.75, "final_risk": 4.75, "fees": 0.9156, "gross": -5.263, "net": -6.1785, "r_mult": -1.3, "open_ms": 1791865961555, "close_ms": 1791868498430, "open_et": "2026-10-13 00:32", "close_et": "2026-10-13 01:14", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-13"}, {"coin": "BTC", "side": "long", "size": 0.01357, "entry": 81733.0, "exit": 81572.00000000001, "stop": 81581.0, "risk": 2.06, "initial_stop": 81581.0, "initial_risk": 2.06, "final_risk": 2.06, "fees": 0.9573, "gross": -2.1848, "net": -3.1421, "r_mult": -1.53, "open_ms": 1791992773640, "close_ms": 1791993492637, "open_et": "2026-10-14 11:46", "close_et": "2026-10-14 11:58", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-14"}, {"coin": "BTC", "side": "short", "size": 0.0131, "entry": 81597.0, "exit": 81600.0, "stop": 81597.0, "risk": 4.62, "initial_stop": 81950.0, "initial_risk": 4.62, "final_risk": 0.0, "fees": 0.6157, "gross": -0.0393, "net": -0.655, "r_mult": -0.14, "open_ms": 1792032931793, "close_ms": 1792039016251, "open_et": "2026-10-14 22:55", "close_et": "2026-10-15 00:36", "exit_type": "SL", "n_fills": 5, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-15"}, {"coin": "ETH", "side": "short", "size": 0.4, "entry": 2380.0, "exit": 2391.8999999999996, "stop": 2390.0, "risk": 4.0, "initial_stop": 2390.0, "initial_risk": 4.0, "final_risk": 4.0, "fees": 0.5504, "gross": -4.76, "net": -5.3104, "r_mult": -1.33, "open_ms": 1792073416655, "close_ms": 1792075704946, "open_et": "2026-10-15 10:10", "close_et": "2026-10-15 10:48", "exit_type": "SL", "n_fills": 4, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-15"}, {"coin": "BTC", "side": "short", "size": 0.0124, "entry": 81414.0, "exit": 81796.0, "stop": 81785.0, "risk": 4.6, "initial_stop": 81785.0, "initial_risk": 4.6, "final_risk": 4.6, "fees": 0.5835, "gross": -4.7368, "net": -5.3203, "r_mult": -1.16, "open_ms": 1792073416655, "close_ms": 1792075709346, "open_et": "2026-10-15 10:10", "close_et": "2026-10-15 10:48", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-15"}, {"coin": "SOL", "side": "short", "size": 5.19, "entry": 103.99999999999999, "exit": 104.88999999999999, "stop": 104.89, "risk": 4.62, "initial_stop": 104.89, "initial_risk": 4.62, "final_risk": 4.62, "fees": 0.3129, "gross": -4.6191, "net": -4.932, "r_mult": -1.07, "open_ms": 1792075354254, "close_ms": 1792076212023, "open_et": "2026-10-15 10:42", "close_et": "2026-10-15 10:56", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-15"}, {"coin": "SOL", "side": "short", "size": 19.39, "entry": 104.79, "exit": 105.45, "stop": 105.39, "risk": 11.63, "initial_stop": 105.31, "initial_risk": 10.08, "final_risk": 11.63, "fees": 1.7611, "gross": -12.7974, "net": -14.5585, "r_mult": -1.25, "open_ms": 1792076267342, "close_ms": 1792076630446, "open_et": "2026-10-15 10:57", "close_et": "2026-10-15 11:03", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-15"}, {"coin": "SOL", "side": "short", "size": 18.65, "entry": 105.8, "exit": 107.04, "stop": 107.0, "risk": 22.38, "initial_stop": 107.0, "initial_risk": 22.38, "final_risk": 22.38, "fees": 1.7148, "gross": -23.126, "net": -24.8408, "r_mult": -1.11, "open_ms": 1792076786517, "close_ms": 1792149133962, "open_et": "2026-10-15 11:06", "close_et": "2026-10-16 07:12", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-16"}, {"coin": "BTC", "side": "short", "size": 0.0132, "entry": 82500.0, "exit": 82849.0, "stop": 82850.0, "risk": 4.62, "initial_stop": 82850.0, "initial_risk": 4.62, "final_risk": 4.62, "fees": 0.6293, "gross": -4.6068, "net": -5.2361, "r_mult": -1.13, "open_ms": 1792091168742, "close_ms": 1792149922753, "open_et": "2026-10-15 15:06", "close_et": "2026-10-16 07:25", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-16"}, {"coin": "SOL", "side": "long", "size": 17.7, "entry": 102.41, "exit": 102.15, "stop": 102.15, "risk": 4.6, "initial_stop": 102.15, "initial_risk": 4.6, "final_risk": 4.6, "fees": 1.0421, "gross": -4.602, "net": -5.6441, "r_mult": -1.23, "open_ms": 1792272718879, "close_ms": 1792272737378, "open_et": "2026-10-17 17:31", "close_et": "2026-10-17 17:32", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-17"}, {"coin": "BTC", "side": "short", "size": 0.056, "entry": 81133.0, "exit": 81299.6, "stop": 81450.0, "risk": 17.75, "initial_stop": 81339.0, "initial_risk": 11.54, "final_risk": 17.75, "fees": 2.1635, "gross": -9.3296, "net": -11.4931, "r_mult": -0.65, "open_ms": 1792350968550, "close_ms": 1792360849172, "open_et": "2026-10-18 15:16", "close_et": "2026-10-18 18:00", "exit_type": "SL", "n_fills": 4, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-18"}, {"coin": "ETH", "side": "short", "size": 0.3077, "entry": 2367.0, "exit": 2405.5418264543387, "stop": 2404.5, "risk": 11.54, "initial_stop": 2404.5, "initial_risk": 11.54, "final_risk": 11.54, "fees": 0.4246, "gross": -11.8593, "net": -12.284, "r_mult": -1.06, "open_ms": 1792360401749, "close_ms": 1792366024214, "open_et": "2026-10-18 17:53", "close_et": "2026-10-18 19:27", "exit_type": "SL", "n_fills": 12, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-18"}, {"coin": "PUMP", "side": "short", "size": 79581.0, "entry": 0.004267, "exit": 0.004407, "stop": 0.004406, "risk": 11.06, "initial_stop": 0.004406, "initial_risk": 11.06, "final_risk": 11.06, "fees": 0.2004, "gross": -11.1413, "net": -11.3417, "r_mult": -1.03, "open_ms": 1792373303338, "close_ms": 1792378051984, "open_et": "2026-10-18 21:28", "close_et": "2026-10-18 22:47", "exit_type": "SL", "n_fills": 2, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-18"}, {"coin": "BTC", "side": "short", "size": 0.01418, "entry": 82075.33638928068, "exit": 82829.0, "stop": 82822.0, "risk": 10.59, "initial_stop": 82822.0, "initial_risk": 10.59, "final_risk": 10.59, "fees": 1.0102, "gross": -10.6875, "net": -11.6976, "r_mult": -1.1, "open_ms": 1792366938616, "close_ms": 1792385361586, "open_et": "2026-10-18 19:42", "close_et": "2026-10-19 00:49", "exit_type": "SL", "n_fills": 9, "partial_history": false, "status": "closed", "result": "LOSS", "day": "2026-10-19"}], "positions": [{"coin": "BTC", "side": "short", "size": 0.01886, "entry": 82840.0, "exit": null, "stop": 83400.0, "risk": 10.56, "initial_stop": 83400.0, "initial_risk": 10.56, "final_risk": 10.56, "fees": 0.225, "gross": 0.0, "net": -0.225, "r_mult": null, "open_ms": 1792397885867, "close_ms": null, "open_et": "2026-10-19 04:18", "close_et": null, "exit_type": null, "n_fills": 1, "partial_history": false, "status": "open", "upnl": 15.791478, "mark": 81988.5, "liq": 85902.4785619837, "leverage": "20x isolated", "target": 80840.0, "funding_since_open": 0.116715, "net_if_closed_now": 15.5665}, {"coin": "ETH", "side": "short", "size": 0.4271, "entry": 2425.0, "exit": null, "stop": 2450.0, "risk": 10.68, "initial_stop": 2450.0, "initial_risk": 10.68, "final_risk": 10.68, "fees": 0.1491, "gross": 0.0, "net": -0.1491, "r_mult": null, "open_ms": 1792379434667, "close_ms": null, "open_et": "2026-10-18 23:10", "close_et": null, "exit_type": null, "n_fills": 4, "partial_history": false, "status": "open", "upnl": 13.32552, "mark": 2393.35, "liq": 2496.2962891549, "leverage": "20x isolated", "target": 2326.9, "funding_since_open": 0.137275, "net_if_closed_now": 13.1764}], "pending": [{"coin": "SOL", "side": "short", "size": 13.13, "entry": 105.41, "stop": 106.25, "target": 100.56, "planned_risk": 11.03, "planned_reward": 63.68, "placed_et": "2026-10-19 09:53", "mark": 104.035}]};
+const ADDRESS = "0x052091F7bc55779D8D83546D8B9BCf9A9956d541";
+const API = "https://api.hyperliquid.xyz/info";
+const DEXES = ["", "xyz"];
+const TZ = "America/Toronto";
+const EPS = 1e-9;
+const REFRESH_MS = 60000;
+let BOARD = SNAPSHOT, SOURCE = "snapshot", VIEW = null, OPEN_DAY = null;
+
+/* ---------- formatting ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function money(v, signed=true){ if(v==null||isNaN(v)) return "—"; const a=Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); return (v<0?"−$":(signed&&v>0?"+$":"$"))+a; }
+function cls(v){ return v==null?"dim":(v>0.005?"pos":(v<-0.005?"neg":"muted")); }
+function px(v){ if(v==null||isNaN(v)) return "—"; const a=Math.abs(v); const d=a>=1000?1:a>=100?2:a>=1?3:a>=0.01?5:7; return Number(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function sz(v){ if(v==null) return "—"; return Number(v).toLocaleString("en-US",{maximumFractionDigits:v>=100?0:5}); }
+const etParts = ms => Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(ms)).map(p=>[p.type,p.value]));
+const etDay = ms => { const p=etParts(ms); return `${p.year}-${p.month}-${p.day}`; };
+const etStr = ms => { const p=etParts(ms); return `${p.year}-${p.month}-${p.day} ${p.hour==="24"?"00":p.hour}:${p.minute}`; };
+const coinLbl = c => c.startsWith("xyz:") ? c.slice(4)+" <span class='dim'>xyz</span>" : esc(c);
+
+/* ---------- live build (same logic as build_calendar_pnl.py) ---------- */
+async function q(body){ const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error("HL "+r.status); return r.json(); }
+function fillKey(f){ const st=Math.abs(+f.startPosition); const closing=f.dir.startsWith("Close")||f.dir.includes(">"); return [f.time,f.coin,f.oid,closing?-st:st]; }
+function cmpKey(a,b){ const A=fillKey(a),B=fillKey(b); for(let i=0;i<4;i++){ if(A[i]<B[i]) return -1; if(A[i]>B[i]) return 1;} return 0; }
+async function fetchRaw(days){
+  const now=Date.now(); let cursor=now-days*86400000; const seen=new Map();
+  for(let i=0;i<50;i++){ const b=await q({type:"userFillsByTime",user:ADDRESS,startTime:cursor,endTime:now,aggregateByTime:false}); if(!b.length) break; b.forEach(f=>seen.set(f.tid+"|"+f.oid+"|"+f.time,f)); if(b.length<2000) break; cursor=Math.max(...b.map(f=>f.time))+1; }
+  const raw={fills:[...seen.values()].sort(cmpKey),historicalOrders:await q({type:"historicalOrders",user:ADDRESS}),states:{},openOrders:[],mids:{},spot:await q({type:"spotClearinghouseState",user:ADDRESS})};
+  for(const d of DEXES){ const ex=d?{dex:d}:{}; raw.states[d||"main"]=await q({type:"clearinghouseState",user:ADDRESS,...ex}); raw.openOrders.push(...await q({type:"frontendOpenOrders",user:ADDRESS,...ex})); try{ Object.assign(raw.mids, await q({type:"allMids",...ex})); }catch(e){} }
+  return raw;
 }
-function cls(n){ return n>1e-9 ? "pos" : (n<-1e-9 ? "neg" : ""); }
-function et(ts){
-  if(!ts) return "—";
-  try{
-    return new Date(Number(ts)*1000).toLocaleString("en-CA",{timeZone:"America/Toronto",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false})+" ET";
-  }catch(e){ return "—"; }
+function build(raw, days){
+  const fills=[...raw.fills].sort(cmpKey); const orders=new Map();
+  for(const h of raw.historicalOrders){ const o=h.order; let cur=orders.get(o.oid); if(!cur){ cur={...o,statuses:[]}; orders.set(o.oid,cur);} cur.statuses.push(h.status);
+    if(o.isTrigger && +o.triggerPx>0){ cur.isTrigger=true; cur.triggerPx=o.triggerPx; } cur.timestamp=Math.min(cur.timestamp,o.timestamp); }
+  for(const o of raw.openOrders) if(!orders.has(o.oid)) orders.set(o.oid,{...o,statuses:["open"]});
+  const stopsBy={}; for(const o of orders.values()) if((o.orderType||"").startsWith("Stop")&&o.isTrigger) (stopsBy[o.coin]??=[]).push(o);
+  const kind=oid=>(orders.get(oid)||{}).orderType||"";
+  const trips=[], live={};
+  const nt=(coin,side,t,partial=false)=>({coin,side,open_ms:t,close_ms:null,opens:[],closes:[],fees:0,gross:0,max_size:0,partial_history:partial});
+  for(const f of fills){
+    const coin=f.coin, s=+f.sz, p=+f.px, fee=+f.fee, cp=+f.closedPnl, start=+f.startPosition, delta=f.side==="B"?s:-s, end=start+delta;
+    let tr=live[coin];
+    if(!tr && Math.abs(start)>EPS){ tr=live[coin]=nt(coin,start>0?"long":"short",f.time,true); tr.max_size=Math.abs(start); }
+    const flip=Math.abs(start)>EPS&&Math.abs(end)>EPS&&((start>0)!==(end>0));
+    if(flip){ const cs=Math.abs(start), os=Math.abs(end), share=cs/s;
+      tr.closes.push({px:p,sz:cs,ms:f.time,oid:f.oid,kind:kind(f.oid)}); tr.fees+=fee*share; tr.gross+=cp; tr.close_ms=f.time; trips.push(tr);
+      tr=live[coin]=nt(coin,end>0?"long":"short",f.time); tr.opens.push({px:p,sz:os,ms:f.time,oid:f.oid}); tr.fees+=fee*(1-share); tr.max_size=os; continue; }
+    if(!tr) tr=live[coin]=nt(coin,delta>0?"long":"short",f.time);
+    const leg={px:p,sz:s,ms:f.time,oid:f.oid};
+    if(Math.abs(end)>Math.abs(start)+EPS) tr.opens.push(leg); else { leg.kind=kind(f.oid); tr.closes.push(leg); tr.close_ms=f.time; }
+    tr.fees+=fee; tr.gross+=cp; tr.max_size=Math.max(tr.max_size,Math.abs(end));
+    if(Math.abs(end)<EPS){ trips.push(tr); delete live[coin]; }
+  }
+  const vwap=l=>{ const t=l.reduce((a,x)=>a+x.sz,0); return t>EPS?l.reduce((a,x)=>a+x.px*x.sz,0)/t:null; };
+  const r2=v=>Math.round(v*100)/100;
+  function finish(tr,isOpen){
+    const entry=vwap(tr.opens), exitp=vwap(tr.closes), stopSide=tr.side==="long"?"A":"B";
+    const horizon=(tr.close_ms&&!isOpen)?tr.close_ms:Date.now();
+    const placed=tr.opens.filter(o=>orders.has(o.oid)).map(o=>orders.get(o.oid).timestamp);
+    const lo=Math.min(...placed,tr.open_ms)-5000; const cs=stopsBy[tr.coin]||[];
+    let cands=cs.filter(s=>s.side===stopSide&&s.timestamp>=lo&&s.timestamp<=horizon);
+    const coids=new Set(tr.closes.map(c=>c.oid)); const hit=cs.filter(s=>coids.has(s.oid));
+    if(isOpen){ const o=cands.filter(s=>s.statuses.every(x=>x==="open")); if(o.length) cands=o; }
+    const stop=hit[0]||(cands.length?cands.reduce((a,b)=>b.timestamp>a.timestamp?b:a):null);
+    const first=cands.length?cands.reduce((a,b)=>b.timestamp<a.timestamp?b:a):stop;
+    const stopPx=stop?+stop.triggerPx:null, initPx=first?+first.triggerPx:null;
+    const riskAt=x=>{ if(!x||!entry) return null; const per=tr.side==="long"?entry-x:x-entry; return r2(Math.max(per,0)*tr.max_size); };
+    const ir=riskAt(initPx), fr=riskAt(stopPx); const vals=[ir,fr].filter(v=>v!=null); const risk=vals.length?Math.max(...vals):null;
+    const kinds=tr.closes.map(c=>c.kind||""); let et=null;
+    if(kinds.some(k=>k.startsWith("Stop"))) et="SL"; else if(kinds.some(k=>k.startsWith("Take"))) et="TP"; else if(kinds.includes("Market")) et="Market"; else if(tr.closes.length) et="Limit";
+    const net=tr.gross-tr.fees;
+    const d={coin:tr.coin,side:tr.side,size:tr.max_size,entry,exit:exitp,stop:stopPx,risk,initial_stop:initPx,initial_risk:ir,final_risk:fr,
+      fees:tr.fees,gross:tr.gross,net,r_mult:(risk&&risk>0.01&&!isOpen)?r2(net/risk):null,open_ms:tr.open_ms,close_ms:isOpen?null:tr.close_ms,
+      open_et:etStr(tr.open_ms),close_et:isOpen?null:etStr(tr.close_ms),exit_type:et,n_fills:tr.opens.length+tr.closes.length,partial_history:tr.partial_history,status:isOpen?"open":"closed"};
+    if(!isOpen){ d.result=net>0.005?"WIN":(net<-0.005?"LOSS":"BE"); d.day=etDay(tr.close_ms); }
+    return d;
+  }
+  const closed=trips.map(t=>finish(t,false));
+  const positions=[]; let upnl=0;
+  for(const st of Object.values(raw.states)) for(const ap of st.assetPositions||[]){ const p=ap.position, szi=+p.szi; if(Math.abs(szi)<EPS) continue;
+    const up=+p.unrealizedPnl; upnl+=up; const base=live[p.coin]?finish(live[p.coin],true):{coin:p.coin,side:szi>0?"long":"short",open_et:null,fees:0,gross:0,stop:null,risk:null};
+    const tps=raw.openOrders.filter(o=>o.coin===p.coin&&(o.orderType||"").startsWith("Take"));
+    Object.assign(base,{size:Math.abs(szi),entry:+p.entryPx,upnl:up,mark:+(raw.mids[p.coin]||0)||null,liq:p.liquidationPx?+p.liquidationPx:null,leverage:`${p.leverage.value}x ${p.leverage.type}`,target:tps.length?+tps[0].triggerPx:null,funding_since_open:-(+p.cumFunding.sinceOpen)});
+    if(base.stop){ const per=base.side==="long"?base.entry-base.stop:base.stop-base.entry; base.risk=r2(Math.max(per,0)*Math.abs(szi)); }
+    base.net_if_closed_now=up-(base.fees||0); positions.push(base); }
+  const pending=[]; for(const o of raw.openOrders){ if(o.isTrigger||o.reduceOnly) continue; const k=o.children||[];
+    const sl=k.find(c=>(c.orderType||"").startsWith("Stop")), tp=k.find(c=>(c.orderType||"").startsWith("Take")); const p=+o.limitPx, s=+o.sz;
+    pending.push({coin:o.coin,side:o.side==="B"?"long":"short",size:s,entry:p,stop:sl?+sl.triggerPx:null,target:tp?+tp.triggerPx:null,planned_risk:sl?r2(Math.abs(p-sl.triggerPx)*s):null,planned_reward:tp?r2(Math.abs(tp.triggerPx-p)*s):null,placed_et:etStr(o.timestamp),mark:+(raw.mids[o.coin]||0)||null}); }
+  const daysMap={}; for(const t of closed){ const d=daysMap[t.day]??={net:0,gross:0,fees:0,trades:0,wins:0,losses:0,risk:0}; d.net+=t.net; d.gross+=t.gross; d.fees+=t.fees; d.trades++; d.wins+=t.result==="WIN"; d.losses+=t.result==="LOSS"; d.risk+=t.risk||0; }
+  const now=Date.now(), today=etDay(now); const p=etParts(now); const wd=(new Date(Date.UTC(+p.year,+p.month-1,+p.day)).getUTCDay()+6)%7;
+  const wkStart=etDay(Date.UTC(+p.year,+p.month-1,+p.day-wd,12)); const moStart=`${p.year}-${p.month}-01`;
+  const ssum=fr=>r2(Object.entries(daysMap).filter(([k])=>k>=fr&&k<=today).reduce((a,[,v])=>a+v.net,0));
+  const wins=closed.filter(t=>t.result==="WIN").length, losses=closed.filter(t=>t.result==="LOSS").length;
+  const usdc=((raw.spot.balances||[]).find(b=>b.coin==="USDC")||{}).total;
+  return {address:ADDRESS,network:"mainnet",generated_ms:now,generated_et:etStr(now),history_days:days,history_from_et:fills.length?etStr(fills[0].time):null,
+    kpis:{today:ssum(today),week:ssum(wkStart),mtd:ssum(moStart),all_time:r2(closed.reduce((a,t)=>a+t.net,0)),win_rate:wins+losses?Math.round(1000*wins/(wins+losses))/10:null,wins,losses,closed:closed.length,
+      open_upnl:r2(upnl),equity_spot_usdc:usdc!=null?+usdc:null,perp_account_value:r2(Object.values(raw.states).reduce((a,s)=>a+ +s.marginSummary.accountValue,0)),today_key:today,week_start:wkStart},
+    days:daysMap,trades:closed.sort((a,b)=>a.close_ms-b.close_ms),positions,pending};
 }
-const s = BOARD.summary || {};
-const trades = BOARD.closed_trades || [];
-document.getElementById("title").textContent = BOARD.title || "PnL board";
-document.getElementById("subtitle").textContent =
-  `since ${BOARD.since_et || "—"} · ${BOARD.network || "testnet"} · ${BOARD.money_source || ""}`;
-document.getElementById("netBadge").textContent = String(BOARD.network||"testnet").toUpperCase();
-document.getElementById("generated").textContent = "updated " + (BOARD.generated_et || "—");
-const kpis = [
-  {lbl:"Net PnL", val:fmtUsd(s.net_pnl,true), c:cls(s.net_pnl), sub:`vs start ${s.vs_starting_pct!=null?(s.vs_starting_pct>0?"+":"")+s.vs_starting_pct+"%":"—"}`},
-  {lbl:"Win rate", val: s.win_rate_pct!=null ? s.win_rate_pct.toFixed(1)+"%" : "n/a", c:"", sub:`${s.wins||0}W / ${s.losses||0}L / ${s.breakeven||0}BE`},
-  {lbl:"Gross PnL", val:fmtUsd(s.gross_pnl,true), c:cls(s.gross_pnl), sub:`${s.trades||0} closed`},
-  {lbl:"Fees", val:fmtUsd(s.fees), c:"neg", sub:"paid"},
-  {lbl:"Funding", val:fmtUsd(s.funding,true), c:cls(s.funding), sub:"journal"},
-  {lbl:"Spot USDC", val:fmtUsd(s.equity_now_spot_usdc), c:"", sub: s.equity_vs_starting_usd!=null ? `Δ ${fmtUsd(s.equity_vs_starting_usd,true)}` : "—"},
-];
-document.getElementById("kpis").innerHTML = kpis.map(k =>
-  `<div class="kpi"><div class="lbl">${k.lbl}</div><div class="val mono ${k.c}">${k.val}</div><div class="sub">${k.sub}</div></div>`
-).join("");
-document.getElementById("breakdown").innerHTML = [
-  ["Starting equity", fmtUsd(BOARD.starting_equity)],
-  ["Trades", String(s.trades||0)],
-  ["Wins", String(s.wins||0)],
-  ["Losses", String(s.losses||0)],
-  ["HL fills", String((BOARD.hl||{}).fills_n||0)],
-  ["Addr", (BOARD.hl||{}).address_redacted || "—"],
-].map(([l,v]) => `<div class="s"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("");
-const startEq = Number(BOARD.starting_equity||0);
-let run = startEq;
-const labels = ["Start"];
-const eq = [run];
-trades.forEach((t,i) => {
-  const pnl = Number(t.pnl||0);
-  const fees = Number(t.fees!=null?t.fees:(t.fee||0));
-  run += (pnl - fees);
-  labels.push((t.symbol||"?")+" #"+(i+1));
-  eq.push(Number(run.toFixed(4)));
-});
-document.getElementById("eqHint").textContent = `${fmtUsd(startEq)} → ${fmtUsd(eq[eq.length-1])}`;
-const lineColor = eq[eq.length-1] >= startEq ? "#00c805" : "#ff4d4f";
-new Chart(document.getElementById("eqChart").getContext("2d"), {
-  type:"line",
-  data:{labels, datasets:[{label:"Equity", data:eq, borderColor:lineColor, backgroundColor:lineColor+"22", fill:true, tension:0.25, pointRadius:3, pointBackgroundColor:"#e8e8e8", borderWidth:2}]},
-  options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:(c)=>" "+fmtUsd(c.parsed.y)}}},
-    scales:{x:{ticks:{color:"#5c5c5c", maxRotation:0, autoSkip:true, maxTicksLimit:8}, grid:{color:"#141414"}},
-            y:{ticks:{color:"#8b8b8b", callback:(v)=>"$"+v}, grid:{color:"#141414"}}}}
-});
-new Chart(document.getElementById("wlChart"), {
-  type:"doughnut",
-  data:{labels:["Wins","Losses","BE"], datasets:[{data:[s.wins||0,s.losses||0,s.breakeven||0], backgroundColor:["#00c805","#ff4d4f","#e6c07b"], borderWidth:0}]},
-  options:{responsive:true, maintainAspectRatio:false, cutout:"68%", plugins:{legend:{position:"bottom", labels:{color:"#8b8b8b", boxWidth:10}}}}
-});
-document.getElementById("tradeCount").textContent = trades.length + " rows";
-const tb = document.getElementById("trades");
-if(!trades.length){
-  tb.innerHTML = `<tr><td colspan="8" class="empty">No closed trades in window</td></tr>`;
-} else {
-  tb.innerHTML = trades.map(t => {
-    const pnl = Number(t.pnl||0);
-    const fees = Number(t.fees!=null?t.fees:(t.fee||0));
-    const net = pnl - fees;
-    const res = (t.result||"").toUpperCase();
-    const pill = res==="WIN"?"win":(res==="LOSS"?"loss":"be");
-    return `<tr>
-      <td class="mono dim">${et(t.closed_ts)}</td>
-      <td class="mono">${t.symbol||"—"}</td>
-      <td class="muted">${t.dir || t.side || "—"}</td>
-      <td><span class="pill ${pill}">${res||"—"}</span></td>
-      <td class="num ${cls(pnl)}">${fmtUsd(pnl,true)}</td>
-      <td class="num neg">${fmtUsd(fees)}</td>
-      <td class="num ${cls(net)}">${fmtUsd(net,true)}</td>
-      <td class="num muted">${t.sz!=null?Number(t.sz):"—"}</td>
-    </tr>`;
-  }).join("");
+
+/* ---------- render ---------- */
+function kpi(lbl,val,sub,c){ return `<div class="kpi"><div class="lbl">${lbl}</div><div class="val ${c??""}">${val}</div><div class="sub">${sub??""}</div></div>`; }
+function renderKpis(){ const k=BOARD.kpis; const td=BOARD.days[k.today_key]||{trades:0,wins:0,losses:0};
+  $("kpis").innerHTML=[
+    kpi("Today (realized)",money(k.today),`${td.trades} closed · ${td.wins}W/${td.losses}L`,cls(k.today)),
+    kpi("This week",money(k.week),`since Mon ${k.week_start.slice(5)}`,cls(k.week)),
+    kpi("Month to date",money(k.mtd),`all history ${money(k.all_time)}`,cls(k.mtd)),
+    kpi("Win rate (closed)",k.win_rate==null?"—":k.win_rate.toFixed(1)+"%",`${k.wins}W / ${k.losses}L · ${k.closed} trades`,""),
+    kpi("Open uPnL",money(k.open_upnl),`${BOARD.positions.length} open · ${BOARD.pending.length} resting`,cls(k.open_upnl)),
+    kpi("Account equity",money(k.equity_spot_usdc,false),`spot USDC total · perp margin ${money(k.perp_account_value,false)}`,"")].join("");
 }
-const opens = BOARD.open_positions || [];
-const op = document.getElementById("opens");
-if(!opens.length){
-  op.innerHTML = `<div class="empty">Flat — no open HL perps</div>`;
-} else {
-  op.innerHTML = `<table><thead><tr><th>Coin</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">uPnL</th></tr></thead><tbody>` +
-    opens.map(p => `<tr><td class="mono">${p.coin||"—"}</td><td>${p.side||"—"}</td><td class="num">${p.szi}</td><td class="num">${p.entry}</td><td class="num ${cls(p.uPnl)}">${fmtUsd(p.uPnl,true)}</td></tr>`).join("") +
-    `</tbody></table>`;
+function ym(y,m){ return `${y}-${String(m).padStart(2,"0")}`; }
+function renderCal(){
+  const [y,m]=VIEW; $("monLbl").textContent=new Date(Date.UTC(y,m-1,15)).toLocaleString("en-US",{month:"long",year:"numeric",timeZone:"UTC"});
+  const first=new Date(Date.UTC(y,m-1,1)); const lead=(first.getUTCDay()+6)%7; const dim=new Date(Date.UTC(y,m,0)).getUTCDate();
+  const today=BOARD.kpis.today_key; const cells=Math.ceil((lead+dim)/7)*7;
+  let h=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dow">${d}</div>`).join("")+`<div class="dow wk">Week</div>`;
+  let wk={net:0,trades:0};
+  for(let i=0;i<cells;i++){
+    const dt=new Date(Date.UTC(y,m-1,1-lead+i)); const key=dt.toISOString().slice(0,10); const inM=dt.getUTCMonth()===m-1;
+    const d=BOARD.days[key]; const isT=key===today; const hasOpen=isT&&(BOARD.positions.length||BOARD.pending.length);
+    let c="cell"+(inM?"":" out")+(isT?" today":"")+(d?(" has "+(d.net>0.005?"win":(d.net<-0.005?"loss":""))):" empty")+(hasOpen&&!d?" has":"");
+    h+=`<div class="${c}" data-day="${key}"><div class="dn"><b>${dt.getUTCDate()}</b>${isT?'<span class="amber">TODAY</span>':""}</div>`;
+    if(d){ h+=`<div class="cnt">${d.trades} trade${d.trades>1?"s":""} · ${d.wins}W/${d.losses}L</div>`; wk.net+=d.net; wk.trades+=d.trades; }
+    if(hasOpen) h+=`<div class="live ${cls(BOARD.kpis.open_upnl)}">open ${money(BOARD.kpis.open_upnl)}</div>`;
+    h+=`<div class="pnl ${d?cls(d.net):""}">${d?money(d.net):(inM?"·":"")}</div></div>`;
+    if(i%7===6){ h+=`<div class="wk"><div class="l">Week net</div><div class="v ${wk.trades?cls(wk.net):"dim"}">${wk.trades?money(wk.net):"—"}</div><div class="cnt dim mono" style="font-size:10px">${wk.trades} trades</div></div>`; wk={net:0,trades:0}; }
+  }
+  $("cal").innerHTML=h;
+  $("cal").querySelectorAll(".cell.has").forEach(el=>el.onclick=()=>openDay(el.dataset.day));
 }
-const notes = (BOARD.notes||[]).map(n => `• ${n}`).join("<br>");
-const hl = BOARD.hl || {};
-document.getElementById("notes").innerHTML =
-  `${notes}<br><br>Money source: <code>${BOARD.money_source||"—"}</code> · HL ok=${hl.ok} addr=<code>${hl.address_redacted||"—"}</code> · No private keys · Testnet only.<br>Refresh: <code>.venv\\Scripts\\python.exe scripts\\pnl_board_since_mon9am.py --publish</code>`;
+function pill(r){ const c=r==="WIN"?"win":r==="LOSS"?"loss":r==="OPEN"?"open":"be"; return `<span class="pill ${c}">${r}</span>`; }
+function riskCell(t){ if(t.risk==null) return '<span class="dim">—</span>'; let s=money(t.risk,false);
+  if(t.initial_risk!=null&&t.final_risk!=null&&Math.abs(t.initial_risk-t.final_risk)>0.05) s+=` <span class="dim rsub" title="initial stop ${px(t.initial_stop)} → final stop ${px(t.stop)}">(${money(t.initial_risk,false)}→${money(t.final_risk,false)})</span>`;
+  return s; }
+function tradesTable(list){
+  if(!list.length) return '<div class="empty">No closed trades.</div>';
+  return `<div class="tbl"><table><thead><tr><th>Coin</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Stop</th><th class="num">Risk $</th><th class="num">Fees</th><th class="num">Gross</th><th class="num">Net</th><th class="num">R</th><th>Exit</th><th>Result</th><th>Open ET</th><th>Close ET</th></tr></thead><tbody>`+
+  list.map(t=>`<tr><td>${coinLbl(t.coin)}${t.partial_history?' <span class="amber" title="opened before history window">*</span>':""}</td><td class="side-${t.side}">${t.side.toUpperCase()}</td><td class="num">${sz(t.size)}</td><td class="num">${px(t.entry)}</td><td class="num">${px(t.exit)}</td><td class="num">${px(t.stop)}</td><td class="num">${riskCell(t)}</td><td class="num neg">${money(-t.fees)}</td><td class="num ${cls(t.gross)}">${money(t.gross)}</td><td class="num ${cls(t.net)}"><b>${money(t.net)}</b></td><td class="num ${cls(t.r_mult)}">${t.r_mult==null?"—":(t.r_mult>0?"+":"")+t.r_mult.toFixed(2)+"R"}</td><td class="mono dim">${t.exit_type||"—"}</td><td>${pill(t.result)}</td><td class="mono dim">${t.open_et.slice(5)}</td><td class="mono dim">${t.close_et.slice(5)}</td></tr>`).join("")+`</tbody></table></div>`;
+}
+function openTable(){
+  let h=""; const P=BOARD.positions, R=BOARD.pending;
+  if(P.length) h+=`<div class="tbl"><table><thead><tr><th>Coin</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">Mark</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Risk $</th><th class="num">uPnL</th><th class="num">Fees paid</th><th class="num">Liq</th><th>Lev</th><th>Opened ET</th><th></th></tr></thead><tbody>`+
+    P.map(p=>`<tr><td>${coinLbl(p.coin)}</td><td class="side-${p.side}">${p.side.toUpperCase()}</td><td class="num">${sz(p.size)}</td><td class="num">${px(p.entry)}</td><td class="num">${px(p.mark)}</td><td class="num">${px(p.stop)}</td><td class="num">${px(p.target)}</td><td class="num">${p.risk==null?"—":money(p.risk,false)}</td><td class="num ${cls(p.upnl)}"><b>${money(p.upnl)}</b></td><td class="num neg">${money(-(p.fees||0))}</td><td class="num dim">${px(p.liq)}</td><td class="mono dim">${p.leverage}</td><td class="mono dim">${(p.open_et||"—").slice(5)}</td><td>${pill("OPEN")}</td></tr>`).join("")+`</tbody></table></div>`;
+  if(R.length) h+=`<div style="height:.6rem"></div><div class="tbl"><table><thead><tr><th>Resting entry</th><th>Side</th><th class="num">Size</th><th class="num">Limit</th><th class="num">Mark</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Planned risk</th><th class="num">Planned reward</th><th class="num">R:R</th><th>Placed ET</th></tr></thead><tbody>`+
+    R.map(p=>`<tr><td>${coinLbl(p.coin)}</td><td class="side-${p.side}">${p.side.toUpperCase()}</td><td class="num">${sz(p.size)}</td><td class="num">${px(p.entry)}</td><td class="num">${px(p.mark)}</td><td class="num">${px(p.stop)}</td><td class="num">${px(p.target)}</td><td class="num">${p.planned_risk==null?"—":money(p.planned_risk,false)}</td><td class="num pos">${p.planned_reward==null?"—":money(p.planned_reward,false)}</td><td class="num">${p.planned_risk&&p.planned_reward?(p.planned_reward/p.planned_risk).toFixed(1)+"R":"—"}</td><td class="mono dim">${p.placed_et.slice(5)}</td></tr>`).join("")+`</tbody></table></div>`;
+  return h||'<div class="empty">Flat — no open positions or resting entries.</div>';
+}
+function openDay(day){
+  OPEN_DAY=day; const d=BOARD.days[day]; const list=BOARD.trades.filter(t=>t.day===day); const isT=day===BOARD.kpis.today_key;
+  const dt=new Date(day+"T12:00:00Z"); $("drTitle").innerHTML=`${dt.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric",timeZone:"UTC"})} ${isT?'<span class="badge warn">TODAY</span>':""}`;
+  const wr=d&&(d.wins+d.losses)?(100*d.wins/(d.wins+d.losses)).toFixed(0)+"%":"—";
+  let h=`<div class="stat-row">
+    <div><div class="l">Net PnL</div><div class="v ${cls(d?.net)}">${money(d?.net??0)}</div></div>
+    <div><div class="l">Gross</div><div class="v ${cls(d?.gross)}">${money(d?.gross??0)}</div></div>
+    <div><div class="l">Fees</div><div class="v neg">${money(-(d?.fees??0))}</div></div>
+    <div><div class="l">Trades</div><div class="v">${d?.trades??0}</div></div>
+    <div><div class="l">Win rate</div><div class="v">${wr}</div></div>
+    <div><div class="l">Risk taken</div><div class="v">${d?money(d.risk,false):"—"}</div></div>
+    ${isT?`<div><div class="l">Open uPnL</div><div class="v ${cls(BOARD.kpis.open_upnl)}">${money(BOARD.kpis.open_upnl)}</div></div>`:""}</div>`;
+  h+=`<div><div class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.4rem">Closed trades (by close time ET)</div>${tradesTable(list)}</div>`;
+  if(isT) h+=`<div><div class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.4rem">Still open now</div>${openTable()}</div>`;
+  $("drBody").innerHTML=h; $("drawer").classList.add("on"); $("ov").classList.add("on");
+}
+function closeDay(){ OPEN_DAY=null; $("drawer").classList.remove("on"); $("ov").classList.remove("on"); }
+function render(){
+  if(!BOARD){ $("kpis").innerHTML='<div class="empty">No data yet.</div>'; return; }
+  if(!VIEW){ const [y,m]=BOARD.kpis.today_key.split("-").map(Number); VIEW=[y,m]; }
+  $("addr").textContent=ADDRESS.slice(0,6)+"…"+ADDRESS.slice(-4);
+  renderKpis(); renderCal(); $("openBox").innerHTML=openTable();
+  const live=SOURCE==="live"; $("srcBadge").textContent=live?"LIVE":"SNAPSHOT"; $("srcBadge").className="badge"+(live?"":" warn");
+  $("dot").className="dot"+(live?"":" stale"); $("upd").textContent=`${live?"live":"snapshot"} · ${BOARD.generated_et} ET`;
+  $("foot").innerHTML=`Source: Hyperliquid public info API (fills, historical orders, positions) for <code class="mono">${ADDRESS}</code>. History from ${BOARD.history_from_et||"—"} ET (${BOARD.history_days}d window). `+
+   `Trades are round trips per coin (flat → flat), dated by close time in America/Toronto. Net = closed PnL − all entry/exit fees (funding not included). `+
+   `Risk = |entry − stop| × max size, using the widest stop the trade carried (initial→final shown when it moved); “—” = no stop order found. R = net ÷ risk. `+
+   `<span class="amber">*</span> = position opened before the history window. Account equity = spot USDC total (unified account). Auto-refresh every 60s.`;
+  if(OPEN_DAY) openDay(OPEN_DAY);
+}
+async function refresh(){
+  $("refresh").disabled=true; $("upd").textContent="refreshing…";
+  try{ BOARD=build(await fetchRaw(BOARD?.history_days||90),BOARD?.history_days||90); SOURCE="live"; }
+  catch(e){ console.warn("live API failed, trying calendar.json",e);
+    try{ const r=await fetch("calendar.json?ts="+Date.now(),{cache:"no-store"}); if(r.ok){ BOARD=await r.json(); SOURCE="snapshot"; } }catch(e2){} }
+  $("refresh").disabled=false; render();
+}
+$("refresh").onclick=refresh; $("drClose").onclick=closeDay; $("ov").onclick=closeDay; document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDay(); });
+$("prev").onclick=()=>{ let [y,m]=VIEW; m--; if(m<1){m=12;y--;} VIEW=[y,m]; renderCal(); };
+$("next").onclick=()=>{ let [y,m]=VIEW; m++; if(m>12){m=1;y++;} VIEW=[y,m]; renderCal(); };
+$("todayBtn").onclick=()=>{ VIEW=null; render(); };
+const hd=(location.hash.match(/day=(\d{4}-\d{2}-\d{2})/)||[])[1]; if(hd) OPEN_DAY=hd;
+render(); refresh(); setInterval(refresh,REFRESH_MS);
 </script>
 </body>
 </html>
