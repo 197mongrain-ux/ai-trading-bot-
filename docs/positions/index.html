@@ -15,12 +15,28 @@ a.btn,button{background:#1b2230;color:#cbd5e1;border:1px solid #334;border-radiu
 .tfs{margin-left:auto;display:flex;gap:3px}.tfs button{padding:1px 8px;font-weight:700}.tfs button.on{background:#2563eb;color:#fff}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:4px 10px;margin:6px 0;font-size:12px}.stats .l{color:#7b8496;font-size:10px;text-transform:uppercase;letter-spacing:.05em}.stats .v{font-family:Consolas,monospace;font-weight:700;font-size:13px}
 .cw{position:relative;height:380px}.cw canvas.ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+.plan{border-top:1px solid #222a38;margin:2px 0 6px;padding-top:6px;font-size:12px}
+.stage{display:inline-block;padding:3px 10px;border-radius:5px;font-weight:800;font-size:12px;margin-right:6px}
+.st-WAIT{background:#1e3a8a;color:#bfdbfe}.st-BE{background:#14532d;color:#86efac}.st-NOBE{background:#78350f;color:#fde68a}.st-NOTP{background:#78350f;color:#fde68a}.st-PEND{background:#312e81;color:#c7d2fe}
+.pt{width:100%;border-collapse:collapse;margin-top:5px;font-family:Consolas,monospace;font-size:12px}.pt th{color:#7b8496;font-weight:600;font-size:10px;text-transform:uppercase;text-align:right;padding:2px 6px}.pt th:first-child,.pt td:first-child{text-align:left}
+.pt td{text-align:right;padding:2px 6px;border-top:1px solid #1b2230}.chk{color:#7b8496;font-size:11px;margin-top:4px}.ok{color:#22c55e}.bad{color:#f59e0b}
+#strat{margin:8px 8px 0;background:#121722;border:1px solid #2b3a55;border-radius:8px;padding:8px 12px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+#strat h3{margin:0 0 4px;font-size:13px;color:#93c5fd}#strat ol{margin:0;padding-left:18px;line-height:1.55}#strat .tot{font-family:Consolas,monospace;line-height:1.6;min-width:300px}
+#closed{margin:0 8px 8px;background:#121722;border:1px solid #222a38;border-radius:8px;padding:8px 12px;display:none}#closed h3{margin:0 0 4px;font-size:13px}
 .empty{padding:40px;text-align:center;color:#7b8496;font-size:15px}
 </style></head><body>
 <div id="hdr"><h1>Open positions · Hyperliquid mainnet</h1><span class="pill mono" id="acct"></span><span class="pill" id="tot">-</span>
 <div style="flex:1"></div><span class="mut" id="upd">loading…</span><a class="btn" id="back" href="/">← Live board</a></div>
+<div id="strat"><div><h3>Current strategy · main exit plan (approved Oct 20, 2026)</h3><ol>
+<li>Maker (post-only) limit entry at a heavy 4h level, only after confirmation.</li>
+<li>Stop at least 1.5× the 4h ATR away; size so the stop loses 2% of spot USDC.</li>
+<li>Take 25% at 1R, then move the stop to breakeven (entry + fees).</li>
+<li>Run the remaining 75% to 2R.</li></ol>
+<div class="mut" style="margin-top:4px;font-size:11px">Stages below are read from live orders/fills: TP1 order gone + size reduced = TP1 hit; stop at/above entry = breakeven. Trust the setup — no moving orders mid-trade.</div></div>
+<div class="tot" id="plantot">loading…</div></div>
 <div id="grid"><div class="empty">Loading positions…</div></div>
-<div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders.
+<div id="closed"><h3>Closed today (ET)</h3><div id="closedT"></div></div>
+<div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders. Plan $ figures are net of fees (maker 0.015%, taker 0.045%).
 Boxes = TradingView Long/Short Position style: green = entry → TP (reward), red = entry → SL (risk), starting at the fill time. Dotted orange = liquidation, dashed blue = resting entry limit (pending). Prices tick every 5s, candles reload every 30s, positions/orders re-discovered every 10s.</div>
 <script>
 const ADDR=new URLSearchParams(location.search).get("address")||"0x052091F7bc55779D8D83546D8B9BCf9A9956d541";
@@ -32,7 +48,45 @@ const dp=v=>{const a=Math.abs(v);return a>=1000?1:a>=100?2:a>=1?3:a>=0.01?5:7};
 const fp=(v,d)=>v==null||isNaN(v)?"-":(+v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const money=v=>v==null?"-":(v<0?"−$":"+$")+Math.abs(v).toFixed(2);
 const tvSym=c=>c.includes(":")?null:"HYPERLIQUID:"+c+"USDC.P";
-let MIDS={},CARDS={},FILLS=[];
+let MIDS={},CARDS={},FILLS=[],SPOT=null,ATR={};
+const MAKER=0.00015,TAKER=0.00045,BE_FEE=0.0003,PLAN={tp1R:1,tp1Pct:.25,tp2R:2,minAtr:1.5,riskPct:.02};
+const sig=v=>v==null||isNaN(v)?null:+(+v).toPrecision(5);
+async function atr4h(coin){const c=ATR[coin];if(c&&Date.now()-c.t<6e5)return c.v;
+  try{const now=Date.now(),raw=await q({type:"candleSnapshot",req:{coin,interval:"4h",startTime:now-60*144e5,endTime:now}});
+    const b=raw.map(k=>({h:+k.h,l:+k.l,c:+k.c}));if(b.length<16)return null;const tr=[];
+    for(let i=1;i<b.length;i++)tr.push(Math.max(b[i].h-b[i].l,Math.abs(b[i].h-b[i-1].c),Math.abs(b[i].l-b[i-1].c)));
+    let a=tr.slice(0,14).reduce((s,x)=>s+x,0)/14;for(let i=14;i<tr.length;i++)a=(a*13+tr[i])/14;ATR[coin]={t:Date.now(),v:a};return a}catch(e){return c?c.v:null}}
+// Derive the plan state of a live position from its orders + fills (works for any trade sized by the same rule)
+function planOf(it,ro,seg){const sgn=it.side==="LONG"?1:-1,E=it.entry,size=it.size;
+  const stops=ro.filter(o=>(o.orderType||"").startsWith("Stop")).map(o=>({px:+o.triggerPx,sz:+o.sz})).sort((a,b)=>sgn*(b.px-a.px));
+  const tps=ro.filter(o=>!(o.orderType||"").startsWith("Stop")).map(o=>({px:+(o.isTrigger?o.triggerPx:o.limitPx),sz:+o.sz})).sort((a,b)=>sgn*(a.px-b.px));
+  const sl=stops.length?stops[0].px:null;
+  const opens=seg.filter(f=>(f.dir||"").startsWith("Open")),closes=seg.filter(f=>(f.dir||"").startsWith("Close"));
+  const opened=opens.reduce((s,f)=>s+ +f.sz,0),S0=Math.max(size,opened),closedQty=closes.reduce((s,f)=>s+ +f.sz,0);
+  const entryFee=opens.length?opens.reduce((s,f)=>s+ +f.fee,0)*(S0/opened):S0*E*MAKER;
+  const realized=closes.reduce((s,f)=>s+(+f.closedPnl)-(+f.fee),0);
+  const reduced=closedQty>S0*0.02&&size<S0*0.99;
+  const slLoss=sl!=null&&sgn*(E-sl)>0;
+  let R=null,Rsrc="";
+  if(slLoss&&!reduced){R=Math.abs(E-sl);Rsrc="stop distance"}
+  else if(reduced&&closes.length&&sgn*(+closes[0].px-E)>0){R=Math.abs(+closes[0].px-E);Rsrc="TP1 fill"}
+  else if(slLoss){R=Math.abs(E-sl);Rsrc="stop distance"}
+  else if(tps.length>=2){R=Math.abs(tps[0].px-E);Rsrc="TP1 order"}
+  else if(tps.length===1){R=Math.abs(tps[0].px-E)/2;Rsrc="TP2 order"}
+  const P={sgn,sl,R,Rsrc,S0,reduced,closedQty,realized,entryFee,tps,maker:opens.length?opens.every(f=>!f.crossed):null,be:sig(E*(1+sgn*BE_FEE))};
+  if(R==null){P.stage=tps.length?"WAIT":"NOTP";return P}
+  P.tp1P=sig(E+sgn*R*PLAN.tp1R);P.tp2P=sig(E+sgn*R*PLAN.tp2R);
+  P.tp1o=tps.find(t=>Math.abs(t.px-P.tp1P)<=.25*R)||null;P.tp2o=tps.find(t=>Math.abs(t.px-P.tp2P)<=.25*R)||null;
+  if(reduced&&P.tp1o===P.tp2o)P.tp1o=null;
+  if(!reduced&&!P.tp1o&&!P.tp2o&&tps.length){P.tp1o=tps[0];if(tps.length>1)P.tp2o=tps[tps.length-1]}
+  P.tp1Px=P.tp1o?P.tp1o.px:P.tp1P;P.tp2Px=P.tp2o?P.tp2o.px:P.tp2P;
+  P.q1=reduced?closedQty:(P.tp1o?P.tp1o.sz:S0*PLAN.tp1Pct);P.q2=reduced?size:(P.tp2o?P.tp2o.sz:S0-P.q1);
+  P.tp1Net=reduced?realized-entryFee*closedQty/S0:P.q1*Math.abs(P.tp1Px-E)-P.q1*(E+P.tp1Px)*MAKER;
+  P.tp2Net=P.q2*Math.abs(P.tp2Px-E)-P.q2*(E+P.tp2Px)*MAKER;P.atTP2=P.tp1Net+P.tp2Net;
+  P.ifStop=sl==null?null:realized-entryFee+size*sgn*(sl-E)-size*sl*TAKER;
+  P.ifBE=P.tp1Net+P.q2*sgn*(P.be-E)-P.q2*P.be*TAKER-P.q2*E*MAKER;
+  P.atBE=sl!=null&&sgn*(sl-E)>=0;
+  P.stage=reduced?(P.atBE?"BE":"NOBE"):(tps.length?"WAIT":"NOTP");return P}
 
 async function discover(){
   const pos=[],orders=[];
@@ -43,12 +97,14 @@ async function discover(){
   const items={};
   for(const p of pos){const szi=+p.szi,side=szi>0?"LONG":"SHORT",cls=szi>0?"A":"B";
     const ro=orders.filter(o=>o.coin===p.coin&&o.reduceOnly&&o.side===cls);
-    const sl=ro.find(o=>(o.orderType||"").startsWith("Stop")),tp=ro.find(o=>(o.orderType||"").startsWith("Take"));
+    const sl=ro.filter(o=>(o.orderType||"").startsWith("Stop")).sort((a,b)=>(szi>0?1:-1)*(b.triggerPx-a.triggerPx))[0],tp=ro.find(o=>(o.orderType||"").startsWith("Take"));
     // fill time = first fill of the current position (walk back to where it opened from flat)
     const fs=FILLS.filter(f=>f.coin===p.coin).sort((a,b)=>a.time-b.time);let t0=null;
-    for(let i=fs.length-1;i>=0;i--){const f=fs[i];const st=+f.startPosition;if(Math.abs(st)<1e-12||(st>0)!==(szi>0)){t0=f.time;break}}
+    let i0=-1;for(let i=fs.length-1;i>=0;i--){const f=fs[i];const st=+f.startPosition;if(Math.abs(st)<1e-12||(st>0)!==(szi>0)){t0=f.time;i0=i;break}}
     items["P:"+p.coin]={key:"P:"+p.coin,coin:p.coin,kind:"pos",side,size:Math.abs(szi),entry:+p.entryPx,liq:p.liquidationPx?+p.liquidationPx:null,upnl:+p.unrealizedPnl,
-      sl:sl?+sl.triggerPx:null,tp:tp?+tp.triggerPx:null,t0:t0||Date.now(),lev:p.leverage?`${p.leverage.value}x ${p.leverage.type}`:""}}
+      sl:sl?+sl.triggerPx:null,tp:tp?+tp.triggerPx:null,t0:t0||Date.now(),lev:p.leverage?`${p.leverage.value}x ${p.leverage.type}`:""};
+    const it=items["P:"+p.coin];it.P=planOf(it,ro,i0>=0?fs.slice(i0):[]);it.tp=it.P.tp2Px??it.tp;it.tp1=it.P.stage==="WAIT"||it.P.stage==="NOTP"?it.P.tp1Px:null;it.atr=await atr4h(p.coin)}
+  try{const sp=await q({type:"spotClearinghouseState",user:ADDR});const u=(sp.balances||[]).find(b=>b.coin==="USDC");SPOT=u?+u.total:SPOT}catch(e){}
   const pend=orders.filter(o=>!o.reduceOnly&&!o.isTrigger);
   for(const o of pend){const k="P:"+o.coin; const kids=o.children||[];
     const pe={px:+o.limitPx,sz:+o.sz,side:o.side==="B"?"LONG":"SHORT",sl:(kids.find(c=>(c.orderType||"").startsWith("Stop"))||{}).triggerPx,tp:(kids.find(c=>(c.orderType||"").startsWith("Take"))||{}).triggerPx,t:o.timestamp};
@@ -59,7 +115,7 @@ async function discover(){
 function makeCard(it){
   const el=document.createElement("div");el.className="card";el.innerHTML=`<div class="ch"><span class="coin">${it.coin.replace("xyz:","")}${it.coin.includes(":")?' <span class="mut" style="font-size:11px">xyz</span>':""}</span><span class="side"></span><span class="mut lev"></span>
    ${tvSym(it.coin)?`<a class="btn" target="_blank" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(it.coin))}">Open in TradingView ↗</a>`:""}
-   <span class="tfs">${Object.keys(TFMS).map(t=>`<button data-tf="${t}">${t}</button>`).join("")}</span></div><div class="stats"></div><div class="cw"><canvas class="ov"></canvas></div>`;
+   <span class="tfs">${Object.keys(TFMS).map(t=>`<button data-tf="${t}">${t}</button>`).join("")}</span></div><div class="stats"></div><div class="plan"></div><div class="cw"><canvas class="ov"></canvas></div>`;
   $("grid").appendChild(el);const cw=el.querySelector(".cw");
   const chart=LightweightCharts.createChart(cw,{autoSize:true,layout:{background:{color:"#05070a"},textColor:"#9aa4b5",fontSize:11},grid:{vertLines:{color:"rgba(255,255,255,.04)"},horzLines:{color:"rgba(255,255,255,.04)"}},
     rightPriceScale:{borderColor:"#222a38",scaleMargins:{top:.08,bottom:.08}},timeScale:{borderColor:"#222a38",timeVisible:true,secondsVisible:false,rightOffset:8},crosshair:{mode:0},
@@ -74,7 +130,9 @@ function makeCard(it){
 
 function setLines(C){const it=C.it,s=C.s;C.lines.forEach(l=>s.removePriceLine(l));C.lines=[];
   const d=dp(it.entry),L=(price,color,title,style=0,w=1)=>{if(price!=null&&!isNaN(price))C.lines.push(s.createPriceLine({price:+price,color,lineWidth:w,lineStyle:style,axisLabelVisible:true,title}))};
-  if(it.kind==="pos"){L(it.entry,"#e5e7eb","ENTRY",0,2);L(it.sl,"#ef4444","SL",0,1);L(it.tp,"#22c55e","TP",0,1);L(it.liq,"#f97316","LIQ",1,1)}
+  if(it.kind==="pos"){const P=it.P||{};L(it.entry,"#e5e7eb","ENTRY",0,2);L(it.sl,"#ef4444",P.stage==="BE"?"SL (BE)":"SL",0,1);
+    if(P.R){L(it.tp1,"#86efac","TP1 1R · 25%",2,1);L(it.tp,"#22c55e","TP2 2R",0,1);if(P.stage!=="BE")L(P.be,"#facc15","BE stop after TP1",3,1)}else L(it.tp,"#22c55e","TP",0,1);
+    L(it.liq,"#f97316","LIQ",1,1)}
   else{L(it.sl,"#ef4444","SL",2,1);L(it.tp,"#22c55e","TP",2,1)}
   (it.pend||[]).forEach(p=>L(p.px,"#60a5fa",`PENDING ${p.side} ${p.sz}`,2,2))}
 
@@ -89,20 +147,58 @@ function drawBox(C){const cv=C.ov,r=C.cw.getBoundingClientRect(),dpr=window.devi
   box(it.tp,"rgba(34,197,94,.16)","rgba(34,197,94,.55)");box(it.sl,"rgba(239,68,68,.16)","rgba(239,68,68,.55)");x.setLineDash([]);
   // labels like TV: target / stop with % and R
   x.font="bold 11px Segoe UI,Arial";const lab=(p,txt,col)=>{if(p==null)return;const yp=y(p);if(yp==null)return;const w=x.measureText(txt).width+10,cx=x0+(x1-x0)/2-w/2,cy=it.side==="LONG"?(p>it.entry?yp-18:yp+3):(p<it.entry?yp+3:yp-18);x.fillStyle=col;x.fillRect(cx,cy,w,15);x.fillStyle="#fff";x.fillText(txt,cx+5,cy+11)};
-  const pc=p=>((p-it.entry)/it.entry*100).toFixed(2)+"%",rr=it.sl&&it.tp?Math.abs(it.tp-it.entry)/Math.abs(it.entry-it.sl):null;
+  const pc=p=>((p-it.entry)/it.entry*100).toFixed(2)+"%",rr=it.P&&it.P.R&&it.tp?Math.abs(it.tp-it.entry)/it.P.R:(it.sl&&it.tp&&it.sl!==it.entry?Math.abs(it.tp-it.entry)/Math.abs(it.entry-it.sl):null);
   lab(it.tp,`Target ${fp(it.tp,dp(it.tp))} (${pc(it.tp)})${rr?` · ${rr.toFixed(2)}R`:""}`,"rgba(22,163,74,.9)");lab(it.sl,`Stop ${fp(it.sl,dp(it.sl))} (${pc(it.sl)})`,"rgba(220,38,38,.9)");
+  if(it.tp1&&it.P&&it.P.R){const yp=y(it.tp1);if(yp!=null){x.strokeStyle="rgba(134,239,172,.9)";x.setLineDash([5,3]);x.beginPath();x.moveTo(x0,yp);x.lineTo(x1,yp);x.stroke();x.setLineDash([]);lab(it.tp1,`TP1 ${fp(it.tp1,dp(it.tp1))} (${pc(it.tp1)}) · 1R · 25%`,"rgba(21,128,61,.9)")}}
   // entry marker at fill bar
   x.fillStyle="#e5e7eb";x.beginPath();x.arc(x0,ye,3.5,0,7);x.fill()}
 
 function stats(C){const it=C.it,m=MIDS[it.coin]?+MIDS[it.coin]:null,el=C.el,d=dp(it.entry);el.querySelector(".side").className="side "+(it.kind==="pend"?"PEND":it.side);
   el.querySelector(".side").textContent=it.kind==="pend"?"PENDING "+it.side:it.side;el.querySelector(".lev").textContent=it.lev||"";
-  const sgn=it.side==="LONG"?1:-1,up=it.kind==="pos"&&m?sgn*(m-it.entry)*it.size:null,risk=it.sl?Math.abs(it.entry-it.sl)*it.size:null;
+  const sgn=it.side==="LONG"?1:-1,up=it.kind==="pos"&&m?sgn*(m-it.entry)*it.size:null,risk=it.sl?Math.abs(it.entry-it.sl)*it.size:null,PR=it.P&&it.P.R?it.P.R:null,rNow=it.kind==="pos"&&m&&PR?sgn*(m-it.entry)/PR:(up!=null&&risk?up/risk:null);
   const dist=p=>p==null||!m?"-":`${((p-m)/m*100>=0?"+":"")}${((p-m)/m*100).toFixed(2)}%`;
   const cell=(l,v,c="")=>`<div><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`;
   el.querySelector(".stats").innerHTML=[cell("Size",it.size.toLocaleString("en-US",{maximumFractionDigits:6})),cell("Entry",fp(it.entry,d)),cell("Mark",fp(m,d)),
-   cell("uPnL",up==null?"-":money(up),up>0?"g":up<0?"r":""),cell("R multiple",up!=null&&risk?(up/risk>=0?"+":"")+(up/risk).toFixed(2)+"R":"-",up>0?"g":up<0?"r":""),
-   cell("To SL",`${fp(it.sl,dp(it.sl||1))} <span class=mut>${dist(it.sl)}</span>`,"r"),cell("To TP",`${fp(it.tp,dp(it.tp||1))} <span class=mut>${dist(it.tp)}</span>`,"g"),
-   cell(it.kind==="pos"?"Liq":"Risk $",it.kind==="pos"?fp(it.liq,d):(risk?"$"+risk.toFixed(2):"-"),"mut")].join("");return up}
+   cell("uPnL",up==null?"-":money(up),up>0?"g":up<0?"r":""),cell("Now (R)",rNow!=null?(rNow>=0?"+":"")+rNow.toFixed(2)+"R":"-",up>0?"g":up<0?"r":""),
+   cell("To SL",`${fp(it.sl,dp(it.sl||1))} <span class=mut>${dist(it.sl)}</span>`,"r"),cell(it.tp1?"To TP1":"To TP",`${fp(it.tp1||it.tp,dp(it.tp1||it.tp||1))} <span class=mut>${dist(it.tp1||it.tp)}</span>`,"g"),
+   cell(it.kind==="pos"?"Liq":"Risk $",it.kind==="pos"?fp(it.liq,d):(risk?"$"+risk.toFixed(2):"-"),"mut")].join("");el.querySelector(".plan").innerHTML=planHtml(it,m,rNow);return up}
+const STG={WAIT:"① Waiting for TP1",NOTP:"① Waiting for TP1 · ⚠ no TP orders on book",BE:"② TP1 hit · stop at breakeven · runner to 2R",NOBE:"② TP1 hit · ⚠ stop NOT at breakeven yet",PEND:"⓪ Entry resting (maker)"};
+function planHtml(it,m,rNow){const P=it.P;
+  if(it.kind!=="pos"){const R=it.sl?Math.abs(it.entry-it.sl):null,s=it.side==="LONG"?1:-1;return `<span class="stage st-PEND">${STG.PEND}</span>`+(R?`<span class="mut">plan: TP1 ${fp(it.entry+s*R,dp(it.entry))} (1R, 25%) · TP2 ${fp(it.entry+s*2*R,dp(it.entry))} (2R, 75%) · BE after TP1 ${fp(sig(it.entry*(1+s*BE_FEE)),dp(it.entry))}</span>`:"")}
+  if(!P||!P.R)return `<span class="stage st-${P?P.stage:"WAIT"}">${STG[P?P.stage:"WAIT"]}</span><span class="mut">no stop/TP found to derive 1R</span>`;
+  const d=dp(it.entry),E=it.entry,pct=v=>(Math.abs(v-E)/E*100).toFixed(2)+"%",st=P.stage,szf=v=>(+v).toLocaleString("en-US",{maximumFractionDigits:6});
+  const row=(name,px,r,sz,usd,status)=>`<tr><td>${name}</td><td>${fp(px,d)}</td><td>${r}</td><td>${sz}</td><td class="${usd==null?"":usd>=0?"g":"r"}">${usd==null?"-":money(usd)}</td><td>${status}</td></tr>`;
+  const done=st==="BE"||st==="NOBE";
+  let h=`<span class="stage st-${st}">${STG[st]}</span><span class="mono">1R = ${fp(P.R,d)} (${pct(E+P.R)}) <span class="mut">from ${P.Rsrc}</span> · now <b class="${rNow>=0?"g":"r"}">${rNow==null?"-":(rNow>=0?"+":"")+rNow.toFixed(2)+"R"}</b></span>`;
+  h+=`<table class="pt"><tr><th>Level</th><th>Price</th><th>R</th><th>Size</th><th>Net $ if hit</th><th>Status</th></tr>`;
+  h+=row(done?"Stop (runner)":"Stop",P.sl,P.sl==null?"-":((P.sgn*(P.sl-E)/P.R>=0?"+":"")+(P.sgn*(P.sl-E)/P.R).toFixed(2)+"R"),szf(it.size),P.ifStop,P.sl==null?'<span class="bad">⚠ no stop</span>':(P.atBE?'<span class="ok">at breakeven</span>':"live"));
+  h+=row("BE stop after TP1",P.be,"+0.00R",szf(P.q2),done?null:P.ifBE,st==="BE"?'<span class="ok">✓ moved</span>':st==="NOBE"?'<span class="bad">⚠ move stop here</span>':"armed after TP1");
+  h+=row("TP1 · 25%",P.tp1Px,"+1R",szf(P.q1),P.tp1Net,done?'<span class="ok">✓ filled · locked</span>':(P.tp1o?"resting":'<span class="bad">no order</span>'));
+  h+=row("TP2 · runner 75%",P.tp2Px,"+2R",szf(P.q2),P.tp2Net,P.tp2o?"resting":'<span class="bad">no order</span>');
+  h+=`</table><div class="chk">${done?`Locked (worst case, runner stopped at BE): <b class="g">${money(P.ifStop)}</b>`:`Locked if TP1 hits: <b class="g">${money(P.tp1Net)}</b>`} · Full plan at TP2: <b class="g">${money(P.atTP2)}</b>`;
+  const ck=[];if(P.maker!=null)ck.push(P.maker?'<span class="ok">maker entry ✓</span>':'<span class="bad">taker entry</span>');
+  if(it.atr)ck.push(`<span class="${P.R>=PLAN.minAtr*it.atr-1e-9?"ok":"bad"}">stop ${(P.R/it.atr).toFixed(2)}× 4h ATR (${fp(it.atr,d)}) ${P.R>=PLAN.minAtr*it.atr-1e-9?"✓":"< 1.5×"}</span>`);
+  const riskUsd=P.S0*P.R;if(SPOT)ck.push(`<span class="${Math.abs(riskUsd/SPOT-PLAN.riskPct)<=.004?"ok":"bad"}">risk $${riskUsd.toFixed(2)} = ${(riskUsd/SPOT*100).toFixed(2)}% of spot USDC</span>`);
+  if(!done&&P.tp1o&&P.tp2o){const f=P.tp1o.sz/(P.tp1o.sz+P.tp2o.sz);ck.push(`<span class="${Math.abs(f-.25)<.03?"ok":"bad"}">TP split ${(f*100).toFixed(0)}/${(100-f*100).toFixed(0)}</span>`)}
+  return h+`<br>${ck.join(" · ")}</div>`}
+function planTotals(){const L=Object.values(CARDS).map(C=>C.it).filter(it=>it.kind==="pos"&&it.P&&it.P.R);let lock=0,tp2=0,stop=0,ns=0;
+  for(const it of L){const P=it.P;lock+=P.stage==="BE"||P.stage==="NOBE"?(P.ifStop??0):P.tp1Net;tp2+=P.atTP2;if(P.ifStop!=null){stop+=P.ifStop;ns++}}
+  $("plantot").innerHTML=(SPOT?`Spot USDC <b>$${SPOT.toFixed(2)}</b> → 2% risk = <b>$${(SPOT*PLAN.riskPct).toFixed(2)}</b>/trade<br>`:"")+(L.length?
+   `${L.length} open on plan · ${L.map(it=>`${it.coin.replace("xyz:","")}: ${STG[it.P.stage].split(" ·")[0]}`).join(", ")}<br>`+
+   `Locked if every TP1 hits: <b class="g">${money(lock)}</b><br>Every runner at TP2: <b class="g">${money(tp2)}</b><br>All stops hit now: <b class="${stop>=0?"g":"r"}">${money(stop)}</b>`:"No open positions on plan.")}
+function closedToday(){const now=new Date(),et=new Date(now.toLocaleString("en-US",{timeZone:"America/Toronto"})),mid=new Date(et.getFullYear(),et.getMonth(),et.getDate()).getTime()+(now.getTime()-et.getTime());
+  const by={};for(const f of FILLS)(by[f.coin]??=[]).push(f);const out=[];
+  for(const [coin,fs] of Object.entries(by)){fs.sort((a,b)=>a.time-b.time);let seg=null;
+    for(const f of fs){const st=+f.startPosition,dz=(f.side==="B"?1:-1)*(+f.sz),end=st+dz;if(Math.abs(st)<1e-12)seg=[];if(!seg)continue;seg.push(f);
+      if(Math.abs(end)<1e-9&&seg.length){if(f.time>=mid)out.push({coin,seg});seg=null}}}
+  if(!out.length){$("closed").style.display="none";return}
+  const rows=out.sort((a,b)=>b.seg.at(-1).time-a.seg.at(-1).time).map(({coin,seg})=>{const op=seg.filter(f=>(f.dir||"").startsWith("Open")),cl=seg.filter(f=>(f.dir||"").startsWith("Close"));
+    const q=op.reduce((s,f)=>s+ +f.sz,0)||1,E=op.reduce((s,f)=>s+f.px*f.sz,0)/q,long=(op[0]||seg[0]).side==="B",s=long?1:-1,net=seg.reduce((a,f)=>a+(+f.closedPnl)-(+f.fee),0);
+    const ex=cl.map(f=>+f.px),prof=ex.map(p=>s*(p-E)>0);let o="Closed";
+    if(net<0&&!prof.some(Boolean))o="Stopped out";else if(ex.length>=2&&prof[0]&&Math.abs(ex.at(-1)-E)/E<.001)o="TP1 → BE stop";else if(ex.length>=2&&prof.every(Boolean))o="TP1 + TP2";else if(net>0)o="Closed in profit";
+    const t=new Date(seg.at(-1).time).toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour:"2-digit",minute:"2-digit",hour12:false});
+    return `<tr><td>${coin.replace("xyz:","")} ${long?"LONG":"SHORT"}</td><td>${t} ET</td><td>${fp(E,dp(E))}</td><td>${ex.map(p=>fp(p,dp(p))).join(" → ")}</td><td>${o}</td><td class="${net>=0?"g":"r"}">${money(net)}</td></tr>`}).join("");
+  $("closed").style.display="block";$("closedT").innerHTML=`<table class="pt"><tr><th>Trade</th><th>Closed</th><th>Entry</th><th>Exits</th><th>Plan stage</th><th>Net $</th></tr>${rows}</table>`}
 
 async function loadCandles(C,fit){C.el.querySelectorAll(".tfs button").forEach(b=>b.classList.toggle("on",b.dataset.tf===C.tf));
   const ms=TFMS[C.tf],now=Date.now();
@@ -117,12 +213,13 @@ function tick(C){const m=MIDS[C.it.coin];if(!m||!C.bars.length)return;const b=C.
 
 async function mids(){for(const d of DEXES){try{Object.assign(MIDS,await q(d?{type:"allMids",dex:d}:{type:"allMids"}))}catch(e){}}}
 function totals(){let t=0;for(const C of Object.values(CARDS)){const u=stats(C);if(u!=null)t+=u}const n=Object.values(CARDS).filter(c=>c.it.kind==="pos").length;
-  $("tot").innerHTML=`${n} open · uPnL <b class="${t>=0?"g":"r"}">${money(t)}</b>`;$("upd").textContent="live · "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
+  planTotals();$("tot").innerHTML=`${n} open · uPnL <b class="${t>=0?"g":"r"}">${money(t)}</b>`;$("upd").textContent="live · "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
 async function sync(){let items;try{items=await discover()}catch(e){$("upd").textContent="API error";return}
-  if(!Object.keys(items).length){Object.values(CARDS).forEach(C=>{C.chart.remove();C.el.remove()});CARDS={};$("grid").innerHTML='<div class="empty">Flat — no open positions or resting entries.</div>';return}
+  try{closedToday()}catch(e){console.warn(e)}
+  if(!Object.keys(items).length){Object.values(CARDS).forEach(C=>{C.chart.remove();C.el.remove()});CARDS={};$("grid").innerHTML='<div class="empty">Flat — no open positions or resting entries.</div>';planTotals();return}
   $("grid").querySelector(".empty")?.remove();
   for(const k of Object.keys(CARDS))if(!items[k]){CARDS[k].chart.remove();CARDS[k].el.remove();delete CARDS[k]}
-  for(const [k,it] of Object.entries(items)){if(!CARDS[k]){CARDS[k]=makeCard(it);CARDS[k].it=it;setLines(CARDS[k]);await loadCandles(CARDS[k],true)}else{const C=CARDS[k];const ch=JSON.stringify([C.it.entry,C.it.sl,C.it.tp,C.it.liq,C.it.size,C.it.pend]),nw=JSON.stringify([it.entry,it.sl,it.tp,it.liq,it.size,it.pend]);C.it=it;if(ch!==nw){setLines(C);drawBox(C)}}}
+  for(const [k,it] of Object.entries(items)){if(!CARDS[k]){CARDS[k]=makeCard(it);CARDS[k].it=it;setLines(CARDS[k]);await loadCandles(CARDS[k],true)}else{const C=CARDS[k];const ch=JSON.stringify([C.it.entry,C.it.sl,C.it.tp,C.it.tp1,C.it.liq,C.it.size,C.it.pend,C.it.P&&C.it.P.stage]),nw=JSON.stringify([it.entry,it.sl,it.tp,it.tp1,it.liq,it.size,it.pend,it.P&&it.P.stage]);C.it=it;if(ch!==nw){setLines(C);drawBox(C)}}}
   totals()}
 (async()=>{await mids();await sync();setInterval(async()=>{await mids();Object.values(CARDS).forEach(tick);totals();Object.values(CARDS).forEach(drawBox)},5000);
   setInterval(sync,10000);setInterval(()=>Object.values(CARDS).forEach(C=>loadCandles(C,false)),30000)})();
