@@ -1,0 +1,22 @@
+{
+ "BTC-20261011-2113": "No notes recorded",
+ "BTC-20261012-0654": "No notes recorded",
+ "BTC-20261012-1221": "No notes recorded",
+ "BTC-20261012-1236": "Bull-trap read: sweep to 83,153 rejected and the 1h closed back under PDL ~82,746. Kept the stop at 83,176 rather than breakeven, trailed it later.",
+ "BTC-20261012-2332": "No notes recorded",
+ "BTC-20261013-0032": "No notes recorded",
+ "BTC-20261014-1146": "No notes recorded",
+ "BTC-20261014-2255": "No notes recorded",
+ "BTC-20261015-1010": "No notes recorded",
+ "BTC-20261015-1506": "No notes recorded",
+ "BTC-20261018-1516": "Trimmed 0.0196 @ 81,050 (+$1.63); rest stopped at 81,434. Stop moved to 81,450 and TP 80,180 at 3R.",
+ "BTC-20261018-1942": "Entered from the chart before a clean BOS confirmation. Lesson: prefer a clear BOS then pullback entry over the first tap of a 4h level.",
+ "BTC-20261019-0418": "Re-entry at 82,840 after the prior 82,075 short got stopped at 82,829. Original TP 81,160 moved to 80,840 for ~3.6R. At 7 PM, data showed only ~41% odds for 80,840 vs ~69% for 81,556 sitting in front of the $94M Coinglass liquidation cluster at 81,630, so TP was moved to 81,556 (2.3R). Price bottomed ~81,417 and bounced, so the move paid off; the old TP would not have filled.",
+ "ETH-20261015-1010": "No notes recorded",
+ "ETH-20261018-1753": "Stop was tight relative to ETH's noise near the level.",
+ "PUMP-20261018-2128": "Same data-trade rules; 10x max on PUMP.",
+ "SOL-20261015-1042": "No notes recorded",
+ "SOL-20261015-1057": "No notes recorded",
+ "SOL-20261015-1106": "No notes recorded",
+ "SOL-20261017-1731": "SOL long 17.7 @ 102.41, stopped at 102.15 (-$5.64)."
+}
