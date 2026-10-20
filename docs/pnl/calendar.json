@@ -1,22 +1,22 @@
 {
  "address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541",
  "network": "mainnet",
- "generated_ms": 1792444023770,
- "generated_et": "2026-10-19 17:07:03",
+ "generated_ms": 1792462939481,
+ "generated_et": "2026-10-19 22:22:19",
  "history_days": 90,
  "history_from_et": "2026-10-06 23:58",
  "kpis": {
-  "today": -11.7,
-  "week": -11.7,
-  "mtd": -111.09,
-  "all_time": -111.09,
-  "win_rate": 5.3,
-  "wins": 1,
+  "today": 11.72,
+  "week": 11.72,
+  "mtd": -87.67,
+  "all_time": -87.67,
+  "win_rate": 10.0,
+  "wins": 2,
   "losses": 18,
-  "closed": 19,
-  "open_upnl": 26.32,
-  "equity_spot_usdc": 1191.614834,
-  "perp_account_value": 230.77,
+  "closed": 20,
+  "open_upnl": 25.89,
+  "equity_spot_usdc": 1214.941634,
+  "perp_account_value": 211.68,
   "today_key": "2026-10-19",
   "week_start": "2026-10-19"
  },
@@ -99,14 +99,14 @@
    "worst": -12.28
   },
   "2026-10-19": {
-   "net": -11.7,
-   "gross": -10.69,
-   "fees": 1.01,
-   "trades": 1,
-   "wins": 0,
+   "net": 11.72,
+   "gross": 13.62,
+   "fees": 1.9,
+   "trades": 2,
+   "wins": 1,
    "losses": 1,
-   "risk": 10.59,
-   "best": -11.7,
+   "risk": 21.15,
+   "best": 23.42,
    "worst": -11.7
   }
  },
@@ -134,6 +134,13 @@
    "n_fills": 7,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261011-2113",
+   "open_oids": [
+    571556987622
+   ],
+   "close_oids": [
+    571602757341
+   ],
    "result": "LOSS",
    "day": "2026-10-12"
   },
@@ -160,6 +167,13 @@
    "n_fills": 3,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261012-0654",
+   "open_oids": [
+    571931626476
+   ],
+   "close_oids": [
+    571931626477
+   ],
    "result": "LOSS",
    "day": "2026-10-12"
   },
@@ -186,6 +200,13 @@
    "n_fills": 5,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261012-1221",
+   "open_oids": [
+    572205637110
+   ],
+   "close_oids": [
+    572216299192
+   ],
    "result": "LOSS",
    "day": "2026-10-12"
   },
@@ -212,6 +233,14 @@
    "n_fills": 3,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261012-1236",
+   "open_oids": [
+    572216299192,
+    572328082826
+   ],
+   "close_oids": [
+    572504183410
+   ],
    "result": "WIN",
    "day": "2026-10-12"
   },
@@ -238,6 +267,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261012-2332",
+   "open_oids": [
+    572708851943
+   ],
+   "close_oids": [
+    572708851944
+   ],
    "result": "LOSS",
    "day": "2026-10-12"
   },
@@ -264,6 +300,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261013-0032",
+   "open_oids": [
+    572728715358
+   ],
+   "close_oids": [
+    572728715359
+   ],
    "result": "LOSS",
    "day": "2026-10-13"
   },
@@ -290,6 +333,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261014-1146",
+   "open_oids": [
+    574349058322
+   ],
+   "close_oids": [
+    574349058323
+   ],
    "result": "LOSS",
    "day": "2026-10-14"
   },
@@ -316,6 +366,13 @@
    "n_fills": 5,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261014-2255",
+   "open_oids": [
+    574899935905
+   ],
+   "close_oids": [
+    575002625415
+   ],
    "result": "LOSS",
    "day": "2026-10-15"
   },
@@ -342,6 +399,13 @@
    "n_fills": 4,
    "partial_history": false,
    "status": "closed",
+   "id": "ETH-20261015-1010",
+   "open_oids": [
+    575502381365
+   ],
+   "close_oids": [
+    575502381366
+   ],
    "result": "LOSS",
    "day": "2026-10-15"
   },
@@ -368,6 +432,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261015-1010",
+   "open_oids": [
+    575530390596
+   ],
+   "close_oids": [
+    575530390597
+   ],
    "result": "LOSS",
    "day": "2026-10-15"
   },
@@ -394,6 +465,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "SOL-20261015-1042",
+   "open_oids": [
+    575502721397
+   ],
+   "close_oids": [
+    575502721398
+   ],
    "result": "LOSS",
    "day": "2026-10-15"
   },
@@ -420,6 +498,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "SOL-20261015-1057",
+   "open_oids": [
+    575614184400
+   ],
+   "close_oids": [
+    575615301919
+   ],
    "result": "LOSS",
    "day": "2026-10-15"
   },
@@ -446,6 +531,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "SOL-20261015-1106",
+   "open_oids": [
+    575627242860
+   ],
+   "close_oids": [
+    575633045913
+   ],
    "result": "LOSS",
    "day": "2026-10-16"
   },
@@ -472,6 +564,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261015-1506",
+   "open_oids": [
+    575832262220
+   ],
+   "close_oids": [
+    575832262221
+   ],
    "result": "LOSS",
    "day": "2026-10-16"
   },
@@ -498,6 +597,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "SOL-20261017-1731",
+   "open_oids": [
+    577061168188
+   ],
+   "close_oids": [
+    577061168189
+   ],
    "result": "LOSS",
    "day": "2026-10-17"
   },
@@ -524,6 +630,14 @@
    "n_fills": 4,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261018-1516",
+   "open_oids": [
+    578541505314
+   ],
+   "close_oids": [
+    578542777539,
+    578544304225
+   ],
    "result": "LOSS",
    "day": "2026-10-18"
   },
@@ -550,6 +664,13 @@
    "n_fills": 12,
    "partial_history": false,
    "status": "closed",
+   "id": "ETH-20261018-1753",
+   "open_oids": [
+    578635240917
+   ],
+   "close_oids": [
+    578635240918
+   ],
    "result": "LOSS",
    "day": "2026-10-18"
   },
@@ -576,6 +697,13 @@
    "n_fills": 2,
    "partial_history": false,
    "status": "closed",
+   "id": "PUMP-20261018-2128",
+   "open_oids": [
+    578752601800
+   ],
+   "close_oids": [
+    578752601801
+   ],
    "result": "LOSS",
    "day": "2026-10-18"
   },
@@ -602,42 +730,51 @@
    "n_fills": 9,
    "partial_history": false,
    "status": "closed",
+   "id": "BTC-20261018-1942",
+   "open_oids": [
+    578743061810
+   ],
+   "close_oids": [
+    578743061811
+   ],
    "result": "LOSS",
    "day": "2026-10-19"
-  }
- ],
- "positions": [
+  },
   {
    "coin": "BTC",
    "side": "short",
    "size": 0.01886,
    "entry": 82840.0,
-   "exit": null,
+   "exit": 81551.0,
    "stop": 83400.0,
    "risk": 10.56,
    "initial_stop": 83400.0,
    "initial_risk": 10.56,
    "final_risk": 10.56,
-   "fees": 0.225,
-   "gross": 0.0,
-   "net": -0.225,
-   "r_mult": null,
+   "fees": 0.8894,
+   "gross": 24.3105,
+   "net": 23.4211,
+   "r_mult": 2.22,
    "open_ms": 1792397885867,
-   "close_ms": null,
+   "close_ms": 1792455651214,
    "open_et": "2026-10-19 04:18",
-   "close_et": null,
-   "exit_type": null,
-   "n_fills": 1,
+   "close_et": "2026-10-19 20:20",
+   "exit_type": "TP",
+   "n_fills": 2,
    "partial_history": false,
-   "status": "open",
-   "upnl": 15.59722,
-   "mark": 82012.5,
-   "liq": 85909.5643271409,
-   "leverage": "20x isolated",
-   "target": 80840.0,
-   "funding_since_open": 0.252023,
-   "net_if_closed_now": 15.3722
-  },
+   "status": "closed",
+   "id": "BTC-20261019-0418",
+   "open_oids": [
+    579084321577
+   ],
+   "close_oids": [
+    579770539671
+   ],
+   "result": "WIN",
+   "day": "2026-10-19"
+  }
+ ],
+ "positions": [
   {
    "coin": "ETH",
    "side": "short",
@@ -661,13 +798,18 @@
    "n_fills": 4,
    "partial_history": false,
    "status": "open",
-   "upnl": 10.297381,
-   "mark": 2400.75,
-   "liq": 2496.4682560451,
+   "id": "ETH-20261018-2310",
+   "open_oids": [
+    578904487693
+   ],
+   "close_oids": [],
+   "upnl": 13.70991,
+   "mark": 2392.85,
+   "liq": 2496.5994119024,
    "leverage": "20x isolated",
    "target": 2326.9,
-   "funding_since_open": 0.212191,
-   "net_if_closed_now": 10.1483
+   "funding_since_open": 0.269328,
+   "net_if_closed_now": 13.5608
   },
   {
    "coin": "SOL",
@@ -692,13 +834,54 @@
    "n_fills": 3,
    "partial_history": false,
    "status": "open",
-   "upnl": 0.4284,
-   "mark": 104.545,
-   "liq": 107.1161347271,
+   "id": "SOL-20261019-1615",
+   "open_oids": [
+    579556529608
+   ],
+   "close_oids": [],
+   "upnl": -0.1428,
+   "mark": 104.585,
+   "liq": 107.1201943021,
    "leverage": "20x isolated",
-   "target": 100.56,
-   "funding_since_open": 0.001392,
-   "net_if_closed_now": 0.2134
+   "target": 101.59,
+   "funding_since_open": 0.060812,
+   "net_if_closed_now": -0.3578
+  },
+  {
+   "coin": "PUMP",
+   "side": "short",
+   "size": 132541.0,
+   "entry": 0.004484,
+   "exit": null,
+   "stop": 0.004617,
+   "risk": 17.63,
+   "initial_stop": 0.004617,
+   "initial_risk": 17.63,
+   "final_risk": 17.63,
+   "fees": 0.0856,
+   "gross": 0.0,
+   "net": -0.0856,
+   "r_mult": null,
+   "open_ms": 1792450583232,
+   "close_ms": null,
+   "open_et": "2026-10-19 18:56",
+   "close_et": null,
+   "exit_type": null,
+   "n_fills": 2,
+   "partial_history": false,
+   "status": "open",
+   "id": "PUMP-20261019-1856",
+   "open_oids": [
+    579762317215
+   ],
+   "close_oids": [],
+   "upnl": 12.326313,
+   "mark": 0.00439,
+   "liq": 0.0046970619,
+   "leverage": "10x isolated",
+   "target": 0.004089,
+   "funding_since_open": 0.021299,
+   "net_if_closed_now": 12.2407
   }
  ],
  "pending": [],
