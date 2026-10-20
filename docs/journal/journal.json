@@ -645,7 +645,7 @@
   "chart_tf": "15m",
   "img_v": "856f1682",
   "reason": "Manual (market)",
-  "note": "No notes recorded"
+  "note": "Long 0.01702 @ 82,746, opened under the new main exit plan: wide stop at 81,479 (at least 1.5x the 4h ATR, size cut to keep 2% risk), take 25% at 1R, then breakeven and run the remaining 75% to 2R. Around 5:33 PM ET Chris had it switched to a near-breakeven stop at 82,780 and a single full-size TP at the day's high, 83,400. A few minutes later, at 5:40 PM, he closed it manually at 82,806 because he didn't like the setup, for roughly breakeven. Part of the takeaway feeding his next step: he felt the 1.5 ATR stop and 1R TP1 are too far for BTC swings and wants to work on a quicker % TP1 with OTE entries."
  },
  {
   "id": "ETH-20261020-1331",
@@ -672,6 +672,6 @@
   "chart_tf": "15m",
   "img_v": "ebbee71e",
   "reason": "Manual (market)",
-  "note": "No notes recorded"
+  "note": "Long 0.3698 @ 2,446.1, opened alongside the BTC long under the main exit plan: wide stop at 2,386.7 (at least 1.5x the 4h ATR, size cut to keep 2% risk), 25% at 1R, then breakeven and run 75% to 2R. Around 5:33 PM ET Chris had the stop moved to near breakeven at 2,447.3 with a single full-size TP at the day's high, 2,476. At 5:40 PM he closed it manually at 2,448.8 because he didn't like the setup, finishing about flat."
  }
 ]
