@@ -14,11 +14,12 @@
  "BTC-20261019-0418": "Re-entry at 82,840 after the prior 82,075 short got stopped at 82,829. Original TP 81,160 moved to 80,840 for ~3.6R. At 7 PM, data showed only ~41% odds for 80,840 vs ~69% for 81,556 sitting in front of the $94M Coinglass liquidation cluster at 81,630, so TP was moved to 81,556 (2.3R). Price bottomed ~81,417 and bounced, so the move paid off; the old TP would not have filled.",
  "ETH-20261015-1010": "No notes recorded",
  "ETH-20261018-1753": "Stop was tight relative to ETH's noise near the level.",
+ "ETH-20261018-2310": "No notes recorded",
  "PUMP-20261018-2128": "Same data-trade rules; 10x max on PUMP.",
- "PUMP-20261019-1856": "No notes recorded",
+ "PUMP-20261019-1856": "Short 132,541 @ 0.004484 at 10x isolated (PUMP's max), opened at 1% risk with stop 0.004573 and TP 0.004089 (~4.4R). Right after the fill Chris had the stop moved to just above the wick at 0.004617 at the same size, raising risk to ~1.5% and cutting the target to ~3R. It ran about 1.9R in favour without tagging the TP, then reversed and stopped at 0.004622 on Oct 20.",
  "SOL-20261015-1042": "No notes recorded",
  "SOL-20261015-1057": "No notes recorded",
  "SOL-20261015-1106": "No notes recorded",
  "SOL-20261017-1731": "SOL long 17.7 @ 102.41, stopped at 102.15 (-$5.64).",
- "SOL-20261019-1615": "No notes recorded"
+ "SOL-20261019-1615": "Short 14.28 @ 104.58, 20x isolated, filled 4:15 PM ET Oct 19 with stop 106.25 and TP 100.56. At 7 PM Chris had the TP pulled in to 101.59 (about 1.8R) for a more attainable fill, the same evening the BTC TP was moved in front of the liquidation cluster; stop left alone. Price got about 0.57R in favour, never reached the closer target, and was stopped at 106.28 on Oct 20."
 }
