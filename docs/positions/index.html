@@ -36,7 +36,7 @@ a.btn,button{background:#1b2230;color:#cbd5e1;border:1px solid #334;border-radiu
 <div class="tot" id="plantot">loading…</div></div>
 <div id="grid"><div class="empty">Loading positions…</div></div>
 <div id="closed"><h3>Closed today (ET)</h3><div id="closedT"></div></div>
-<div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders. Plan $ figures are net of fees (maker 0.015%, taker 0.045%).
+<div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders. Plan $ figures are net of fees (maker 0.015%, taker 0.045%): TP $ = move − maker exit fee − that slice's entry fee; risk $ = stop distance + taker stop fee + entry fee. Planned exits not yet on the book come from plans.json; 'planned (watcher)' = the laptop watcher places it after the fill/TP1.
 Boxes = TradingView Long/Short Position style: green = entry → TP (reward), red = entry → SL (risk), starting at the fill time. Dotted orange = liquidation, dashed blue = resting entry limit (pending). Prices tick every 5s, candles reload every 30s, positions/orders re-discovered every 10s.</div>
 <script>
 const ADDR=new URLSearchParams(location.search).get("address")||"0x052091F7bc55779D8D83546D8B9BCf9A9956d541";
@@ -88,6 +88,65 @@ function planOf(it,ro,seg){const sgn=it.side==="LONG"?1:-1,E=it.entry,size=it.si
   P.atBE=sl!=null&&sgn*(sl-E)>=0;
   P.stage=reduced?(P.atBE?"BE":"NOBE"):(tps.length?"WAIT":"NOTP");return P}
 
+// ---- Per-leg exits, risk & upside (plans.json = planned exits that are not on the book yet) ----
+let PLANS={};
+async function loadPlans(){try{const r=await fetch("plans.json?t="+Date.now(),{cache:"no-store"});if(r.ok)PLANS=await r.json()}catch(e){}}
+const opx=o=>+(o.isTrigger&&(o.orderType||"").startsWith("Stop")?o.triggerPx:(o.isTrigger?o.triggerPx:o.limitPx));
+const isStop=o=>(o.orderType||"").startsWith("Stop");
+function buildLegs(it,pool,seg){const sgn=it.side==="LONG"?1:-1,used=new Set(),usedF=new Set(),plan=(PLANS.coins||{})[it.coin];
+  const lev=parseFloat(it.lev)||(plan&&plan.lev)||20,tol=p=>Math.max(Math.abs(p)*2e-5,1e-9);
+  const closes=(seg||[]).filter(f=>(f.dir||"").startsWith("Close"));
+  const take=(px,sz,oid,stop)=>{let o=oid?pool.find(o=>!used.has(o.oid)&&o.oid===oid):null;
+    if(!o)o=pool.find(o=>!used.has(o.oid)&&isStop(o)===stop&&Math.abs(opx(o)-px)<=tol(px)&&(sz==null||Math.abs(+o.sz-sz)<=sz*.03+1e-12));if(o)used.add(o.oid);return o||null};
+  const filledAt=(px,sz)=>{let q=0,pnl=0,fee=0;for(const f of closes){if(usedF.has(f.tid)||Math.abs(+f.px-px)>tol(px))continue;if(q>=sz*.97)break;usedF.add(f.tid);q+=+f.sz;pnl+=+f.closedPnl;fee+=+f.fee}return q>0?{q,pnl,fee}:null};
+  const mk=(L,state)=>{const E=+L.entry,S=+L.size,ef=L.entryFee??S*E*MAKER,margin=S*E/lev,rows=[];let tpq=0,realized=0;
+    for(const t of L.tps){const q=+t.sz,px=+t.px,fl=state==="filled"?filledAt(px,q):null,o=fl?null:take(px,q,t.oid,false);
+      const net=fl?fl.pnl-fl.fee-ef*fl.q/S:q*sgn*(px-E)-q*px*MAKER-ef*q/S;if(fl){tpq+=fl.q;realized+=net}
+      const status=fl?'<span class="ok">✓ filled</span>':o?(state==="filled"?"on book":"attached (live on fill)"):(L.managed==="watcher"?'<span style="color:#c4b5fd">planned (watcher)</span>':'<span class="bad">⚠ not on book</span>');
+      rows.push({label:t.label||"TP",px,q,pct:q/S,move:sgn*(px-E)/E,net,rom:net/(q*E/lev),status,then:t.then,fl:!!fl,planned:!fl&&!o})}
+    const rem=Math.max(0,S-tpq);
+    let st=null;if(state==="filled"){st=(L.sl_oid&&pool.find(o=>!used.has(o.oid)&&o.oid===L.sl_oid))||pool.filter(o=>!used.has(o.oid)&&isStop(o)&&Math.abs(+o.sz-rem)<=rem*.03+1e-12).sort((a,b)=>sgn*(opx(b)-opx(a)))[0]||null;if(st)used.add(st.oid)}
+    else st=take(+L.sl,S,L.sl_oid,true);
+    const slNow=st?opx(st):(state==="filled"?null:+L.sl),atBE=slNow!=null&&sgn*(slNow-E)>=0;
+    const riskUsd=S*sgn*(E-L.sl)+S*L.sl*TAKER+ef; // initial plan risk incl. entry fee + taker stop
+    const worst=slNow==null?null:realized+rem*sgn*(slNow-E)-rem*slNow*TAKER-ef*rem/S;
+    const upside=rows.reduce((s,r)=>s+r.net,0)+(rem>0&&rows.every(r=>r.fl)?0:0);
+    const uncovered=S-rows.reduce((s,r)=>s+r.q,0);
+    return {name:L.name,managed:L.managed,manager:L.manager,state,E,S,sl:+L.sl,slNow,stopLive:!!st,atBE,be:L.be,rows,rem,riskUsd,worst,upside,margin,lev,uncovered,tpq}};
+  const legs=[];
+  if(plan&&plan.legs){for(const L of plan.legs){const ef=FILLS.filter(f=>f.oid===L.entry_oid);const fq=ef.reduce((s,f)=>s+ +f.sz,0);
+      const rest=(it.pendO||[]).find(o=>o.oid===L.entry_oid);let state=null;
+      if(it.kind==="pos"&&fq>=L.size*.97)state="filled";else if(rest)state="resting";else continue;
+      legs.push(mk({...L,entryFee:fq?ef.reduce((s,f)=>s+ +f.fee,0)*L.size/fq:undefined},state))}
+    // sanity: plan legs must account for the live position size, else fall back to generic
+    const fs=legs.filter(l=>l.state==="filled").reduce((s,l)=>s+l.rem,0);
+    if(legs.length&&(it.kind!=="pos"||Math.abs(fs-it.size)<=it.size*.03+1e-12))return legs;used.clear();usedF.clear();legs.length=0}
+  if(it.kind==="pos"){const opens=(seg||[]).filter(f=>(f.dir||"").startsWith("Open")),oq=opens.reduce((s,f)=>s+ +f.sz,0),S0=Math.max(it.size,oq);
+    const tps=pool.filter(o=>!isStop(o)).sort((a,b)=>sgn*(opx(a)-opx(b))).map((o,i,a)=>({label:a.length>1?`TP${i+1}`:"TP",px:opx(o),sz:+o.sz,oid:o.oid}));
+    const done=[];for(const f of closes)if(sgn*(+f.px-it.entry)>0){const d=done.find(x=>Math.abs(x.px-f.px)<=tol(+f.px));if(d)d.sz+=+f.sz;else done.push({label:"TP (filled)",px:+f.px,sz:+f.sz})}
+    const sl=pool.filter(isStop).sort((a,b)=>sgn*(opx(b)-opx(a)))[0];
+    legs.push(mk({name:"Position",entry:it.entry,size:S0,sl:sl?opx(sl):it.entry,sl_oid:sl&&sl.oid,tps:[...done,...tps],entryFee:opens.length?opens.reduce((s,f)=>s+ +f.fee,0)*S0/oq:undefined},"filled"))}
+  else for(const o of it.pendO||[]){const kids=(o.children||[]).map(c=>({...c}));const sl=kids.find(isStop),tp=kids.filter(c=>!isStop(c));
+    const sub=[...kids];const save=pool;pool=sub;
+    legs.push(mk({name:`Entry ${fp(+o.limitPx,dp(+o.limitPx))} · oid ${o.oid}`,entry:+o.limitPx,size:+o.sz,sl:sl?opx(sl):+o.limitPx,sl_oid:sl&&sl.oid,tps:tp.map(c=>({label:"TP",px:opx(c),sz:+o.sz,oid:c.oid}))},"resting"));pool=save}
+  return legs}
+const pctS=v=>(v>=0?"+":"")+(v*100).toFixed(2)+"%";
+function legsHtml(it){const L=it.legs||[];if(!L.length)return "";const d=dp(it.entry),szf=v=>(+v).toLocaleString("en-US",{maximumFractionDigits:6});
+  let h="";let tr=0,tu=0,tw=0,nw=0;
+  for(const l of L){tr+=l.riskUsd;tu+=l.upside;if(l.worst!=null){tw+=l.worst;nw++}
+    const R=l.riskUsd>0?l.upside/l.riskUsd:null,slPct=Math.abs(l.E-l.sl)/l.E;
+    h+=`<div style="margin-top:6px"><b>${l.name}</b> <span class="mut">· ${szf(l.S)} @ ${fp(l.E,d)} · ${l.state==="filled"?"filled":"entry resting"} · margin $${l.margin.toFixed(2)} (${l.lev}x)${l.managed==="watcher"?` · exits by watcher${l.manager?" "+l.manager:""}`:""}</span></div>`;
+    h+=`<table class="pt"><tr><th>Level</th><th>Price</th><th>Size (% of leg)</th><th>Move</th><th>Net $ at level</th><th>On margin</th><th>Status</th></tr>`;
+    for(const r of l.rows)h+=`<tr><td>${r.label}${r.then?`<div class="mut" style="font-size:10px">then ${r.then}</div>`:""}</td><td>${fp(r.px,d)}</td><td>${szf(r.q)} (${(r.pct*100).toFixed(0)}%)</td><td class="g">${pctS(r.move)}</td><td class="${r.net>=0?"g":"r"}">${money(r.net)}</td><td class="${r.rom>=0?"g":"r"}">${pctS(r.rom)}</td><td>${r.status}</td></tr>`;
+    const slRow=l.slNow??l.sl,slNet=l.state==="filled"&&l.worst!=null?l.worst:-l.riskUsd;
+    h+=`<tr><td>Stop${l.atBE?" (BE)":""}</td><td>${fp(slRow,d)}</td><td>${szf(l.rem)} (${(l.rem/l.S*100).toFixed(0)}%)</td><td class="r">${pctS(-(Math.abs(l.E-slRow)/l.E)*(l.atBE?-1:1))}</td><td class="${slNet>=0?"g":"r"}">${money(slNet)}</td><td class="${slNet>=0?"g":"r"}">${pctS(slNet/l.margin)}</td><td>${l.stopLive||l.state!=="filled"?(l.atBE?'<span class="ok">at breakeven</span>':(l.state==="filled"?"live":"attached")):'<span class="bad">⚠ no stop</span>'}</td></tr>`;
+    if(l.be&&!l.atBE)h+=`<tr><td>BE stop after TP1</td><td>${fp(l.be,d)}</td><td colspan="5" class="mut" style="text-align:left">armed after TP1 (${l.managed==="watcher"?"watcher":"manual"})</td></tr>`;
+    h+=`</table>`;
+    const sp=SPOT?` = <b>${(l.riskUsd/SPOT*100).toFixed(2)}%</b> of spot USDC`:"",up=SPOT?` = <b>${(l.upside/SPOT*100).toFixed(2)}%</b> of spot USDC`:"";
+    h+=`<div class="chk mono">Risk <b class="r">${money(-l.riskUsd)}</b>${sp} · stop ${(slPct*100).toFixed(2)}% away · ${pctS(-l.riskUsd/l.margin)} of margin<br>Upside (all TPs) <b class="g">${money(l.upside)}</b>${up} · ${pctS(l.upside/l.margin)} of margin${R!=null?` · <b>${R.toFixed(2)}R</b>`:""}${l.uncovered>l.S*.02?` · <span class="bad">⚠ ${szf(l.uncovered)} has no TP</span>`:""}${l.tpq>0&&l.worst!=null?` · worst case now ${money(l.worst)}`:""}</div>`}
+  if(L.length>1){const R=tr>0?tu/tr:null;h+=`<div class="chk mono" style="border-top:1px solid #222a38;margin-top:6px;padding-top:4px;color:#d8dee9"><b>All ${L.length} legs</b> · Risk <b class="r">${money(-tr)}</b>${SPOT?` (${(tr/SPOT*100).toFixed(2)}% of spot USDC)`:""} · Upside <b class="g">${money(tu)}</b>${SPOT?` (${(tu/SPOT*100).toFixed(2)}%)`:""}${R!=null?` · <b>${R.toFixed(2)}R</b>`:""}</div>`}
+  return h}
+
 async function discover(){
   const pos=[],orders=[];
   for(const d of DEXES){const ex=d?{dex:d}:{};
@@ -103,13 +162,16 @@ async function discover(){
     let i0=-1;for(let i=fs.length-1;i>=0;i--){const f=fs[i];const st=+f.startPosition;if(Math.abs(st)<1e-12||(st>0)!==(szi>0)){t0=f.time;i0=i;break}}
     items["P:"+p.coin]={key:"P:"+p.coin,coin:p.coin,kind:"pos",side,size:Math.abs(szi),entry:+p.entryPx,liq:p.liquidationPx?+p.liquidationPx:null,upnl:+p.unrealizedPnl,
       sl:sl?+sl.triggerPx:null,tp:tp?+tp.triggerPx:null,t0:t0||Date.now(),lev:p.leverage?`${p.leverage.value}x ${p.leverage.type}`:""};
-    const it=items["P:"+p.coin];it.P=planOf(it,ro,i0>=0?fs.slice(i0):[]);it.tp=it.P.tp2Px??it.tp;it.tp1=it.P.stage==="WAIT"||it.P.stage==="NOTP"?it.P.tp1Px:null;it.atr=await atr4h(p.coin)}
+    const it=items["P:"+p.coin];it.P=planOf(it,ro,i0>=0?fs.slice(i0):[]);it.tp=it.P.tp2Px??it.tp;it.tp1=it.P.stage==="WAIT"||it.P.stage==="NOTP"?it.P.tp1Px:null;it.atr=await atr4h(p.coin);it.ro=ro;it.seg=i0>=0?fs.slice(i0):[]}
   try{const sp=await q({type:"spotClearinghouseState",user:ADDR});const u=(sp.balances||[]).find(b=>b.coin==="USDC");SPOT=u?+u.total:SPOT}catch(e){}
   const pend=orders.filter(o=>!o.reduceOnly&&!o.isTrigger);
   for(const o of pend){const k="P:"+o.coin; const kids=o.children||[];
-    const pe={px:+o.limitPx,sz:+o.sz,side:o.side==="B"?"LONG":"SHORT",sl:(kids.find(c=>(c.orderType||"").startsWith("Stop"))||{}).triggerPx,tp:(kids.find(c=>(c.orderType||"").startsWith("Take"))||{}).triggerPx,t:o.timestamp};
-    if(items[k])(items[k].pend??=[]).push(pe);
-    else{items["O:"+o.coin]??={key:"O:"+o.coin,coin:o.coin,kind:"pend",side:pe.side,size:pe.sz,entry:pe.px,sl:pe.sl?+pe.sl:null,tp:pe.tp?+pe.tp:null,t0:o.timestamp,pend:[]};items["O:"+o.coin].pend.push(pe)}}
+    const pe={oid:o.oid,px:+o.limitPx,sz:+o.sz,side:o.side==="B"?"LONG":"SHORT",sl:(kids.find(c=>(c.orderType||"").startsWith("Stop"))||{}).triggerPx,tp:(kids.find(c=>(c.orderType||"").startsWith("Take"))||{}).triggerPx,t:o.timestamp};
+    if(items[k]){(items[k].pend??=[]).push(pe);(items[k].pendO??=[]).push(o)}
+    else{items["O:"+o.coin]??={key:"O:"+o.coin,coin:o.coin,kind:"pend",side:pe.side,size:pe.sz,entry:pe.px,sl:pe.sl?+pe.sl:null,tp:pe.tp?+pe.tp:null,t0:o.timestamp,pend:[],pendO:[]};items["O:"+o.coin].pend.push(pe);items["O:"+o.coin].pendO.push(o)}}
+  for(const it of Object.values(items)){try{it.legs=buildLegs(it,it.kind==="pos"?(it.ro||[]):[],it.seg||[])}catch(e){console.warn(e);it.legs=[]}
+    if(it.legs.length>1||(it.legs.length&&it.kind==="pend")){const tps=it.legs.flatMap(l=>l.rows.filter(r=>!r.fl).map(r=>({px:r.px,title:`${it.legs.length>1?l.name.split(" ·")[0]+" ":""}${r.label.split(" ·")[0]} ${money(r.net)}${r.planned?" (planned)":""}`})));
+      it.tpLines=tps;if(tps.length){it.tp=tps.reduce((a,b)=>it.side==="LONG"?(b.px>a.px?b:a):(b.px<a.px?b:a)).px;it.tp1=null}}}
   return items}
 
 function makeCard(it){
@@ -131,9 +193,10 @@ function makeCard(it){
 function setLines(C){const it=C.it,s=C.s;C.lines.forEach(l=>s.removePriceLine(l));C.lines=[];
   const d=dp(it.entry),L=(price,color,title,style=0,w=1)=>{if(price!=null&&!isNaN(price))C.lines.push(s.createPriceLine({price:+price,color,lineWidth:w,lineStyle:style,axisLabelVisible:true,title}))};
   if(it.kind==="pos"){const P=it.P||{};L(it.entry,"#e5e7eb","ENTRY",0,2);L(it.sl,"#ef4444",P.stage==="BE"?"SL (BE)":"SL",0,1);
-    if(P.R){L(it.tp1,"#86efac","TP1 1R · 25%",2,1);L(it.tp,"#22c55e","TP2 2R",0,1);if(P.stage!=="BE")L(P.be,"#facc15","BE stop after TP1",3,1)}else L(it.tp,"#22c55e","TP",0,1);
+    if(it.tpLines){it.tpLines.forEach(t=>L(t.px,"#22c55e",t.title,2,1));const b=(it.legs||[]).find(l=>l.be&&!l.atBE);if(b)L(b.be,"#facc15","BE stop after TP1",3,1)}
+    else if(P.R){L(it.tp1,"#86efac","TP1 1R · 25%",2,1);L(it.tp,"#22c55e","TP2 2R",0,1);if(P.stage!=="BE")L(P.be,"#facc15","BE stop after TP1",3,1)}else L(it.tp,"#22c55e","TP",0,1);
     L(it.liq,"#f97316","LIQ",1,1)}
-  else{L(it.sl,"#ef4444","SL",2,1);L(it.tp,"#22c55e","TP",2,1)}
+  else{L(it.sl,"#ef4444","SL",2,1);if(it.tpLines)it.tpLines.forEach(t=>L(t.px,"#22c55e",t.title,2,1));else L(it.tp,"#22c55e","TP",2,1)}
   (it.pend||[]).forEach(p=>L(p.px,"#60a5fa",`PENDING ${p.side} ${p.sz}`,2,2))}
 
 function drawBox(C){const cv=C.ov,r=C.cw.getBoundingClientRect(),dpr=window.devicePixelRatio||1;cv.width=r.width*dpr;cv.height=r.height*dpr;cv.style.width=r.width+"px";cv.style.height=r.height+"px";
@@ -161,7 +224,9 @@ function stats(C){const it=C.it,m=MIDS[it.coin]?+MIDS[it.coin]:null,el=C.el,d=dp
   el.querySelector(".stats").innerHTML=[cell("Size",it.size.toLocaleString("en-US",{maximumFractionDigits:6})),cell("Entry",fp(it.entry,d)),cell("Mark",fp(m,d)),
    cell("uPnL",up==null?"-":money(up),up>0?"g":up<0?"r":""),cell("Now (R)",rNow!=null?(rNow>=0?"+":"")+rNow.toFixed(2)+"R":"-",up>0?"g":up<0?"r":""),
    cell("To SL",`${fp(it.sl,dp(it.sl||1))} <span class=mut>${dist(it.sl)}</span>`,"r"),cell(it.tp1?"To TP1":"To TP",`${fp(it.tp1||it.tp,dp(it.tp1||it.tp||1))} <span class=mut>${dist(it.tp1||it.tp)}</span>`,"g"),
-   cell(it.kind==="pos"?"Liq":"Risk $",it.kind==="pos"?fp(it.liq,d):(risk?"$"+risk.toFixed(2):"-"),"mut")].join("");el.querySelector(".plan").innerHTML=planHtml(it,m,rNow);return up}
+   cell(it.kind==="pos"?"Liq":"Risk $",it.kind==="pos"?fp(it.liq,d):(it.legs&&it.legs.length?"$"+it.legs.reduce((s,l)=>s+l.riskUsd,0).toFixed(2):(risk?"$"+risk.toFixed(2):"-")),"mut")].join("");el.querySelector(".plan").innerHTML=(it.legs&&it.legs.length>1?legStage(it):planHtml(it,m,rNow))+legsHtml(it);return up}
+function legStage(it){const L=it.legs,f=L.filter(l=>l.state==="filled");if(!f.length)return `<span class="stage st-PEND">${STG.PEND}</span><span class="mut">${L.length} entries resting</span>`;
+  return L.map(l=>{const hit=l.rows.some(r=>r.fl),st=l.state!=="filled"?"PEND":!hit?"WAIT":(l.atBE?"BE":(l.be?"NOBE":"BE"));return `<span class="stage st-${st}" title="${l.name}">${l.name.split(" ·")[0]}: ${st==="PEND"?"resting":st==="WAIT"?"waiting for TP1":st==="BE"?"TP hit · stop at BE":"TP hit · ⚠ stop not at BE"}</span>`}).join("")}
 const STG={WAIT:"① Waiting for TP1",NOTP:"① Waiting for TP1 · ⚠ no TP orders on book",BE:"② TP1 hit · stop at breakeven · runner to 2R",NOBE:"② TP1 hit · ⚠ stop NOT at breakeven yet",PEND:"⓪ Entry resting (maker)"};
 function planHtml(it,m,rNow){const P=it.P;
   if(it.kind!=="pos"){const R=it.sl?Math.abs(it.entry-it.sl):null,s=it.side==="LONG"?1:-1;return `<span class="stage st-PEND">${STG.PEND}</span>`+(R?`<span class="mut">plan: TP1 ${fp(it.entry+s*R,dp(it.entry))} (1R, 25%) · TP2 ${fp(it.entry+s*2*R,dp(it.entry))} (2R, 75%) · BE after TP1 ${fp(sig(it.entry*(1+s*BE_FEE)),dp(it.entry))}</span>`:"")}
@@ -181,11 +246,13 @@ function planHtml(it,m,rNow){const P=it.P;
   const riskUsd=P.S0*P.R;if(SPOT)ck.push(`<span class="${Math.abs(riskUsd/SPOT-PLAN.riskPct)<=.004?"ok":"bad"}">risk $${riskUsd.toFixed(2)} = ${(riskUsd/SPOT*100).toFixed(2)}% of spot USDC</span>`);
   if(!done&&P.tp1o&&P.tp2o){const f=P.tp1o.sz/(P.tp1o.sz+P.tp2o.sz);ck.push(`<span class="${Math.abs(f-.25)<.03?"ok":"bad"}">TP split ${(f*100).toFixed(0)}/${(100-f*100).toFixed(0)}</span>`)}
   return h+`<br>${ck.join(" · ")}</div>`}
-function planTotals(){const L=Object.values(CARDS).map(C=>C.it).filter(it=>it.kind==="pos"&&it.P&&it.P.R);let lock=0,tp2=0,stop=0,ns=0;
+function planTotals(){const AL=Object.values(CARDS).flatMap(C=>C.it.legs||[]);
+  let XT="";if(AL.length){const r=AL.reduce((s,l)=>s+l.riskUsd,0),u=AL.reduce((s,l)=>s+l.upside,0);XT=`<br>All legs · risk <b class="r">${money(-r)}</b>${SPOT?` (${(r/SPOT*100).toFixed(2)}% of spot)`:""}<br>Upside if every TP hits <b class="g">${money(u)}</b>${SPOT?` (${(u/SPOT*100).toFixed(2)}%)`:""}${r>0?` · ${(u/r).toFixed(2)}R`:""}`}
+const L=Object.values(CARDS).map(C=>C.it).filter(it=>it.kind==="pos"&&it.P&&it.P.R&&!(it.legs&&it.legs.length>1));let lock=0,tp2=0,stop=0,ns=0;
   for(const it of L){const P=it.P;lock+=P.stage==="BE"||P.stage==="NOBE"?(P.ifStop??0):P.tp1Net;tp2+=P.atTP2;if(P.ifStop!=null){stop+=P.ifStop;ns++}}
   $("plantot").innerHTML=(SPOT?`Spot USDC <b>$${SPOT.toFixed(2)}</b> → 2% risk = <b>$${(SPOT*PLAN.riskPct).toFixed(2)}</b>/trade<br>`:"")+(L.length?
    `${L.length} open on plan · ${L.map(it=>`${it.coin.replace("xyz:","")}: ${STG[it.P.stage].split(" ·")[0]}`).join(", ")}<br>`+
-   `Locked if every TP1 hits: <b class="g">${money(lock)}</b><br>Every runner at TP2: <b class="g">${money(tp2)}</b><br>All stops hit now: <b class="${stop>=0?"g":"r"}">${money(stop)}</b>`:"No open positions on plan.")}
+   `Locked if every TP1 hits: <b class="g">${money(lock)}</b><br>Every runner at TP2: <b class="g">${money(tp2)}</b><br>All stops hit now: <b class="${stop>=0?"g":"r"}">${money(stop)}</b>`:(AL.length?"":"No open positions on plan."))+XT}
 function closedToday(){const now=new Date(),et=new Date(now.toLocaleString("en-US",{timeZone:"America/Toronto"})),mid=new Date(et.getFullYear(),et.getMonth(),et.getDate()).getTime()+(now.getTime()-et.getTime());
   const by={};for(const f of FILLS)(by[f.coin]??=[]).push(f);const out=[];
   for(const [coin,fs] of Object.entries(by)){fs.sort((a,b)=>a.time-b.time);let seg=null;
@@ -214,12 +281,12 @@ function tick(C){const m=MIDS[C.it.coin];if(!m||!C.bars.length)return;const b=C.
 async function mids(){for(const d of DEXES){try{Object.assign(MIDS,await q(d?{type:"allMids",dex:d}:{type:"allMids"}))}catch(e){}}}
 function totals(){let t=0;for(const C of Object.values(CARDS)){const u=stats(C);if(u!=null)t+=u}const n=Object.values(CARDS).filter(c=>c.it.kind==="pos").length;
   planTotals();$("tot").innerHTML=`${n} open · uPnL <b class="${t>=0?"g":"r"}">${money(t)}</b>`;$("upd").textContent="live · "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
-async function sync(){let items;try{items=await discover()}catch(e){$("upd").textContent="API error";return}
+async function sync(){let items;await loadPlans();try{items=await discover()}catch(e){$("upd").textContent="API error";return}
   try{closedToday()}catch(e){console.warn(e)}
   if(!Object.keys(items).length){Object.values(CARDS).forEach(C=>{C.chart.remove();C.el.remove()});CARDS={};$("grid").innerHTML='<div class="empty">Flat — no open positions or resting entries.</div>';planTotals();return}
   $("grid").querySelector(".empty")?.remove();
   for(const k of Object.keys(CARDS))if(!items[k]){CARDS[k].chart.remove();CARDS[k].el.remove();delete CARDS[k]}
-  for(const [k,it] of Object.entries(items)){if(!CARDS[k]){CARDS[k]=makeCard(it);CARDS[k].it=it;setLines(CARDS[k]);await loadCandles(CARDS[k],true)}else{const C=CARDS[k];const ch=JSON.stringify([C.it.entry,C.it.sl,C.it.tp,C.it.tp1,C.it.liq,C.it.size,C.it.pend,C.it.P&&C.it.P.stage]),nw=JSON.stringify([it.entry,it.sl,it.tp,it.tp1,it.liq,it.size,it.pend,it.P&&it.P.stage]);C.it=it;if(ch!==nw){setLines(C);drawBox(C)}}}
+  for(const [k,it] of Object.entries(items)){if(!CARDS[k]){CARDS[k]=makeCard(it);CARDS[k].it=it;setLines(CARDS[k]);await loadCandles(CARDS[k],true)}else{const C=CARDS[k];const ch=JSON.stringify([C.it.entry,C.it.sl,C.it.tp,C.it.tp1,C.it.liq,C.it.size,C.it.pend,C.it.P&&C.it.P.stage,C.it.tpLines]),nw=JSON.stringify([it.entry,it.sl,it.tp,it.tp1,it.liq,it.size,it.pend,it.P&&it.P.stage,it.tpLines]);C.it=it;if(ch!==nw){setLines(C);drawBox(C)}}}
   totals()}
 (async()=>{await mids();await sync();setInterval(async()=>{await mids();Object.values(CARDS).forEach(tick);totals();Object.values(CARDS).forEach(drawBox)},5000);
   setInterval(sync,10000);setInterval(()=>Object.values(CARDS).forEach(C=>loadCandles(C,false)),30000)})();

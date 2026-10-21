@@ -1,0 +1,23 @@
+{
+ "updated": "2026-10-21 19:25 ET",
+ "note": "Planned exits per leg. Book orders are matched by oid, else by price+size. TPs not on the book show as 'planned (watcher)' when the leg is watcher-managed. Read-only: the board never places or changes orders.",
+ "coins": {
+  "BTC": {
+   "lev": 20,
+   "legs": [
+    {"name": "Main · 2% risk", "entry_oid": 581898680208, "entry": 84450, "size": 0.01766,
+     "sl": 83216, "sl_oid": 581898680209, "be": 84475, "managed": "watcher",
+     "manager": "_btc_84130_watch_v3.py (laptop)",
+     "tps": [
+      {"label": "TP1 · 1R · 25%", "px": 85684, "sz": 0.00441, "then": "stop → BE 84,475 on remaining 0.01325"},
+      {"label": "TP2 · 2R · 75%", "px": 86918, "sz": 0.01325}
+     ]},
+    {"name": "Swing · 1% risk", "entry_oid": 581898687522, "entry": 84450, "size": 0.00805,
+     "sl": 83216, "sl_oid": 581898687523, "managed": "book",
+     "tps": [
+      {"label": "TP · 87,272 (full)", "px": 87272, "sz": 0.00805, "oid": 581898687524}
+     ]}
+   ]
+  }
+ }
+}
