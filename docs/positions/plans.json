@@ -1,19 +1,19 @@
 {
- "updated": "2026-10-21 22:30 ET",
+ "updated": "2026-10-21 22:32 ET",
  "note": "Planned exits per leg. Book orders are matched by oid, else by price+size. TPs not on the book show as 'planned (watcher)' when the leg is watcher-managed. Read-only: the board never places or changes orders.",
  "coins": {
   "BTC": {
    "lev": 20,
    "legs": [
-    {"name": "Re-entry A · TP1 half", "entry_oid": 582102290425, "entry": 81985, "size": 0.01885,
-     "sl": 81450, "sl_oid": 582102290426, "managed": "book",
+    {"name": "Re-entry A · TP1 half", "entry_oid": 582107378077, "entry": 82923, "size": 0.0233,
+     "sl": 82500, "sl_oid": 582107378078, "managed": "book",
      "tps": [
-      {"label": "TP1 · 83,196 · 4h resistance (~2.0R)", "px": 83196, "sz": 0.01885, "oid": 582102290427}
+      {"label": "TP1 · 83,196 · 4h resistance (~0.5R)", "px": 83196, "sz": 0.0233, "oid": 582107378079}
      ]},
-    {"name": "Re-entry B · TP2 half", "entry_oid": 582102298156, "entry": 81985, "size": 0.01887,
-     "sl": 81450, "sl_oid": 582102298157, "managed": "book",
+    {"name": "Re-entry B · TP2 half", "entry_oid": 582107390783, "entry": 82923, "size": 0.02331,
+     "sl": 82500, "sl_oid": 582107390784, "managed": "book",
      "tps": [
-      {"label": "TP2 · 84,041 · PDC (~3.5R)", "px": 84041, "sz": 0.01887, "oid": 582102298158}
+      {"label": "TP2 · 84,041 · PDC (~2.3R)", "px": 84041, "sz": 0.02331, "oid": 582107390785}
      ]}
    ]
   }
