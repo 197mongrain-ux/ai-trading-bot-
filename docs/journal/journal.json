@@ -700,5 +700,32 @@
   "img_v": "1941988a",
   "reason": "Stop loss",
   "note": "Long 0.02571 BTC @ 84,450, held as two legs with the stop at 83,216; the stop was never moved. It got barely 0.06R in favour before sliding, and both legs were stopped together at 83,210 at 10:15 PM ET. Right after, Chris looked at a re-entry long near PDL 82,613 (a 15m sweep-and-reclaim or a resting limit lower down) instead of chasing, sizing it at 2% risk on the reduced balance."
+ },
+ {
+  "id": "BTC-20261021-2230",
+  "coin": "BTC",
+  "side": "long",
+  "size": 0.04661,
+  "entry": 82923.00000000001,
+  "exit": 82500.0,
+  "stop": 82500.0,
+  "initial_stop": 82500.0,
+  "fees": 2.2177,
+  "net": -21.9338,
+  "r_mult": -1.11,
+  "open_ms": 1792636215871,
+  "close_ms": 1792651504118,
+  "open_et": "2026-10-21 22:30",
+  "close_et": "2026-10-22 02:45",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 83196.0,
+  "tp_final": 84041.0,
+  "mfe_r": 0.31,
+  "mae_r": 1.15,
+  "chart_tf": "15m",
+  "img_v": "0d495e6f",
+  "reason": "Stop loss",
+  "note": "No notes recorded"
  }
 ]
