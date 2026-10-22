@@ -673,5 +673,32 @@
   "img_v": "ebbee71e",
   "reason": "Manual (market)",
   "note": "Long 0.3698 @ 2,446.1, opened alongside the BTC long under the main exit plan: wide stop at 2,386.7 (at least 1.5x the 4h ATR, size cut to keep 2% risk), 25% at 1R, then breakeven and run 75% to 2R. Around 5:33 PM ET Chris had the stop moved to near breakeven at 2,447.3 with a single full-size TP at the day's high, 2,476. At 5:40 PM he closed it manually at 2,448.8 because he didn't like the setup, finishing about flat."
+ },
+ {
+  "id": "BTC-20261021-1847",
+  "coin": "BTC",
+  "side": "long",
+  "size": 0.02571,
+  "entry": 84450.00000000001,
+  "exit": 83210.0,
+  "stop": 83216.0,
+  "initial_stop": 83216.0,
+  "fees": 0.9475,
+  "net": -22.8459,
+  "r_mult": -0.72,
+  "open_ms": 1792622835610,
+  "close_ms": 1792635326880,
+  "open_et": "2026-10-21 18:47",
+  "close_et": "2026-10-21 22:15",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 87272.0,
+  "tp_final": 87272.0,
+  "mfe_r": 0.06,
+  "mae_r": 1.25,
+  "chart_tf": "15m",
+  "img_v": "726201d7",
+  "reason": "Stop loss",
+  "note": "Long 0.02571 BTC @ 84,450, held as two legs with the stop at 83,216; the stop was never moved. It got barely 0.06R in favour before sliding, and both legs were stopped together at 83,210 at 10:15 PM ET. Right after, Chris looked at a re-entry long near PDL 82,613 (a 15m sweep-and-reclaim or a resting limit lower down) instead of chasing, sizing it at 2% risk on the reduced balance."
  }
 ]
