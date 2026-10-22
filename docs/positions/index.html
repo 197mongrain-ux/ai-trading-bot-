@@ -24,6 +24,10 @@ a.btn,button{background:#1b2230;color:#cbd5e1;border:1px solid #334;border-radiu
 #strat h3{margin:0 0 4px;font-size:13px;color:#93c5fd}#strat ol{margin:0;padding-left:18px;line-height:1.55}#strat .tot{font-family:Consolas,monospace;line-height:1.6;min-width:300px}
 #closed{margin:0 8px 8px;background:#121722;border:1px solid #222a38;border-radius:8px;padding:8px 12px;display:none}#closed h3{margin:0 0 4px;font-size:13px}
 .empty{padding:40px;text-align:center;color:#7b8496;font-size:15px}
+#flow{margin:8px 8px 0;background:#121722;border:1px solid #2b3a55;border-radius:8px;padding:8px 12px}
+#flow h3{margin:0;font-size:13px;color:#93c5fd;display:inline-block;margin-right:10px}#flow .fx{display:flex;gap:18px;flex-wrap:wrap}#flow .fx>div{flex:1;min-width:460px}
+#flow .src{font-size:11px;color:#7b8496;margin:4px 0 2px}#flow .bar{display:inline-block;width:70px;height:8px;background:#7f1d1d;border-radius:2px;vertical-align:middle;margin-right:5px;overflow:hidden}#flow .bar i{display:block;height:100%;background:#16a34a}
+#flow .fm button{padding:1px 8px;font-weight:700}#flow .fm button.on{background:#2563eb;color:#fff}
 </style></head><body>
 <div id="hdr"><h1>Open positions · Hyperliquid mainnet</h1><span class="pill mono" id="acct"></span><span class="pill" id="tot">-</span>
 <div style="flex:1"></div><span class="mut" id="upd">loading…</span><a class="btn" id="back" href="/">← Live board</a></div>
@@ -34,6 +38,9 @@ a.btn,button{background:#1b2230;color:#cbd5e1;border:1px solid #334;border-radiu
 <li>Run the remaining 75% to 2R.</li></ol>
 <div class="mut" style="margin-top:4px;font-size:11px">Stages below are read from live orders/fills: TP1 order gone + size reduced = TP1 hit; stop at/above entry = breakeven. Trust the setup — no moving orders mid-trade.</div></div>
 <div class="tot" id="plantot">loading…</div></div>
+<div id="flow"><h3>BTC order flow · taker buy vs sell</h3><span class="fm"><button data-m="roll" class="on">Rolling window</button> <button data-m="bar">Current candle</button></span> <span class="mut" id="flowUpd" style="font-size:11px"></span>
+<div class="fx"><div><div class="src" id="flowSrcB">Binance · loading…</div><div id="flowB"></div></div>
+<div><div class="src" id="flowSrcH">Hyperliquid BTC perp · connecting…</div><div id="flowH"></div></div></div></div>
 <div id="grid"><div class="empty">Loading positions…</div></div>
 <div id="closed"><h3>Closed today (ET)</h3><div id="closedT"></div></div>
 <div class="mut" style="padding:4px 12px 12px;font-size:11px">Read-only: public Hyperliquid info API only (clearinghouseState, frontendOpenOrders, userFills, candleSnapshot, allMids); this page never places or changes orders. Plan $ figures are net of fees (maker 0.015%, taker 0.045%): TP $ = move − maker exit fee − that slice's entry fee; risk $ = stop distance + taker stop fee + entry fee. Planned exits not yet on the book come from plans.json; 'planned (watcher)' = the laptop watcher places it after the fill/TP1.
@@ -290,4 +297,39 @@ async function sync(){let items;await loadPlans();try{items=await discover()}cat
   totals()}
 (async()=>{await mids();await sync();setInterval(async()=>{await mids();Object.values(CARDS).forEach(tick);totals();Object.values(CARDS).forEach(drawBox)},5000);
   setInterval(sync,10000);setInterval(()=>Object.values(CARDS).forEach(C=>loadCandles(C,false)),30000)})();
-</script></body></html>
+</script>
+<script>
+// ---- BTC order flow panel (read-only; separate from position logic) ----
+(()=>{const W={"5m":3e5,"15m":9e5,"1h":36e5,"4h":144e5},MAXW=144e5,BK=1e4,LS="hlflowBTC_v1",$f=id=>document.getElementById(id);
+let mode=localStorage.flowMode||"roll",BN=null,BNsrc="",BNerr="",HL={b:{},cov:0,seen:0,tids:{}},wsState="connecting";
+document.querySelectorAll("#flow .fm button").forEach(b=>{b.classList.toggle("on",b.dataset.m===mode);b.onclick=()=>{mode=localStorage.flowMode=b.dataset.m;document.querySelectorAll("#flow .fm button").forEach(x=>x.classList.toggle("on",x===b));render()}});
+const startOf=(tf,now)=>mode==="bar"?Math.floor(now/W[tf])*W[tf]:now-W[tf];
+// Hyperliquid: WS trades accumulated in 10s buckets, kept 4h in localStorage so a reload keeps history
+let skipTo=0;try{const s=JSON.parse(localStorage[LS]||"null");if(s&&Date.now()-s.seen<9e4&&s.last){HL.b=s.b;HL.cov=s.cov;HL.seen=s.seen;HL.last=skipTo=s.last}}catch(e){}
+function saveHL(){const cut=Date.now()-MAXW-BK;for(const k in HL.b)if(+k<cut)delete HL.b[k];HL.cov=Math.max(HL.cov,cut);try{localStorage[LS]=JSON.stringify({b:HL.b,cov:HL.cov,seen:HL.seen,last:HL.last||0})}catch(e){}}
+function addTrades(arr){for(const t of arr){if(HL.tids[t.tid]||t.time<=skipTo)continue;HL.tids[t.tid]=1;HL.last=Math.max(HL.last||0,t.time);const k=Math.floor(t.time/BK)*BK,sz=+t.sz,usd=sz*(+t.px),c=(HL.b[k]??=[0,0,0,0]);
+  if(t.side==="B"){c[0]+=sz;c[1]+=usd}else{c[2]+=sz;c[3]+=usd};if(!HL.cov||t.time<HL.cov&&!HL.seen)HL.cov=t.time}HL.seen=Date.now()}
+function connect(){let ws;try{ws=new WebSocket("wss://api.hyperliquid.xyz/ws")}catch(e){wsState="WS unavailable";return setTimeout(connect,1e4)}
+  let ping;ws.onopen=()=>{wsState="live";if(!HL.cov)HL.cov=Date.now();ws.send(JSON.stringify({method:"subscribe",subscription:{type:"trades",coin:"BTC"}}));ping=setInterval(()=>ws.readyState===1&&ws.send('{"method":"ping"}'),5e4)};
+  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.channel==="trades"&&Array.isArray(m.data))addTrades(m.data)}catch(x){}};
+  ws.onclose=()=>{clearInterval(ping);wsState="reconnecting";HL.tids={};HL.cov=0;HL.b={};HL.seen=0;skipTo=0;setTimeout(connect,3e3)}}  // a gap = restart coverage honestly
+// Binance BTCUSDT 1m klines: [7]=quote vol, [5]=base vol, [9]=taker buy base, [10]=taker buy quote. Perp first, spot if the perp API is geo-blocked.
+const BURLS=[["https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=241","Binance BTCUSDT perp"],["https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=241","Binance BTCUSDT spot (perp API blocked here)"]];
+let bi=0;async function loadBN(){for(let i=bi;i<BURLS.length;i++){try{const r=await fetch(BURLS[i][0],{cache:"no-store"});if(!r.ok)throw new Error(r.status);const k=await r.json();
+  BN=k.map(x=>({t:+x[0],v:+x[5],q:+x[7],bv:+x[9],bq:+x[10]}));BNsrc=BURLS[i][1];bi=i;BNerr="";return}catch(e){BNerr=String(e.message||e)}}bi=0}
+function sumB(t0){let b=0,bq=0,v=0,q=0;for(const k of BN||[])if(k.t>=Math.floor(t0/6e4)*6e4){b+=k.bv;bq+=k.bq;v+=k.v;q+=k.q}return {b,bq,s:v-b,sq:q-bq}}
+function sumH(t0){let b=0,bq=0,s=0,sq=0;for(const k in HL.b)if(+k>=Math.floor(t0/BK)*BK){const c=HL.b[k];b+=c[0];bq+=c[1];s+=c[2];sq+=c[3]}return {b,bq,s,sq}}
+const nB=v=>v.toLocaleString("en-US",{maximumFractionDigits:v>=100?0:v>=10?1:2}),nU=v=>{const a=Math.abs(v);return (v<0?"−":"")+"$"+(a>=1e9?(a/1e9).toFixed(2)+"B":a>=1e6?(a/1e6).toFixed(1)+"M":a>=1e3?(a/1e3).toFixed(0)+"k":a.toFixed(0))};
+function table(fn,cov){const now=Date.now();let h=`<table class="pt"><tr><th>Window</th><th>Buy BTC</th><th>Sell BTC</th><th>Delta BTC</th><th>Buy $</th><th>Sell $</th><th>Delta $</th><th>Buy %</th></tr>`;
+  for(const tf of Object.keys(W)){const t0=startOf(tf,now),x=fn(t0),tot=x.b+x.s,p=tot>0?x.b/tot:null,d=x.b-x.s,dq=x.bq-x.sq;
+    let lab=tf;if(cov!=null&&cov>t0){const got=Math.max(0,now-cov),want=now-t0;lab+=` <span class="bad" style="font-size:10px">${Math.round(got/6e4)}/${Math.round(want/6e4)}m</span>`}
+    h+=`<tr><td>${lab}</td><td class="g">${nB(x.b)}</td><td class="r">${nB(x.s)}</td><td class="${d>=0?"g":"r"}">${d>=0?"+":""}${nB(d)}</td><td class="g">${nU(x.bq)}</td><td class="r">${nU(x.sq)}</td><td class="${dq>=0?"g":"r"}">${dq>=0?"+":""}${nU(dq)}</td><td>${p==null?"-":`<span class="bar"><i style="width:${(p*100).toFixed(0)}%"></i></span><b class="${p>=.5?"g":"r"}">${(p*100).toFixed(0)}%</b>`}</td></tr>`}
+  return h+"</table>"}
+const tET=t=>new Date(t).toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour:"2-digit",minute:"2-digit",hour12:false});
+function render(){const m=mode==="bar"?"current candle (from its open, UTC-aligned like TV)":"rolling (last 5m / 15m / 1h / 4h)";
+  $f("flowSrcB").innerHTML=BN?`<b>${BNsrc}</b> · 1m klines taker-buy volume · ${m} · full 4h available`:`Binance · ${BNerr?"unavailable ("+BNerr+")":"loading…"}`;if(BN)$f("flowB").innerHTML=table(sumB,null);
+  $f("flowSrcH").innerHTML=`<b>Hyperliquid BTC perp</b> · WebSocket trades, side B = taker buy, A = taker sell · ${wsState}${HL.cov?` · collecting since ${tET(HL.cov)} ET (fills up while the page is open; kept across reloads)`:""}`;
+  $f("flowH").innerHTML=table(sumH,HL.cov||Date.now());$f("flowUpd").textContent="· updated "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
+connect();loadBN().then(render);setInterval(loadBN,15e3);setInterval(()=>{render();saveHL()},3e3);setInterval(()=>{if(Object.keys(HL.tids).length>2e5)HL.tids={}},6e4)})();
+</script>
+</body></html>
