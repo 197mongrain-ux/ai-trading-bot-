@@ -754,5 +754,32 @@
   "img_v": "1c3936b3",
   "reason": "Stop loss",
   "note": "Short 0.0672 BTC @ 81,677, filled 9:47 PM ET Oct 22, initial stop 82,150 and TP 81,000. During the trade the stop was tightened to 81,949 and the TP moved down to 80,800; price reached about 0.95R in favour but never tagged the target. The stop filled at 81,953 at 10:36 PM ET for about -$22 net, leaving the account flat at about $1,057 USDC (2% risk \u2248 $21). Right after, Chris re-shorted at 81,896 at 1x isolated with no stop or TP by his own choice."
+ },
+ {
+  "id": "BTC-20261022-2248",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.01252,
+  "entry": 81896.0,
+  "exit": 81326.0,
+  "stop": null,
+  "initial_stop": null,
+  "fees": 0.8828,
+  "net": 6.2536,
+  "r_mult": null,
+  "open_ms": 1792723686511,
+  "close_ms": 1792784441395,
+  "open_et": "2026-10-22 22:48",
+  "close_et": "2026-10-23 15:40",
+  "result": "WIN",
+  "exit_type": "Market",
+  "tp_initial": 75500.0,
+  "tp_final": 80964.0,
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": "15m",
+  "img_v": "10a7e0c2",
+  "reason": "Manual (market)",
+  "note": "No notes recorded"
  }
 ]
