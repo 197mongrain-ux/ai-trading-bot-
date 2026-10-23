@@ -753,6 +753,6 @@
   "chart_tf": "5m",
   "img_v": "1c3936b3",
   "reason": "Stop loss",
-  "note": "No notes recorded"
+  "note": "Short 0.0672 BTC @ 81,677, filled 9:47 PM ET Oct 22, initial stop 82,150 and TP 81,000. During the trade the stop was tightened to 81,949 and the TP moved down to 80,800; price reached about 0.95R in favour but never tagged the target. The stop filled at 81,953 at 10:36 PM ET for about -$22 net, leaving the account flat at about $1,057 USDC (2% risk \u2248 $21). Right after, Chris re-shorted at 81,896 at 1x isolated with no stop or TP by his own choice."
  }
 ]
