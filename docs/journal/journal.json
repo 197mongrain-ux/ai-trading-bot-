@@ -780,6 +780,6 @@
   "chart_tf": "15m",
   "img_v": "10a7e0c2",
   "reason": "Manual (market)",
-  "note": "No notes recorded"
+  "note": "Re-short taken right after the 81,677 short was stopped at 81,953: 0.01252 BTC @ 81,896, filled 10:48 PM ET Oct 22, at 1x isolated using almost all spot USDC (about $1,025 margin, liquidation about 161,735). By Chris's explicit choice it was opened with no stop and no TP, so no R multiple applies. TP orders were later added (first 75,500, last 80,964) but never filled; the position was closed at market at 81,326 at 3:40 PM ET Oct 23 for about +$6.25 net."
  }
 ]
