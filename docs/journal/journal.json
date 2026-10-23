@@ -727,5 +727,32 @@
   "img_v": "0d495e6f",
   "reason": "Stop loss",
   "note": "Re-entry long 0.04661 BTC @ 82,923 (20x isolated, maker fill ~10:30 PM ET), taken right after the 84,450 long was stopped at 83,210. The plan was a fixed post-only buy (first ~82,976, then moved to 82,839, which came too late; an alternative resting limit at 81,985 was cancelled unfilled), stop 82,500 for 2% risk (~$22 on ~$1,101). Split in two halves: A targeting 83,196 (~0.5R) and B targeting 84,041 PDC (~2.3R), both stopped at 82,500; no watcher managed it. It never got going (max ~0.3R in favor) and hit the stop at 2:45 AM ET, a second consecutive BTC long loss that night."
+ },
+ {
+  "id": "BTC-20261022-2147",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.0672,
+  "entry": 81677.0,
+  "exit": 81952.99999999999,
+  "stop": 81949.0,
+  "initial_stop": 82150.0,
+  "fees": 3.1695,
+  "net": -21.7167,
+  "r_mult": -0.68,
+  "open_ms": 1792720023266,
+  "close_ms": 1792723011387,
+  "open_et": "2026-10-22 21:47",
+  "close_et": "2026-10-22 22:36",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 81000.0,
+  "tp_final": 80800.0,
+  "mfe_r": 0.95,
+  "mae_r": 0.65,
+  "chart_tf": "5m",
+  "img_v": "1c3936b3",
+  "reason": "Stop loss",
+  "note": "No notes recorded"
  }
 ]
