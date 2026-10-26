@@ -1,23 +1,23 @@
 {
  "address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541",
  "network": "mainnet",
- "generated_ms": 1792786764960,
- "generated_et": "2026-10-23 16:19:24",
+ "generated_ms": 1792973359936,
+ "generated_et": "2026-10-25 20:09:19",
  "history_days": 90,
  "history_from_et": "2026-10-06 23:58",
  "kpis": {
-  "today": 6.25,
-  "week": -114.02,
-  "mtd": -213.42,
-  "all_time": -213.42,
-  "win_rate": 17.2,
-  "wins": 5,
+  "today": 0.54,
+  "week": -113.48,
+  "mtd": -212.88,
+  "all_time": -212.88,
+  "win_rate": 20.0,
+  "wins": 6,
   "losses": 24,
-  "closed": 29,
-  "open_upnl": 0.0,
-  "equity_spot_usdc": 1064.011216,
-  "perp_account_value": 104.08,
-  "today_key": "2026-10-23",
+  "closed": 30,
+  "open_upnl": 18.68,
+  "equity_spot_usdc": 1083.7199,
+  "perp_account_value": 329.46,
+  "today_key": "2026-10-25",
   "week_start": "2026-10-19"
  },
  "days": {
@@ -152,6 +152,17 @@
    "risk": 0.0,
    "best": 6.25,
    "worst": 6.25
+  },
+  "2026-10-25": {
+   "net": 0.54,
+   "gross": 0.65,
+   "fees": 0.1,
+   "trades": 1,
+   "wins": 1,
+   "losses": 0,
+   "risk": 10.55,
+   "best": 0.54,
+   "worst": 0.54
   }
  },
  "trades": [
@@ -1123,35 +1134,81 @@
    ],
    "result": "WIN",
    "day": "2026-10-23"
-  }
- ],
- "positions": [],
- "pending": [
-  {
-   "coin": "BTC",
-   "side": "short",
-   "size": 0.00631,
-   "entry": 81652.0,
-   "stop": 83288.0,
-   "target": 75713.0,
-   "planned_risk": 10.32,
-   "planned_reward": 37.48,
-   "placed_et": "2026-10-23 16:16",
-   "mark": 81337.5
   },
   {
-   "coin": "BTC",
-   "side": "short",
-   "size": 0.00631,
-   "entry": 81652.0,
-   "stop": 83288.0,
-   "target": 80233.0,
-   "planned_risk": 10.32,
-   "planned_reward": 8.95,
-   "placed_et": "2026-10-23 16:16",
-   "mark": 81337.5
+   "coin": "AVAX",
+   "side": "long",
+   "size": 20.28,
+   "entry": 8.92,
+   "exit": 8.9519,
+   "stop": 8.4,
+   "risk": 10.55,
+   "initial_stop": 8.4,
+   "initial_risk": 10.55,
+   "final_risk": 10.55,
+   "fees": 0.1045,
+   "gross": 0.6469,
+   "net": 0.5425,
+   "r_mult": 0.05,
+   "open_ms": 1792875664397,
+   "close_ms": 1792970677088,
+   "open_et": "2026-10-24 17:01",
+   "close_et": "2026-10-25 19:24",
+   "exit_type": "Market",
+   "n_fills": 4,
+   "partial_history": false,
+   "status": "closed",
+   "id": "AVAX-20261024-1701",
+   "open_oids": [
+    584859252907,
+    584859259024
+   ],
+   "close_oids": [
+    585620200033
+   ],
+   "result": "WIN",
+   "day": "2026-10-25"
   }
  ],
+ "positions": [
+  {
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.03851,
+   "entry": 80566.0,
+   "exit": null,
+   "stop": 81070.0,
+   "risk": 19.41,
+   "initial_stop": 81070.0,
+   "initial_risk": 19.41,
+   "final_risk": 19.41,
+   "fees": 0.4468,
+   "gross": 0.0,
+   "net": -0.4468,
+   "r_mult": null,
+   "open_ms": 1792868297838,
+   "close_ms": null,
+   "open_et": "2026-10-24 14:58",
+   "close_et": null,
+   "exit_type": null,
+   "n_fills": 2,
+   "partial_history": false,
+   "status": "open",
+   "id": "BTC-20261024-1458",
+   "open_oids": [
+    584804174060
+   ],
+   "close_oids": [],
+   "upnl": 18.67735,
+   "mark": 80086.0,
+   "liq": 87541.8210309331,
+   "leverage": "10x isolated",
+   "target": 79188.0,
+   "funding_since_open": 0.966419,
+   "net_if_closed_now": 18.2306
+  }
+ ],
+ "pending": [],
  "excluded_bot": {
   "rule": "bot entry order ids (Model B, post-only Alo entries Oct 6-9 2026, matched to bot journal)",
   "trips": 21,
