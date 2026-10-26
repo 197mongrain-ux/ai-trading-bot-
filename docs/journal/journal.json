@@ -781,5 +781,32 @@
   "img_v": "10a7e0c2",
   "reason": "Manual (market)",
   "note": "Re-short taken right after the 81,677 short was stopped at 81,953: 0.01252 BTC @ 81,896, filled 10:48 PM ET Oct 22, at 1x isolated using almost all spot USDC (about $1,025 margin, liquidation about 161,735). By Chris's explicit choice it was opened with no stop and no TP, so no R multiple applies. TP orders were later added (first 75,500, last 80,964) but never filled; the position was closed at market at 81,326 at 3:40 PM ET Oct 23 for about +$6.25 net."
+ },
+ {
+  "id": "AVAX-20261024-1701",
+  "coin": "AVAX",
+  "side": "long",
+  "size": 20.28,
+  "entry": 8.92,
+  "exit": 8.9519,
+  "stop": 8.4,
+  "initial_stop": 8.4,
+  "fees": 0.1045,
+  "net": 0.5425,
+  "r_mult": 0.05,
+  "open_ms": 1792875664397,
+  "close_ms": 1792970677088,
+  "open_et": "2026-10-24 17:01",
+  "close_et": "2026-10-25 19:24",
+  "result": "WIN",
+  "exit_type": "Market",
+  "tp_initial": 10.0,
+  "tp_final": 10.8,
+  "mfe_r": 0.19,
+  "mae_r": 0.34,
+  "chart_tf": "15m",
+  "img_v": "0d73a1b2",
+  "reason": "Manual (market)",
+  "note": "No notes recorded"
  }
 ]
