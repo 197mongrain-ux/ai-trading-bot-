@@ -862,5 +862,32 @@
   "img_v": "1fbd084d",
   "reason": "Stop loss",
   "note": "No notes recorded"
+ },
+ {
+  "id": "BTC-20261027-1217",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.05639,
+  "entry": 80547.0,
+  "exit": 81005.00000000001,
+  "stop": 80880.0,
+  "initial_stop": 80880.0,
+  "fees": 2.6274,
+  "net": -28.454,
+  "r_mult": -1.52,
+  "open_ms": 1793117859048,
+  "close_ms": 1793136697130,
+  "open_et": "2026-10-27 12:17",
+  "close_et": "2026-10-27 17:31",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 79950.0,
+  "tp_final": 80100.0,
+  "mfe_r": 0.35,
+  "mae_r": 2.2,
+  "chart_tf": "15m",
+  "img_v": "9006e60b",
+  "reason": "Stop loss",
+  "note": "No notes recorded"
  }
 ]
