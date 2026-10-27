@@ -20,6 +20,7 @@
  "BTC-20261022-2248": "Re-short taken right after the 81,677 short was stopped at 81,953: 0.01252 BTC @ 81,896, filled 10:48 PM ET Oct 22, at 1x isolated using almost all spot USDC (about $1,025 margin, liquidation about 161,735). By Chris's explicit choice it was opened with no stop and no TP, so no R multiple applies. TP orders were later added (first 75,500, last 80,964) but never filled; the position was closed at market at 81,326 at 3:40 PM ET Oct 23 for about +$6.25 net.",
  "BTC-20261024-1458": "Resting ALO short of 0.03851 BTC at 80,566 (10x isolated) placed Oct 24 after cancelling the unfilled 81,652 short, with stop 81,070 and TP 79,188, risking about $21.28 (2% of 1,064 USDC) for about 2.45R. It filled by the morning of Oct 25 and was about +$10 early on; the TP was later moved to 79,500 (the reason wasn't recorded). On the evening of Oct 26 Chris closed it at market near 79,678 together with his Propr BTC short, locking the win before bed under his new rule: don't sleep on positions and don't turn winners into losers.",
  "BTC-20261027-1013": "No notes recorded",
+ "BTC-20261027-1217": "No notes recorded",
  "ETH-20261015-1010": "No notes recorded",
  "ETH-20261018-1753": "Stop was tight relative to ETH's noise near the level.",
  "ETH-20261018-2310": "Short 0.4271 @ 2,425 at 20x isolated, filled 11:10 PM ET Oct 18 with stop 2,450 and TP 2,326.9; both were left untouched for the whole trade. It ran about 2.1R in favour but never reached the target, then reversed and was stopped at 2,452 on Oct 20.",
