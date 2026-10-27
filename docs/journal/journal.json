@@ -808,5 +808,32 @@
   "img_v": "0d73a1b2",
   "reason": "Manual (market)",
   "note": "Long taken from a CS app signal: two ALO buys of 10.14 AVAX at 8.92 (5x isolated), each with a stop at 8.40, for 1% risk (about $10.65 on 1,065 USDC). Half A targeted 10.00 and Half B 10.80, about 2.8R combined. Both halves had filled by the morning of Oct 25 and sat slightly red (about -$2.4) early on. The position was closed at market around 8.95 on the evening of Oct 25 for a small scratch win; the reason for the manual exit wasn't recorded."
+ },
+ {
+  "id": "BTC-20261024-1458",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.03851,
+  "entry": 80566.0,
+  "exit": 79677.89613087509,
+  "stop": 81070.0,
+  "initial_stop": 81070.0,
+  "fees": 1.7723,
+  "net": 32.4286,
+  "r_mult": 1.67,
+  "open_ms": 1792868297838,
+  "close_ms": 1793071612437,
+  "open_et": "2026-10-24 14:58",
+  "close_et": "2026-10-26 23:26",
+  "result": "WIN",
+  "exit_type": "Market",
+  "tp_initial": 79188.0,
+  "tp_final": 79500.0,
+  "mfe_r": 2.42,
+  "mae_r": 0.89,
+  "chart_tf": "1h",
+  "img_v": "1cf05cb1",
+  "reason": "Manual (market)",
+  "note": "No notes recorded"
  }
 ]
