@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>PROPR evaluation (simulated) · PnL Calendar</title>
+<style>
+:root{--bg:#000;--bg2:#0b0b0b;--panel:#0e0e0e;--border:#1a1a1a;--border2:#262626;--text:#e8e8e8;--muted:#8b8b8b;--dim:#5c5c5c;
+--green:#00c805;--red:#ff4d4f;--amber:#e6c07b;--accent:#6ea8fe;
+--mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;--sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.dim{color:var(--dim)}.amber{color:var(--amber)}
+.topbar{display:flex;align-items:center;gap:1rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:.55rem}.mark{color:var(--green);font-size:1.2rem}
+.brand-title{font-weight:650;font-size:14px}.brand-sub{color:var(--muted);font-size:10px;font-family:var(--mono)}
+.badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;border:1px solid #1a5c2a;color:var(--green);background:#06140a}
+.badge.warn{border-color:#7a5a1a;color:var(--amber);background:#140e06}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;box-shadow:0 0 6px var(--green)}
+.dot.stale{background:var(--amber);box-shadow:none}
+.spacer{flex:1}.meta{color:var(--muted);font-size:11px;font-family:var(--mono)}
+button{font-family:var(--mono);font-size:11px;background:#111;color:var(--text);border:1px solid var(--border2);border-radius:5px;padding:.3rem .6rem;cursor:pointer}
+button:hover{border-color:#3a3a3a;background:#161616}
+.wrap{max-width:1240px;margin:0 auto;padding:1rem 1.1rem 2.5rem;display:flex;flex-direction:column;gap:1rem}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.65rem}
+@media(max-width:960px){.kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem .85rem}
+.kpi .lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.25rem}
+.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:650}.kpi .sub{color:var(--dim);font-size:10px;margin-top:.2rem;font-family:var(--mono)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:.6rem;padding:.65rem .9rem;border-bottom:1px solid var(--border);background:#0a0a0a}
+.card-h h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.card-b{padding:.85rem .9rem}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) 120px;gap:6px}
+@media(max-width:820px){.cal{grid-template-columns:repeat(7,minmax(0,1fr))}.wk{display:none!important}}
+.dow{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:0 .3rem .2rem}
+.cell{min-height:92px;border:1px solid var(--border);border-radius:6px;background:#0a0a0a;padding:.45rem .5rem;display:flex;flex-direction:column;gap:.2rem;position:relative}
+.cell.out{opacity:.25}.cell.empty .pnl{color:var(--dim)}
+.cell.has{cursor:pointer}.cell.has:hover{border-color:#3a3a3a;background:#111}
+.cell.win{background:linear-gradient(180deg,#04160a 0%,#0a0a0a 100%);border-color:#123d1c}
+.cell.loss{background:linear-gradient(180deg,#1a0809 0%,#0a0a0a 100%);border-color:#3d1418}
+.cell.today{outline:1px solid var(--accent);outline-offset:-1px}
+.cell .dn{font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+.cell.today .dn b{color:var(--accent)}
+.cell .pnl{font-family:var(--mono);font-size:16px;font-weight:650;margin-top:auto}
+.cell .cnt{font-family:var(--mono);font-size:10px;color:var(--dim)}
+.cell .live{font-family:var(--mono);font-size:10px}
+.wk{border:1px dashed var(--border2);border-radius:6px;padding:.45rem .5rem;display:flex;flex-direction:column;justify-content:center;gap:.15rem}
+.wk .l{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.07em}.wk .v{font-family:var(--mono);font-size:14px;font-weight:650}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:.42rem .5rem;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#0a0a0a}
+td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#111}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:.12rem .4rem;border-radius:999px;border:1px solid var(--border2)}
+.pill.win{color:var(--green);border-color:#1a5c2a;background:#06140a}.pill.loss{color:var(--red);border-color:#7a3338;background:#1a0a0c}
+.pill.be,.pill.open{color:var(--amber);border-color:#7a5a1a;background:#140e06}
+.side-long{color:var(--green)}.side-short{color:var(--red)}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none}.ov.on{display:block}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(1180px,100%);background:#070707;border-left:1px solid var(--border2);z-index:50;transform:translateX(100%);transition:transform .2s ease;display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.dr-h{display:flex;align-items:center;gap:.8rem;padding:.85rem 1rem;border-bottom:1px solid var(--border)}
+.dr-h h3{margin:0;font-size:15px}.dr-b{overflow:auto;padding:1rem;display:flex;flex-direction:column;gap:1rem}
+.stat-row{display:flex;flex-wrap:wrap;gap:.75rem 1.4rem}
+.stat-row .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}.stat-row .v{font-family:var(--mono);font-size:14px;font-weight:600;margin-top:.1rem}
+.tbl{overflow-x:auto;border:1px solid var(--border);border-radius:6px}
+.drawer th,.drawer td{padding:.38rem .4rem;font-size:11.5px}
+.drawer .rsub{display:block;font-size:9.5px}
+.empty{color:var(--dim);padding:1rem;text-align:center}
+.footer{color:var(--dim);font-size:11px;line-height:1.5}
+.nav{display:flex;gap:.4rem;align-items:center;margin-left:auto}
+.mon{font-family:var(--mono);font-size:13px;min-width:120px;text-align:center}
+</style>
+<style>
+.badge.sim{border-color:#7a5a1a;color:var(--amber);background:#140e06}
+.chal{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem}
+@media(max-width:960px){.chal{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.chal{grid-template-columns:1fr}}
+.chal .kpi .val{font-size:1.1rem}
+.bar{height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;margin-top:.45rem}.bar>i{display:block;height:100%;background:var(--green)}
+.bar.dng>i{background:var(--amber)}
+.ch-h{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:baseline;margin-bottom:.1rem}.ch-h b{font-size:14px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="mark">◆</span><div><div class="brand-title">PROPR evaluation (simulated) · PnL Calendar</div><div class="brand-sub" id="sub"></div></div></div>
+  <span class="badge sim">PROPR EVALUATION (SIMULATED)</span>
+  <span class="badge warn" id="srcBadge">SNAPSHOT</span>
+  <span class="badge" title="This board only contains trades from the Propr evaluation account. Hyperliquid mainnet trades are on a separate board.">Propr trades only</span>
+  <div class="spacer"></div>
+  <span class="meta"><span class="dot stale" id="dot"></span><span id="upd">—</span></span>
+  <button id="refresh">↻ Refresh</button>
+</div>
+<div class="wrap">
+  <div class="card"><div class="card-h"><h2 id="chTitle">Challenge</h2></div><div class="card-b"><div class="chal" id="chal"></div></div></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card">
+    <div class="card-h"><h2>Calendar · America/Toronto</h2>
+      <div class="nav"><button id="prev">‹</button><span class="mon" id="monLbl"></span><button id="next">›</button><button id="todayBtn">Today</button></div></div>
+    <div class="card-b"><div class="cal" id="cal"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><h2>Open positions &amp; resting entries</h2></div>
+    <div class="card-b" id="openBox"></div>
+  </div>
+  <div class="footer" id="foot"></div>
+</div>
+<div class="ov" id="ov"></div>
+<aside class="drawer" id="drawer"><div class="dr-h"><h3 id="drTitle"></h3><div class="spacer"></div><button id="drClose">✕ Close</button></div><div class="dr-b" id="drBody"></div></aside>
+
+<script>
+const SNAPSHOT = {"source": "propr", "label": "PROPR evaluation (simulated)", "generated_ms": 1793071996981, "generated_et": "2026-10-26 23:33:16", "challenge": {"name": "Bronze 2-Step Classic", "phase_order": 1, "phase_count": 2, "status": "active", "started_et": "2026-10-26 15:57", "initial": 25000.0, "balance": 25037.94, "equity": 25037.94, "hwm": 25052.52, "dd_pct": 8.0, "dd_floor": 23052.52, "dd_distance": 1985.42, "dl_pct": 5.0, "sod_balance": 24999.3, "daily_limit": 1249.96, "daily_floor": 23749.33, "daily_distance": 1288.61, "today_pnl": 38.64, "next_reset_et": "Oct 27 08:00 PM", "target_pct": 5.0, "target_equity": 26250.0, "target_usd": 1250.0, "progress_usd": 37.94, "binding_name": "daily loss", "binding_floor": 23749.33, "binding_distance": 1288.61, "reconciliation_diff_ex_funding": 0.6308}, "kpis": {"today": 37.94, "week": 37.94, "mtd": 37.94, "all_time": 37.94, "win_rate": 100.0, "wins": 1, "losses": 0, "closed": 1, "open_upnl": 0.0, "today_key": "2026-10-26", "week_start": "2026-10-26"}, "days": {"2026-10-26": {"net": 37.94, "gross": 42.62, "fees": 5.31, "funding": 0.63, "trades": 1, "wins": 1, "losses": 0, "risk": 36.63, "best": 37.94, "worst": 37.94}}, "trades": [{"coin": "BTC", "side": "short", "size": 0.111, "entry": 80090.0, "stop": 80420.0, "target": 79350.0, "risk": 36.63, "initial_stop": 80420.0, "initial_risk": 36.63, "final_risk": 36.63, "fee_open": 1.3335, "fee_close": 3.9813, "fees": 5.3148, "funding": 0.6308, "gross": 42.624, "open_ms": 1793050510443, "open_et": "2026-10-26 17:35", "n_fills": 2, "status": "closed", "exit": 79706.0, "net": 37.94, "exit_type": "Market", "r_mult": 1.04, "r_gross": 1.16, "close_ms": 1793071599175, "close_et": "2026-10-26 23:26", "result": "WIN", "day": "2026-10-26"}], "positions": [], "pending": []};
+const TZ = "America/Toronto";
+const REFRESH_MS = 60000;
+let BOARD = SNAPSHOT, SOURCE = "snapshot", VIEW = null, OPEN_DAY = null;
+
+/* ---------- formatting ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function money(v, signed=true){ if(v==null||isNaN(v)) return "—"; const a=Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); return (v<0?"−$":(signed&&v>0?"+$":"$"))+a; }
+function cls(v){ return v==null?"dim":(v>0.005?"pos":(v<-0.005?"neg":"muted")); }
+function px(v){ if(v==null||isNaN(v)) return "—"; const a=Math.abs(v); const d=a>=1000?1:a>=100?2:a>=1?3:a>=0.01?5:7; return Number(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function sz(v){ if(v==null) return "—"; return Number(v).toLocaleString("en-US",{maximumFractionDigits:v>=100?0:5}); }
+const etParts = ms => Object.fromEntries(new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(ms)).map(p=>[p.type,p.value]));
+const etDay = ms => { const p=etParts(ms); return `${p.year}-${p.month}-${p.day}`; };
+const pct = v => v==null?"—":v.toFixed(1)+"%";
+const r2=v=>Math.round(v*100)/100;
+
+/* ---------- derived KPIs (computed in the browser so "today" is always today) ---------- */
+function kp(){
+  const days=BOARD.days, now=Date.now(), today=etDay(now), p=etParts(now);
+  const wd=(new Date(Date.UTC(+p.year,+p.month-1,+p.day)).getUTCDay()+6)%7;
+  const wkStart=etDay(Date.UTC(+p.year,+p.month-1,+p.day-wd,12)), moStart=`${p.year}-${p.month}-01`;
+  const ss=fr=>r2(Object.entries(days).filter(([k])=>k>=fr&&k<=today).reduce((a,[,v])=>a+v.net,0));
+  const T=BOARD.trades, wins=T.filter(t=>t.result==="WIN").length, losses=T.filter(t=>t.result==="LOSS").length;
+  return {today:ss(today),week:ss(wkStart),mtd:ss(moStart),all_time:r2(T.reduce((a,t)=>a+t.net,0)),wins,losses,closed:T.length,
+    win_rate:wins+losses?100*wins/(wins+losses):null,today_key:today,week_start:wkStart,
+    open_upnl:BOARD.kpis.open_upnl};
+}
+let K=null;
+
+/* ---------- render ---------- */
+function kpi(lbl,val,sub,c){ return `<div class="kpi"><div class="lbl">${lbl}</div><div class="val ${c??""}">${val}</div><div class="sub">${sub??""}</div></div>`; }
+function renderChallenge(){
+  const C=BOARD.challenge; if(!C){ $("chal").innerHTML='<div class="empty">No challenge data.</div>'; return; }
+  const prog=C.target_usd?Math.max(0,Math.min(100,100*C.progress_usd/C.target_usd)):0;
+  const ddUsed=(C.hwm-C.dd_floor)?Math.max(0,Math.min(100,100*(C.hwm-C.equity)/(C.hwm-C.dd_floor))):0;
+  const dlUsed=C.daily_limit?Math.max(0,Math.min(100,100*Math.max(0,-C.today_pnl)/C.daily_limit)):0;
+  $("chTitle").textContent=`${C.name} · phase ${C.phase_order} of ${C.phase_count} · ${C.status}`;
+  $("chal").innerHTML=[
+    kpi("Start balance",money(C.initial,false),`started ${esc(C.started_et)} ET`,""),
+    kpi("Balance / equity",money(C.balance,false),`equity ${money(C.equity,false)} · realized ${money(C.balance-C.initial)}`,cls(C.balance-C.initial)),
+    `<div class="kpi"><div class="lbl">Step 1 target (+${C.target_pct}%)</div><div class="val">${money(C.target_equity,false)}</div><div class="sub">progress ${money(C.progress_usd)} of ${money(C.target_usd,false)} (${pct(prog)})</div><div class="bar"><i style="width:${prog}%"></i></div></div>`,
+    kpi("To target",money(Math.max(0,C.target_equity-C.equity),false),"equity still needed",""),
+    `<div class="kpi"><div class="lbl">Max drawdown floor (${C.dd_pct}% trailing)</div><div class="val">${money(C.dd_floor,false)}</div><div class="sub">HWM ${money(C.hwm,false)} · ${money(C.dd_distance,false)} away · starts at ${money(C.initial*(1-C.dd_pct/100),false)}</div><div class="bar ${ddUsed>=50?"dng":""}"><i style="width:${ddUsed}%"></i></div></div>`,
+    `<div class="kpi"><div class="lbl">Daily loss limit (${C.dl_pct}% of SOD)</div><div class="val">${money(C.daily_limit,false)}</div><div class="sub">floor ${money(C.daily_floor,false)} · ${money(C.daily_distance,false)} away · today ${money(C.today_pnl)}</div><div class="bar ${dlUsed>=50?"dng":""}"><i style="width:${dlUsed}%"></i></div></div>`,
+    kpi("Daily reset",esc(C.next_reset_et)+" ET",`SOD balance ${money(C.sod_balance,false)} (00:00 UTC snapshot)`,""),
+    kpi("Binding limit",money(C.binding_floor,false),`${esc(C.binding_name)} floor · ${money(C.binding_distance,false)} away`,"")].join("");
+}
+function renderKpis(){ const k=K, td=BOARD.days[k.today_key]||{trades:0,wins:0,losses:0}, C=BOARD.challenge||{};
+  $("kpis").innerHTML=[
+    kpi("Today (realized)",money(k.today),`${td.trades} closed · ${td.wins}W/${td.losses}L`,cls(k.today)),
+    kpi("This week",money(k.week),`since Mon ${k.week_start.slice(5)}`,cls(k.week)),
+    kpi("Month to date",money(k.mtd),`all history ${money(k.all_time)}`,cls(k.mtd)),
+    kpi("Win rate (Propr, closed)",k.win_rate==null?"—":k.win_rate.toFixed(1)+"%",`${k.wins}W / ${k.losses}L · ${k.closed} trades`,""),
+    kpi("Open uPnL",money(k.open_upnl),`${BOARD.positions.length} open · ${BOARD.pending.length} resting`,cls(k.open_upnl)),
+    kpi("Account equity",money(C.equity,false),`simulated Propr balance ${money(C.balance,false)}`,"")].join("");
+}
+function ym(y,m){ return `${y}-${String(m).padStart(2,"0")}`; }
+function renderCal(){
+  const [y,m]=VIEW; $("monLbl").textContent=new Date(Date.UTC(y,m-1,15)).toLocaleString("en-US",{month:"long",year:"numeric",timeZone:"UTC"});
+  const first=new Date(Date.UTC(y,m-1,1)); const lead=(first.getUTCDay()+6)%7; const dim=new Date(Date.UTC(y,m,0)).getUTCDate();
+  const today=K.today_key; const cells=Math.ceil((lead+dim)/7)*7;
+  let h=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="dow">${d}</div>`).join("")+`<div class="dow wk">Week</div>`;
+  let wk={net:0,trades:0};
+  for(let i=0;i<cells;i++){
+    const dt=new Date(Date.UTC(y,m-1,1-lead+i)); const key=dt.toISOString().slice(0,10); const inM=dt.getUTCMonth()===m-1;
+    const d=BOARD.days[key]; const isT=key===today; const hasOpen=isT&&(BOARD.positions.length||BOARD.pending.length);
+    let c="cell"+(inM?"":" out")+(isT?" today":"")+(d?(" has "+(d.net>0.005?"win":(d.net<-0.005?"loss":""))):" empty")+(hasOpen&&!d?" has":"");
+    h+=`<div class="${c}" data-day="${key}"><div class="dn"><b>${dt.getUTCDate()}</b>${isT?'<span class="amber">TODAY</span>':""}</div>`;
+    if(d){ h+=`<div class="cnt">${d.trades} trade${d.trades>1?"s":""} · ${d.wins}W/${d.losses}L</div>`; wk.net+=d.net; wk.trades+=d.trades; }
+    if(d&&d.best!=null) h+=`<div class="cnt mono" style="font-size:10px">best <span class="${cls(d.best)}">${money(d.best)}</span>${d.trades>1?` / worst <span class="${cls(d.worst)}">${money(d.worst)}</span>`:""}</div>`;
+    if(hasOpen) h+=`<div class="live ${cls(K.open_upnl)}">open ${money(K.open_upnl)}</div>`;
+    h+=`<div class="pnl ${d?cls(d.net):""}">${d?money(d.net):(inM?"·":"")}</div></div>`;
+    if(i%7===6){ h+=`<div class="wk"><div class="l">Week net</div><div class="v ${wk.trades?cls(wk.net):"dim"}">${wk.trades?money(wk.net):"—"}</div><div class="cnt dim mono" style="font-size:10px">${wk.trades} trades</div></div>`; wk={net:0,trades:0}; }
+  }
+  $("cal").innerHTML=h;
+  $("cal").querySelectorAll(".cell.has").forEach(el=>el.onclick=()=>openDay(el.dataset.day));
+}
+function pill(r){ const c=r==="WIN"?"win":r==="LOSS"?"loss":r==="OPEN"?"open":"be"; return `<span class="pill ${c}">${r}</span>`; }
+function riskCell(t){ if(t.risk==null) return '<span class="dim">—</span>'; let s=money(t.risk,false);
+  if(t.initial_risk!=null&&t.final_risk!=null&&Math.abs(t.initial_risk-t.final_risk)>0.05) s+=` <span class="dim rsub" title="initial stop ${px(t.initial_stop)} → final stop ${px(t.stop)}">(${money(t.initial_risk,false)}→${money(t.final_risk,false)})</span>`;
+  return s; }
+const rfmt=v=>v==null?"—":(v>0?"+":"")+v.toFixed(2)+"R";
+function tradesTable(list){
+  if(!list.length) return '<div class="empty">No closed trades.</div>';
+  return `<div class="tbl"><table><thead><tr><th>Asset</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Risk $</th><th class="num">Fees</th><th class="num">Funding</th><th class="num">Gross</th><th class="num">Net</th><th class="num">R (net)</th><th class="num">R (gross)</th><th>Exit</th><th>Result</th><th>Open ET</th><th>Close ET</th></tr></thead><tbody>`+
+  list.map(t=>`<tr><td>${esc(t.coin)}</td><td class="side-${t.side}">${t.side.toUpperCase()}</td><td class="num">${sz(t.size)}</td><td class="num">${px(t.entry)}</td><td class="num">${px(t.exit)}</td><td class="num">${px(t.stop)}</td><td class="num">${px(t.target)}</td><td class="num">${riskCell(t)}</td><td class="num neg" title="open ${money(-t.fee_open,false)} + close ${money(-t.fee_close,false)}">${money(-t.fees)}</td><td class="num ${cls(t.funding)}">${money(t.funding)}</td><td class="num ${cls(t.gross)}">${money(t.gross)}</td><td class="num ${cls(t.net)}"><b>${money(t.net)}</b></td><td class="num ${cls(t.r_mult)}">${rfmt(t.r_mult)}</td><td class="num ${cls(t.r_gross)}">${rfmt(t.r_gross)}</td><td class="mono dim">${esc(t.exit_type||"—")}</td><td>${pill(t.result)}</td><td class="mono dim">${t.open_et.slice(5)}</td><td class="mono dim">${t.close_et.slice(5)}</td></tr>`).join("")+`</tbody></table></div>`;
+}
+function openTable(){
+  let h=""; const P=BOARD.positions, R=BOARD.pending;
+  if(P.length) h+=`<div class="tbl"><table><thead><tr><th>Asset</th><th>Side</th><th class="num">Size</th><th class="num">Entry</th><th class="num">Mark</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Risk $</th><th class="num">uPnL</th><th class="num">Fees paid</th><th class="num">Liq</th><th>Lev</th><th>Opened ET</th><th></th></tr></thead><tbody>`+
+    P.map(p=>`<tr><td>${esc(p.coin)}</td><td class="side-${p.side}">${p.side.toUpperCase()}</td><td class="num">${sz(p.size)}</td><td class="num">${px(p.entry)}</td><td class="num">${px(p.mark)}</td><td class="num">${px(p.stop)}</td><td class="num">${px(p.target)}</td><td class="num">${p.risk==null?"—":money(p.risk,false)}</td><td class="num ${cls(p.upnl)}"><b>${money(p.upnl)}</b></td><td class="num neg">${money(-(p.fees||0))}</td><td class="num dim">${px(p.liq)}</td><td class="mono dim">${esc(p.leverage)}</td><td class="mono dim">${(p.open_et||"—").slice(5)}</td><td>${pill("OPEN")}</td></tr>`).join("")+`</tbody></table></div>`;
+  if(R.length) h+=`<div style="height:.6rem"></div><div class="tbl"><table><thead><tr><th>Resting entry</th><th>Side</th><th class="num">Size</th><th class="num">Limit</th><th class="num">Mark</th><th class="num">Stop</th><th class="num">Target</th><th class="num">Planned risk</th><th class="num">Planned reward</th><th class="num">R:R</th><th>Placed ET</th></tr></thead><tbody>`+
+    R.map(p=>`<tr><td>${esc(p.coin)}</td><td class="side-${p.side}">${p.side.toUpperCase()}</td><td class="num">${sz(p.size)}</td><td class="num">${px(p.entry)}</td><td class="num">${px(p.mark)}</td><td class="num">${px(p.stop)}</td><td class="num">${px(p.target)}</td><td class="num">${p.planned_risk==null?"—":money(p.planned_risk,false)}</td><td class="num pos">${p.planned_reward==null?"—":money(p.planned_reward,false)}</td><td class="num">${p.planned_risk&&p.planned_reward?(p.planned_reward/p.planned_risk).toFixed(1)+"R":"—"}</td><td class="mono dim">${p.placed_et.slice(5)}</td></tr>`).join("")+`</tbody></table></div>`;
+  return h||'<div class="empty">Flat — no open positions or resting entries.</div>';
+}
+function openDay(day){
+  OPEN_DAY=day; const d=BOARD.days[day]; const list=BOARD.trades.filter(t=>t.day===day); const isT=day===K.today_key;
+  const dt=new Date(day+"T12:00:00Z"); $("drTitle").innerHTML=`${dt.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric",timeZone:"UTC"})} ${isT?'<span class="badge warn">TODAY</span>':""} <span class="badge sim">PROPR (SIMULATED)</span>`;
+  const wr=d&&(d.wins+d.losses)?(100*d.wins/(d.wins+d.losses)).toFixed(0)+"%":"—";
+  let h=`<div class="stat-row">
+    <div><div class="l">Net PnL</div><div class="v ${cls(d?.net)}">${money(d?.net??0)}</div></div>
+    <div><div class="l">Gross</div><div class="v ${cls(d?.gross)}">${money(d?.gross??0)}</div></div>
+    <div><div class="l">Fees</div><div class="v neg">${money(-(d?.fees??0))}</div></div>
+    <div><div class="l">Funding</div><div class="v ${cls(d?.funding)}">${money(d?.funding??0)}</div></div>
+    <div><div class="l">Trades</div><div class="v">${d?.trades??0}</div></div>
+    <div><div class="l">Win rate</div><div class="v">${wr}</div></div>
+    <div><div class="l">Risk taken</div><div class="v">${d?money(d.risk,false):"—"}</div></div>
+    ${isT?`<div><div class="l">Open uPnL</div><div class="v ${cls(K.open_upnl)}">${money(K.open_upnl)}</div></div>`:""}</div>`;
+  h+=`<div><div class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.4rem">Closed trades (by close time ET)</div>${tradesTable(list)}</div>`;
+  if(isT) h+=`<div><div class="dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.4rem">Still open now</div>${openTable()}</div>`;
+  $("drBody").innerHTML=h; $("drawer").classList.add("on"); $("ov").classList.add("on");
+}
+function closeDay(){ OPEN_DAY=null; $("drawer").classList.remove("on"); $("ov").classList.remove("on"); }
+function render(){
+  if(!BOARD){ $("kpis").innerHTML='<div class="empty">No data yet.</div>'; return; }
+  K=kp();
+  if(!VIEW){ const [y,m]=K.today_key.split("-").map(Number); VIEW=[y,m]; }
+  const C=BOARD.challenge||{}; $("sub").textContent=`${C.name||"Propr"} · $${(C.initial||0).toLocaleString("en-US")} · simulated`;
+  renderChallenge(); renderKpis(); renderCal(); $("openBox").innerHTML=openTable();
+  $("srcBadge").textContent="SNAPSHOT"; $("srcBadge").className="badge warn"; $("dot").className="dot"+(SOURCE==="fresh"?"":" stale");
+  $("upd").textContent=`built ${BOARD.generated_et} ET`;
+  $("foot").innerHTML=`<b class="amber">PROPR evaluation (simulated).</b> Only trades from the Propr evaluation account are on this board; Hyperliquid mainnet trades are on a separate board. `+
+   `Source: Propr API (executions, positions, orders), rebuilt by <code class="mono">build_propr_board.py</code>; this page is a snapshot generated ${BOARD.generated_et} ET and re-reads <code class="mono">calendar.json</code> every 60s, so it is only as fresh as the last rebuild. `+
+   `Trades are positions (open → flat), dated by close time in America/Toronto. Net = gross realized PnL − all entry/exit fees + funding; this matches the account balance. `+
+   `Risk = |entry − initial stop| × size. R (net) = net ÷ risk; R (gross) = gross ÷ risk (the figure Propr reports). `+
+   `Max drawdown floor = high-water mark − ${C.dd_pct}% of the starting balance (trailing, never above the starting balance); daily loss floor = start-of-day balance (00:00 UTC) − ${C.dl_pct}%, both equity-based. Start-of-day balance is reconstructed from fills.`;
+  if(OPEN_DAY) openDay(OPEN_DAY);
+}
+async function refresh(){
+  $("refresh").disabled=true; $("upd").textContent="refreshing…";
+  try{ const r=await fetch("calendar.json?ts="+Date.now(),{cache:"no-store"}); if(r.ok){ BOARD=await r.json(); SOURCE="fresh"; } }catch(e){}
+  $("refresh").disabled=false; render();
+}
+$("refresh").onclick=refresh; $("drClose").onclick=closeDay; $("ov").onclick=closeDay; document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDay(); });
+$("prev").onclick=()=>{ let [y,m]=VIEW; m--; if(m<1){m=12;y--;} VIEW=[y,m]; renderCal(); };
+$("next").onclick=()=>{ let [y,m]=VIEW; m++; if(m>12){m=1;y++;} VIEW=[y,m]; renderCal(); };
+$("todayBtn").onclick=()=>{ VIEW=null; render(); };
+const hd=(location.hash.match(/day=(\d{4}-\d{2}-\d{2})/)||[])[1]; if(hd) OPEN_DAY=hd;
+render(); refresh(); setInterval(refresh,REFRESH_MS);
+</script>
+</body>
+</html>
