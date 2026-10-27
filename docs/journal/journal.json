@@ -834,6 +834,6 @@
   "chart_tf": "1h",
   "img_v": "1cf05cb1",
   "reason": "Manual (market)",
-  "note": "No notes recorded"
+  "note": "Resting ALO short of 0.03851 BTC at 80,566 (10x isolated) placed Oct 24 after cancelling the unfilled 81,652 short, with stop 81,070 and TP 79,188, risking about $21.28 (2% of 1,064 USDC) for about 2.45R. It filled by the morning of Oct 25 and was about +$10 early on; the TP was later moved to 79,500 (the reason wasn't recorded). On the evening of Oct 26 Chris closed it at market near 79,678 together with his Propr BTC short, locking the win before bed under his new rule: don't sleep on positions and don't turn winners into losers."
  }
 ]
