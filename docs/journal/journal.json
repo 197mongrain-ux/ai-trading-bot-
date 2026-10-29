@@ -915,6 +915,6 @@
   "chart_tf": "5m",
   "img_v": "8c8165ce",
   "reason": "Stop loss",
-  "note": "No notes recorded"
+  "note": "Resting post-only limit long of 0.035 BTC at 80,650 (20x isolated, sized at 1.5% risk), set up in the afternoon with the stop at 80,250 and the target split into two legs at 81,350 and 81,740. It filled at 4:01 PM ET, got only about 0.44R in favour, then reversed and hit the stop at 4:05 PM ET for about -1.1R after fees. No further reasoning for the entry was recorded."
  }
 ]
