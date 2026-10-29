@@ -889,5 +889,32 @@
   "img_v": "9006e60b",
   "reason": "Stop loss",
   "note": "No notes recorded"
+ },
+ {
+  "id": "BTC-20261029-1601",
+  "coin": "BTC",
+  "side": "long",
+  "size": 0.035,
+  "entry": 80649.99999999999,
+  "exit": 80244.0,
+  "stop": 80250.0,
+  "initial_stop": 80250.0,
+  "fees": 1.6198,
+  "net": -15.8298,
+  "r_mult": -1.13,
+  "open_ms": 1793304098140,
+  "close_ms": 1793304352578,
+  "open_et": "2026-10-29 16:01",
+  "close_et": "2026-10-29 16:05",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 81350.0,
+  "tp_final": 81740.0,
+  "mfe_r": 0.44,
+  "mae_r": 1.36,
+  "chart_tf": "5m",
+  "img_v": "8c8165ce",
+  "reason": "Stop loss",
+  "note": "No notes recorded"
  }
 ]
