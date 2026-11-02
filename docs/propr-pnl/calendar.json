@@ -1,8 +1,8 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1793145570140,
- "generated_et": "2026-10-27 19:59:30",
+ "generated_ms": 1793653423467,
+ "generated_et": "2026-11-02 16:03:43",
  "challenge": {
   "name": "Bronze 2-Step Classic",
   "phase_order": 1,
@@ -10,40 +10,40 @@
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 24901.72,
-  "equity": 24901.72,
-  "hwm": 25070.25,
+  "balance": 25162.79,
+  "equity": 25162.79,
+  "hwm": 25169.7,
   "dd_pct": 8.0,
-  "dd_floor": 23070.25,
-  "dd_distance": 1831.47,
+  "dd_floor": 23169.7,
+  "dd_distance": 1993.1,
   "dl_pct": 5.0,
-  "sod_balance": 25000.4,
-  "daily_limit": 1250.02,
-  "daily_floor": 23750.38,
-  "daily_distance": 1151.34,
-  "today_pnl": -98.68,
-  "next_reset_et": "Oct 27 08:00 PM",
+  "sod_balance": 24827.45,
+  "daily_limit": 1241.37,
+  "daily_floor": 23586.08,
+  "daily_distance": 1576.71,
+  "today_pnl": 335.34,
+  "next_reset_et": "Nov 02 07:00 PM",
   "target_pct": 5.0,
   "target_equity": 26250.0,
   "target_usd": 1250.0,
-  "progress_usd": -98.28,
+  "progress_usd": 162.79,
   "binding_name": "daily loss",
-  "binding_floor": 23750.38,
-  "binding_distance": 1151.34,
-  "reconciliation_diff_ex_funding": 1.7314
+  "binding_floor": 23586.08,
+  "binding_distance": 1576.71,
+  "reconciliation_diff_ex_funding": 5.7304
  },
  "kpis": {
-  "today": -136.22,
-  "week": -98.28,
-  "mtd": -98.28,
-  "all_time": -98.28,
-  "win_rate": 33.3,
-  "wins": 1,
-  "losses": 2,
-  "closed": 3,
+  "today": 338.13,
+  "week": 338.13,
+  "mtd": 338.13,
+  "all_time": 201.32,
+  "win_rate": 50.0,
+  "wins": 3,
+  "losses": 3,
+  "closed": 6,
   "open_upnl": 0.0,
-  "today_key": "2026-10-27",
-  "week_start": "2026-10-26"
+  "today_key": "2026-11-02",
+  "week_start": "2026-11-02"
  },
  "days": {
   "2026-10-26": {
@@ -69,10 +69,49 @@
    "risk": 114.29,
    "best": -66.75,
    "worst": -69.47
+  },
+  "2026-10-29": {
+   "net": -38.53,
+   "gross": -34.53,
+   "fees": 4.0,
+   "funding": 0.0,
+   "trades": 1,
+   "wins": 0,
+   "losses": 1,
+   "risk": 32.95,
+   "best": -38.53,
+   "worst": -38.53
+  },
+  "2026-11-02": {
+   "net": 338.13,
+   "gross": 340.79,
+   "fees": 6.65,
+   "funding": 4.0,
+   "trades": 2,
+   "wins": 2,
+   "losses": 0,
+   "risk": 232.24,
+   "best": 208.84,
+   "worst": 129.29
   }
  },
  "trades": [
   {
+   "stop_path": [
+    [
+     1793050510443,
+     1793071599124,
+     80420.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793050510443,
+     1793071599124,
+     79350.0
+    ]
+   ],
+   "entry_placed_ms": null,
    "coin": "BTC",
    "side": "short",
    "size": 0.111,
@@ -106,6 +145,21 @@
    "day": "2026-10-26"
   },
   {
+   "stop_path": [
+    [
+     1793110402746,
+     1793114441615,
+     80490.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793110402746,
+     1793114441615,
+     79567.0
+    ]
+   ],
+   "entry_placed_ms": null,
    "coin": "BTC",
    "side": "short",
    "size": 0.18,
@@ -139,6 +193,26 @@
    "day": "2026-10-27"
   },
   {
+   "stop_path": [
+    [
+     1793117861186,
+     1793136695320,
+     80880.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793117861186,
+     1793119164537,
+     79950.0
+    ],
+    [
+     1793119175400,
+     1793136695320,
+     80100.0
+    ]
+   ],
+   "entry_placed_ms": null,
    "coin": "BTC",
    "side": "short",
    "size": 0.174,
@@ -170,6 +244,175 @@
    "close_et": "2026-10-27 17:31",
    "result": "LOSS",
    "day": "2026-10-27"
+  },
+  {
+   "stop_path": [
+    [
+     1793304101064,
+     1793304349592,
+     80250.0
+    ],
+    [
+     1793304101064,
+     1793304349592,
+     80250.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793304101064,
+     1793304349592,
+     81350.0
+    ],
+    [
+     1793304101064,
+     1793304349592,
+     81740.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "long",
+   "size": 0.083,
+   "entry": 80647.0,
+   "stop": 80250.0,
+   "target": 81740.0,
+   "risk": 32.95,
+   "initial_stop": 80250.0,
+   "initial_risk": 32.95,
+   "final_risk": 32.95,
+   "fee_open": 1.0041,
+   "fee_close": 2.9966,
+   "fees": 4.0007,
+   "funding": 0.0,
+   "gross": -34.528,
+   "open_ms": 1793304101064,
+   "open_et": "2026-10-29 16:01",
+   "n_fills": 4,
+   "status": "closed",
+   "id": "BTC-20261029-1601",
+   "note": "No notes recorded",
+   "img": "journal/img/BTC-20261029-1601.png",
+   "exit": 80231.0,
+   "net": -38.5287,
+   "exit_type": "SL",
+   "r_mult": -1.17,
+   "r_gross": -1.05,
+   "close_ms": 1793304349689,
+   "close_et": "2026-10-29 16:05",
+   "result": "LOSS",
+   "day": "2026-10-29"
+  },
+  {
+   "stop_path": [
+    [
+     1793632820659,
+     1793643097106,
+     7700.0
+    ],
+    [
+     1793643086630,
+     1793652936554,
+     7645.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793632820659,
+     1793652936554,
+     7528.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "xyz:SP500",
+   "side": "short",
+   "size": 2.082,
+   "entry": 7645.0,
+   "stop": 7645.0,
+   "target": 7528.0,
+   "risk": 114.51,
+   "initial_stop": 7700.0,
+   "initial_risk": 114.51,
+   "final_risk": 0.0,
+   "fee_open": 0.4775,
+   "fee_close": 1.4136,
+   "fees": 1.8911,
+   "funding": 0.0313,
+   "gross": 210.6984,
+   "open_ms": 1793632820659,
+   "open_et": "2026-11-02 10:20",
+   "n_fills": 2,
+   "status": "closed",
+   "id": "xyz:SP500-20261102-1020",
+   "note": "Setup (Nov 2 template trade): SP500 short. 4h downtrend with the EMAs stacked bearish (20 < 50 < 200: 7,614 / 7,640 / 7,686), ADX 33. Entry 7,645 was a limit at the broken Oct 30 overnight lows (7,637 to 7,647, flipped support to resistance), the 0.61 fib retracement of the 7,720.7 to 7,526 impulse. Original stop 7,700 (about 0.72%, just above the 7,660 minor swing high), TP 7,528 (2 points in front of the 7,526 impulse low), about 2.1R planned.\nPropr: short 2.082 at 10x isolated, stop 7,700 = $114.5 risk (0.46% of $25k). Filled 10:20 AM ET Nov 2.\nManagement: stop moved to breakeven (7,645) at 1:11 PM ET at Chris's request; TP left at 7,528.\nExit: Chris closed it manually at market just before the cash close, at 7,543.8 (3:55 PM ET). The breakeven stop and TP were cancelled automatically when the position closed.\nResult: +$210.70 gross, $1.89 fees, +$208.84 net (incl. $0.03 funding), about +1.8R.\nChris: an excellent, well-thought-out trade. Its format, sizing, stop distance and retracement entry are now the template for the new setup watch.",
+   "img": "journal/img/xyz:SP500-20261102-1020.png",
+   "exit": 7543.8,
+   "net": 208.8387,
+   "exit_type": "Market",
+   "r_mult": 1.82,
+   "r_gross": 1.84,
+   "close_ms": 1793652936615,
+   "close_et": "2026-11-02 15:55",
+   "result": "WIN",
+   "day": "2026-11-02"
+  },
+  {
+   "stop_path": [
+    [
+     1793513722157,
+     1793635536265,
+     79150.0
+    ],
+    [
+     1793635521271,
+     1793643096851,
+     78865.0
+    ],
+    [
+     1793643085958,
+     1793653114466,
+     78007.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793513722157,
+     1793653114466,
+     76264.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.103,
+   "entry": 78007.0,
+   "stop": 78007.0,
+   "target": 76264.0,
+   "risk": 117.73,
+   "initial_stop": 79150.0,
+   "initial_risk": 117.73,
+   "final_risk": 0.0,
+   "fee_open": 1.2052,
+   "fee_close": 3.5571,
+   "fees": 4.7623,
+   "funding": 3.9677,
+   "gross": 130.089,
+   "open_ms": 1793513722157,
+   "open_et": "2026-11-01 01:15",
+   "n_fills": 2,
+   "status": "closed",
+   "id": "BTC-20261101-0115",
+   "note": "Setup (Nov 2 template trade): BTC short. 4h downtrend (EMAs 20/50/200 at 78,315 / 79,508 / 81,065, ADX 29, -DI over +DI). Entry 78,000 was a limit at the round number and the broken Oct 30 1h low (flipped support to resistance), the 0.69 fib retracement of the 78,772 to 76,264 impulse. TP 76,264 at the impulse low (first liquidity), about 1.51R planned from the original stop 79,150 (about 0.5% above the 78,772 swing high, 1.47% away).\nPropr: short 0.103 at 10x, entry 78,007, original stop 79,150 (about $118 risk, 0.47% of $25k). Filled 1:15 AM ET Nov 1.\nManagement: stop tightened to 78,865 at 11:05 AM ET Nov 2 (about $88 risk), then moved to breakeven (78,007) at 1:11 PM ET at Chris's request; TP left at 76,264.\nExit: Chris closed it manually at market at 76,744 (3:58 PM ET) at the end of the day (day done). The remaining stop and TP were cancelled automatically when the position closed.\nResult: +$130.09 gross, $4.76 fees, +$3.97 funding received, +$129.29 net, about +1.10R on the original 79,150 stop (about +1.46R on the 78,865 stop).\nChris: happy with this trade. Same format as the SP500 short, and part of the template for the new setup watch.",
+   "img": "journal/img/BTC-20261101-0115.png",
+   "exit": 76744.0,
+   "net": 129.2944,
+   "exit_type": "Market",
+   "r_mult": 1.1,
+   "r_gross": 1.1,
+   "close_ms": 1793653114523,
+   "close_et": "2026-11-02 15:58",
+   "result": "WIN",
+   "day": "2026-11-02"
   }
  ],
  "positions": [],
