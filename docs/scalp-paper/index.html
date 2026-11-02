@@ -47,7 +47,7 @@ function spark(eq){if(!eq.length)return"<div class=mut>no closed trades yet</div
   return `<svg width="100%" viewBox="0 0 ${w} ${h+2}" preserveAspectRatio="none" style="height:50px"><polyline fill="none" stroke="${v[v.length-1]>=150?"#3fb950":"#f85149"}" stroke-width="1.5" points="${pts}"/></svg>`}
 function render(){
   const hb=D.heartbeat||{},age=hb.ts?(Date.now()-Date.parse(hb.ts))/1000:1e9,upd=(Date.now()-Date.parse(D.updated))/1000;
-  const st=age<240?"<span class=ok>● RUNNING</span>":age<900?"<span class=warn>● LAGGING</span>":"<span class=bad>● NO HEARTBEAT</span>";
+  const st=age<480?"<span class=ok>● RUNNING</span>":age<1200?"<span class=warn>● LAGGING</span>":"<span class=bad>● NO HEARTBEAT</span>";
   $("status").innerHTML=`${st} · bot heartbeat ${hb.ts_et||"?"} (cycle ${hb.cycle??"?"}, flow ws: ${esc(hb.ws)}) · board data updated <b>${D.updated_et}</b> (${Math.round(upd/60)} min ago) · running since ${new Date(D.started).toLocaleString()}`
    +(D.last_eval?` · BTC ${px(D.last_eval.close)} · 1h trend <b>${D.last_eval.trend}</b> · last bar ${D.last_eval.bar} ET`:"")
    +((hb.errors||[]).length?`<br><span class=warn>recent errors: ${esc(hb.errors.slice(-2).join(" | "))}</span>`:"");
