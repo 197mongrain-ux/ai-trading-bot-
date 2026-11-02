@@ -1,9 +1,73 @@
 <!DOCTYPE html>
-<html lang="en"><head>
+<html lang="en">
+<head>
 <meta charset="utf-8" />
-<meta http-equiv="refresh" content="0; url=pnl/" />
-<title>HL boards</title>
-<link rel="canonical" href="pnl/" />
-</head><body style="background:#000;color:#8b8b8b;font-family:system-ui;padding:2rem">
-<p>Boards: <a href="pnl/" style="color:#00c805">PnL since Mon 9am ET (testnet)</a></p>
-</body></html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trading boards · Chris Mongrain</title>
+<style>
+:root{--bg:#000;--panel:#0e0e0e;--border:#1a1a1a;--border2:#262626;--text:#e8e8e8;--muted:#8b8b8b;--dim:#5c5c5c;--green:#00c805;--red:#ff4d4f;--amber:#e6c07b;--accent:#6ea8fe;
+--mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;--sans:"Inter","Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+.top{padding:1rem 1.2rem;border-bottom:1px solid var(--border);background:#0b0b0b;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.top h1{margin:0;font-size:16px}.top .s{color:var(--muted);font-size:12px;font-family:var(--mono)}
+.wrap{max-width:1100px;margin:0 auto;padding:1.1rem 1.1rem 3rem;display:flex;flex-direction:column;gap:1.4rem}
+.grp h2{display:flex;align-items:center;gap:.5rem;margin:0 0 .6rem;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.grp h2 .f{font-size:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.7rem}
+a.tile{display:flex;flex-direction:column;gap:.35rem;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.9rem 1rem;position:relative;transition:border-color .15s,background .15s;min-height:132px}
+a.tile:hover{border-color:#3a3a3a;background:#131313}
+a.tile::before{content:"";position:absolute;top:-1px;left:14px;width:56px;height:6px;border:1px solid var(--border);border-bottom:0;border-radius:6px 6px 0 0;background:var(--panel);transform:translateY(-5px)}
+.t{font-weight:650;font-size:14px;display:flex;gap:.45rem;align-items:center}.t .ic{font-size:17px}
+.d{color:var(--muted);font-size:12px;line-height:1.45}
+.n{margin-top:auto;font-family:var(--mono);font-size:13px}.n .big{font-size:17px;font-weight:700}
+.u{color:var(--dim);font-family:var(--mono);font-size:10.5px}
+.pos{color:var(--green)}.neg{color:var(--red)}.amb{color:var(--amber)}
+.tag{font-family:var(--mono);font-size:9.5px;padding:.1rem .4rem;border-radius:3px;border:1px solid var(--border2);color:var(--muted);margin-left:auto}
+.tag.p{color:var(--amber);border-color:#7a5a1a}.tag.l{color:var(--green);border-color:#1a5c2a}
+.foot{color:var(--dim);font-size:11px}
+</style>
+</head>
+<body>
+<div class="top"><span style="color:var(--green);font-size:1.2rem">◆</span><h1>Trading boards</h1><span class="s">Chris Mongrain · all pages in one place · live numbers load from each board</span></div>
+<div class="wrap">
+ <div class="grp"><h2><span class="f">📁</span>Hyperliquid (mainnet)</h2><div class="tiles">
+  <a class="tile" href="pnl/"><div class="t"><span class="ic">📅</span>PnL calendar<span class="tag l">LIVE</span></div><div class="d">Daily PnL calendar of manual HL trades (click a day for its trades), KPIs, open positions.</div><div class="n" id="hl"></div></a>
+  <a class="tile" href="journal/"><div class="t"><span class="ic">📓</span>Trade journal</div><div class="d">Every HL trade with chart (entry/exit, stop moves, TP), setup notes, management and result in $ and R.</div><div class="n" id="hlj"></div></a>
+ </div></div>
+ <div class="grp"><h2><span class="f">📁</span>Propr (evaluation account)</h2><div class="tiles">
+  <a class="tile" href="propr-pnl/"><div class="t"><span class="ic">📅</span>Propr PnL calendar<span class="tag l">LIVE</span></div><div class="d">Propr challenge account: daily PnL, balance, step-1 target progress. Separate from HL.</div><div class="n" id="pr"></div></a>
+  <a class="tile" href="propr-pnl/journal/"><div class="t"><span class="ic">📓</span>Propr trade journal</div><div class="d">Propr trades with charts, management and notes.</div><div class="n" id="prj"></div></a>
+ </div></div>
+ <div class="grp"><h2><span class="f">📁</span>Scalp paper bot</h2><div class="tiles">
+  <a class="tile" href="scalp-pnl/"><div class="t"><span class="ic">💰</span>Scalp PnL board<span class="tag p">PAPER</span></div><div class="d">Is the bot in profit? Total R/$ after fees, daily calendar, equity curve, per-book table (A–D, A2–D2, A3–D3).</div><div class="n" id="sp"></div></a>
+  <a class="tile" href="scalp-paper/"><div class="t"><span class="ic">⚡</span>Live engine board<span class="tag p">PAPER</span></div><div class="d">Engine status, open positions with charts, pending setups, near-misses, rules per book.</div><div class="n" id="sl"></div></a>
+ </div></div>
+ <div class="grp"><h2><span class="f">🗄️</span>Archive (no longer updated)</h2><div class="tiles">
+  <a class="tile" href="model-b/"><div class="t"><span class="ic">🤖</span>Model B performance<span class="tag">ARCHIVE</span></div><div class="d">Old Model B bot mainnet performance board.</div><div class="n" id="mb"></div></a>
+  <a class="tile" href="positions/"><div class="t"><span class="ic">📌</span>Open positions (old)<span class="tag">ARCHIVE</span></div><div class="d">Old live-positions / planned-exits page.</div><div class="n" id="po"></div></a>
+ </div></div>
+ <div class="foot">Times are ET. Numbers on this page are fetched from each board's own data when you open it; tap a tile for the details.</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const fu=x=>x==null||isNaN(x)?"–":(x<0?"−$":x>0?"+$":"$")+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const fr=x=>(x>0?"+":"")+(+x).toFixed(2)+"R";const c=x=>x>0?"pos":x<0?"neg":"";
+async function J(u,o){const r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now(),Object.assign({cache:"no-store"},o||{}));if(!r.ok)throw r.status;return r.json()}
+(async()=>{try{const d=await J("pnl/calendar.json"),k=d.kpis;
+  $("hl").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${k.closed} trades · ${k.win_rate}% win · updated ${d.generated_et} ET</div>`;
+  $("hlj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("hl").innerHTML="<span class=u>open board for numbers</span>"}})();
+(async()=>{try{const d=await J("propr-pnl/calendar.json"),k=d.kpis,ch=d.challenge||{};
+  const bal=ch.balance??ch.true_balance??null;
+  $("pr").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${bal!=null?"balance "+fu(bal).replace("+","")+" · ":""}${k.closed} trades · updated ${d.generated_et} ET</div>`;
+  $("prj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("pr").innerHTML="<span class=u>open board for numbers</span>"}})();
+(async()=>{const R="197mongrain-ux/ai-trading-bot-",P="scalp-paper/data.json";let d=null;
+  try{d=await J(`https://api.github.com/repos/${R}/contents/${P}?ref=scalp-paper-data`,{headers:{Accept:"application/vnd.github.raw"}})}catch(e){try{d=await J(`https://raw.githubusercontent.com/${R}/scalp-paper-data/${P}`)}catch(e2){}}
+  if(!d){$("sp").innerHTML="<span class=u>open board for numbers</span>";return}
+  const T=d.trades||[],r=T.reduce((a,t)=>a+t.R,0),u=T.reduce((a,t)=>a+(t.usd||0),0),w=T.filter(t=>t.R>0).length,op=(d.books||[]).reduce((a,b)=>a+(b.open||[]).length,0);
+  $("sp").innerHTML=`<span class="big ${c(r)}">${r>0?"In profit":"Not in profit"}</span> · <span class=${c(r)}>${fr(r)} (${fu(u)})</span><div class=u>${T.length} trades · ${w}W/${T.length-w}L · after fees</div>`;
+  $("sl").innerHTML=`${op} open position${op==1?"":"s"} · ${(d.books||[]).length} books<div class=u>engine data ${d.updated_et||""}</div>`})();
+(async()=>{try{const d=await J("model-b/board.json");$("mb").innerHTML=`<span class=u>last updated ${(d.generated_et||"").slice(0,16).replace("T"," ")} ET</span>`}catch(e){}})();
+(async()=>{try{const d=await J("positions/plans.json");$("po").innerHTML=`<span class=u>last updated ${d.updated||""}</span>`}catch(e){}})();
+</script>
+</body>
+</html>

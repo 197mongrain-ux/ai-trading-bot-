@@ -332,4 +332,4 @@ function render(){const m=mode==="bar"?"current candle (from its open, UTC-align
   $f("flowH").innerHTML=table(sumH,HL.cov||Date.now());$f("flowUpd").textContent="· updated "+new Date().toLocaleTimeString("en-CA",{timeZone:"America/Toronto",hour12:false})+" ET"}
 connect();loadBN().then(render);setInterval(loadBN,15e3);setInterval(()=>{render();saveHL()},3e3);setInterval(()=>{if(Object.keys(HL.tids).length>2e5)HL.tids={}},6e4)})();
 </script>
-</body></html>
+<a href="/ai-trading-bot-/" id="homelink" style="position:fixed;left:10px;bottom:10px;z-index:99;background:#111;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">⌂ Home</a></body></html>

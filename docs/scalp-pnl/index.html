@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scalp paper bot · PnL board</title>
+<style>
+:root{--bg:#000;--bg2:#0b0b0b;--panel:#0e0e0e;--border:#1a1a1a;--border2:#262626;--text:#e8e8e8;--muted:#8b8b8b;--dim:#5c5c5c;
+--green:#00c805;--red:#ff4d4f;--amber:#e6c07b;--accent:#6ea8fe;
+--mono:"SF Mono","JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;--sans:"Inter","IBM Plex Sans","Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+a{color:var(--accent)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pos{color:var(--green)}.neg{color:var(--red)}.muted{color:var(--muted)}.dim{color:var(--dim)}.amber{color:var(--amber)}
+.topbar{display:flex;align-items:center;gap:1rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:.55rem}.mark{color:var(--green);font-size:1.2rem}
+.brand-title{font-weight:650;font-size:14px}.brand-sub{color:var(--muted);font-size:10px;font-family:var(--mono)}
+.badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;border:1px solid #1a5c2a;color:var(--green);background:#06140a}
+.badge.warn{border-color:#7a5a1a;color:var(--amber);background:#140e06}
+.spacer{flex:1}.meta{color:var(--muted);font-size:11px;font-family:var(--mono)}
+button{font-family:var(--mono);font-size:11px;background:#111;color:var(--text);border:1px solid var(--border2);border-radius:5px;padding:.3rem .6rem;cursor:pointer}
+button:hover{border-color:#3a3a3a;background:#161616}
+.wrap{max-width:1240px;margin:0 auto;padding:1rem 1.1rem 3.5rem;display:flex;flex-direction:column;gap:1rem}
+.hero{border-radius:8px;padding:1rem 1.1rem;border:1px solid var(--border);background:var(--panel);display:flex;flex-wrap:wrap;gap:.6rem 1.5rem;align-items:baseline}
+.hero.win{background:linear-gradient(180deg,#04160a,#0a0a0a);border-color:#123d1c}.hero.loss{background:linear-gradient(180deg,#1a0809,#0a0a0a);border-color:#3d1418}
+.hero .big{font-size:1.6rem;font-weight:700}.hero .s{color:var(--muted);font-family:var(--mono);font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.65rem}
+@media(max-width:960px){.kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:.75rem .85rem}
+.kpi .lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.25rem}
+.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:650}.kpi .sub{color:var(--dim);font-size:10px;margin-top:.2rem;font-family:var(--mono)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:.6rem;padding:.65rem .9rem;border-bottom:1px solid var(--border);background:#0a0a0a;flex-wrap:wrap}
+.card-h h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.card-b{padding:.85rem .9rem}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr)) 120px;gap:6px}
+@media(max-width:820px){.cal{grid-template-columns:repeat(7,minmax(0,1fr))}.wk{display:none!important}.cell{min-height:64px!important}.cell .pnl{font-size:12px!important}}
+.dow{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:0 .3rem .2rem}
+.cell{min-height:92px;border:1px solid var(--border);border-radius:6px;background:#0a0a0a;padding:.45rem .5rem;display:flex;flex-direction:column;gap:.2rem}
+.cell.out{opacity:.25}.cell.empty .pnl{color:var(--dim)}
+.cell.has{cursor:pointer}.cell.has:hover{border-color:#3a3a3a;background:#111}
+.cell.win{background:linear-gradient(180deg,#04160a 0%,#0a0a0a 100%);border-color:#123d1c}
+.cell.loss{background:linear-gradient(180deg,#1a0809 0%,#0a0a0a 100%);border-color:#3d1418}
+.cell.today{outline:1px solid var(--accent);outline-offset:-1px}
+.cell .dn{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.cell .pnl{font-family:var(--mono);font-size:15px;font-weight:650;margin-top:auto}
+.cell .cnt{font-family:var(--mono);font-size:10px;color:var(--dim)}
+.wk{border:1px dashed var(--border2);border-radius:6px;padding:.45rem .5rem;display:flex;flex-direction:column;justify-content:center;gap:.15rem}
+.wk .l{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.07em}.wk .v{font-family:var(--mono);font-size:13px;font-weight:650}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:.42rem .5rem;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#0a0a0a}
+td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#111}
+.tbl{overflow-x:auto}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:.12rem .4rem;border-radius:999px;border:1px solid var(--border2)}
+.pill.win{color:var(--green);border-color:#1a5c2a;background:#06140a}.pill.loss{color:var(--red);border-color:#7a3338;background:#1a0a0c}
+.pill.h{color:var(--amber);border-color:#7a5a1a;background:#140e06}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none}.ov.on{display:block}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(1100px,100%);background:#070707;border-left:1px solid var(--border2);z-index:50;transform:translateX(100%);transition:transform .2s ease;display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.dr-h{display:flex;align-items:center;gap:.8rem;padding:.85rem 1rem;border-bottom:1px solid var(--border)}
+.dr-h h3{margin:0;font-size:15px}.dr-b{overflow:auto;padding:1rem;display:flex;flex-direction:column;gap:1rem}
+.why{white-space:normal;color:var(--muted);font-size:11px;min-width:260px}
+.nav{display:flex;gap:.4rem;align-items:center;margin-left:auto}.mon{font-family:var(--mono);font-size:13px;min-width:120px;text-align:center}
+.footer{color:var(--dim);font-size:11px;line-height:1.6}
+.seg{display:flex;gap:.3rem}.seg button.on{border-color:var(--accent);color:var(--accent)}
+.note{border-left:3px solid var(--amber);padding:.5rem .8rem;background:#0d0b06;color:#d9cfb8;font-size:12px;line-height:1.5;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="mark">◆</span><div><div class="brand-title">Scalp paper bot · PnL board</div><div class="brand-sub" id="sub">loading…</div></div></div>
+  <span class="badge warn">PAPER ONLY</span>
+  <span class="badge" title="Simulated fills on public Hyperliquid data; every R and $ is after fees and slippage">AFTER FEES</span>
+  <span class="spacer"></span>
+  <a href="../scalp-paper/" class="meta">live engine board →</a>
+  <button onclick="load()">Refresh</button>
+</div>
+<div class="wrap">
+  <div class="hero" id="hero">loading…</div>
+  <div class="kpis" id="kpis"></div>
+  <div class="note" id="notes"></div>
+  <div class="card"><div class="card-h"><h2>Daily PnL calendar (ET, by exit time)</h2><span class="muted" style="font-size:11px">click a day for its trades</span>
+    <div class="nav"><button onclick="mv(-1)">‹</button><span class="mon" id="mon"></span><button onclick="mv(1)">›</button></div></div>
+    <div class="card-b"><div class="cal" id="cal"></div></div></div>
+  <div class="card"><div class="card-h"><h2>Equity curve · all books combined</h2>
+    <div class="seg" style="margin-left:auto"><button id="uR" class="on" onclick="setU('R')">R</button><button id="uU" onclick="setU('$')">$</button></div></div>
+    <div class="card-b" id="eq"></div></div>
+  <div class="card"><div class="card-h"><h2>Per book</h2><span class="muted" style="font-size:11px">sorted by total R · max DD = deepest drop from the running peak (closed trades)</span></div>
+    <div class="card-b tbl" id="books"></div></div>
+  <div class="card"><div class="card-h"><h2>Groups</h2></div><div class="card-b tbl" id="groups"></div></div>
+  <div class="card"><div class="card-h"><h2>Per day</h2></div><div class="card-b tbl" id="days"></div></div>
+  <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals)</h2></div><div class="card-b tbl" id="open"></div></div>
+  <div class="card"><div class="card-h"><h2>All closed trades</h2></div><div class="card-b tbl" id="all"></div></div>
+  <div class="footer" id="foot"></div>
+</div>
+<div class="ov" id="ov" onclick="closeD()"></div>
+<div class="drawer" id="dr"><div class="dr-h"><h3 id="drt"></h3><span class="spacer"></span><button onclick="closeD()">Close ✕</button></div><div class="dr-b" id="drb"></div></div>
+<script>
+const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
+const ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"];
+const FLOOR_TS="2026-11-02 15:22";  // NETR_MIN lowered 1.2R -> 0.9R (ET)
+let D=null,T=[],RISK=0.75,BOOK=150,MON=null,UNIT="R";
+const $=id=>document.getElementById(id);
+const f=(x,d=2)=>x==null||isNaN(x)?"–":(x>0?"+":"")+(+x).toFixed(d);
+const fu=x=>x==null?"–":(x<0?"−$":(x>0?"+$":"$"))+Math.abs(x).toFixed(2);
+const c=x=>x>0?"pos":x<0?"neg":"";
+const px=x=>x==null?"–":(x>=1000?(+x).toLocaleString(undefined,{maximumFractionDigits:1}):x>=1?(+x).toFixed(4):(+x).toPrecision(5));
+const esc=s=>(s??"").toString().replace(/[&<>]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[ch]));
+const isHeist=t=>t.exit_style=="heist";
+function stats(ts){ts=ts.slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1);let n=ts.length,w=ts.filter(t=>t.R>0).length,R=0,U=0,pk=0,dd=0,fr=0,g=0;
+  for(const t of ts){R+=t.R;U+=t.usd||0;fr+=t.fees_R||0;g+=t.gross_R||0;pk=Math.max(pk,R);dd=Math.min(dd,R-pk)}
+  const best=n?Math.max(...ts.map(t=>t.R)):null,worst=n?Math.min(...ts.map(t=>t.R)):null;
+  return {n,w,l:n-w,win:n?100*w/n:null,R,U,avg:n?R/n:null,dd,ddU:dd*RISK,fr,g,best,worst}}
+async function load(){
+  const urls=[`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`];
+  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=await r.json();render();return}}catch(e){}}
+  $("sub").innerHTML="<span class=neg>could not load data</span>";}
+function trRow(t,showDay){return `<tr><td class=mono>${showDay?esc(t.exit_et):esc(t.exit_et.slice(11))}</td><td><b>${t.book}</b></td><td>${esc(t.coin)}</td><td class=${t.side>0?"pos":"neg"}>${t.side>0?"LONG":"SHORT"}</td>
+ <td class=num>${px(t.fill)}</td><td class=num>${px(t.exit)}</td><td>${esc(t.how)}${isHeist(t)?' <span class="pill h">heist</span>':""}</td><td class=num>${t.dur_min??"–"}m</td>
+ <td class="num ${c(t.gross_R)}">${f(t.gross_R)}</td><td class="num neg">${t.fees_R!=null?"−"+(+t.fees_R).toFixed(2):"–"}</td><td class="num ${c(t.R)}"><b>${f(t.R)}R</b></td><td class="num ${c(t.usd)}">${fu(t.usd)}</td>
+ <td><span class="pill ${t.R>0?"win":"loss"}">${t.R>0?"WIN":"LOSS"}</span></td><td class=why>${esc(t.why||"")}</td></tr>`}
+const TH=d=>`<table><tr><th>${d?"Exit (ET)":"Exit"}</th><th>Book</th><th>Coin</th><th>Side</th><th class=num>Fill</th><th class=num>Exit</th><th>How</th><th class=num>Held</th><th class=num>Gross R</th><th class=num>Fees R</th><th class=num>Net R</th><th class=num>Net $</th><th></th><th>Why</th></tr>`;
+function render(){
+  RISK=D.rules?.risk_usd??0.75;BOOK=D.rules?.book_usd??150;
+  T=(D.trades||[]).slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1);
+  const S=stats(T),inP=S.R>0;
+  const st=(D.started||"").replace("T"," ").slice(0,16);
+  const startET=st?new Date(D.started).toLocaleString("en-CA",{timeZone:"America/New_York",hour12:false}).replace(",","").slice(0,16):"–";
+  $("sub").textContent=`data ${D.updated_et||""} · running since ${startET} ET · $${RISK.toFixed(2)} risk per trade = 1R · ${ORDER.length} books × $${BOOK}`;
+  $("hero").className="hero "+(inP?"win":"loss");
+  $("hero").innerHTML=`<div class="big ${inP?"pos":"neg"}">${S.n?(inP?"YES — in profit overall":"NO — not in profit overall"):"No closed trades yet"}</div>
+   <div class="s">all books combined, after fees: <b class=${c(S.R)}>${f(S.R)}R</b> · <b class=${c(S.U)}>${fu(S.U)}</b> over ${S.n} trades (${S.w}W / ${S.l}L)</div>`;
+  const now=new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});
+  const td=stats(T.filter(t=>t.exit_et.slice(0,10)==now));
+  const bs=ORDER.map(k=>({k,s:stats(T.filter(t=>t.book==k))})).filter(x=>x.s.n);
+  const best=bs.slice().sort((a,b)=>b.s.R-a.s.R)[0],worst=bs.slice().sort((a,b)=>a.s.R-b.s.R)[0];
+  const K=[["Total net",`<span class=${c(S.R)}>${f(S.R)}R</span>`,fu(S.U)+" · gross "+f(S.g)+"R, fees −"+S.fr.toFixed(2)+"R"],
+   ["Today (ET)",`<span class=${c(td.R)}>${f(td.R)}R</span>`,fu(td.U)+" · "+td.n+" trades"],
+   ["Win rate",S.win==null?"–":S.win.toFixed(0)+"%",S.w+"W / "+S.l+"L"],
+   ["Avg R / trade",`<span class=${c(S.avg)}>${f(S.avg)}R</span>`,"best "+f(S.best)+"R · worst "+f(S.worst)+"R"],
+   ["Max drawdown",`<span class=neg>${S.dd.toFixed(2)}R</span>`,fu(S.ddU)+" (combined, closed)"],
+   ["Best / worst book",best?`<span class=pos>${best.k}</span> / <span class=neg>${worst.k}</span>`:"–",best?f(best.s.R)+"R / "+f(worst.s.R)+"R":""]];
+  $("kpis").innerHTML=K.map(k=>`<div class=kpi><div class=lbl>${k[0]}</div><div class=val>${k[1]}</div><div class=sub>${k[2]}</div></div>`).join("");
+  const af=stats(T.filter(t=>t.entry_et>=FLOOR_TS)),bf=stats(T.filter(t=>t.entry_et<FLOOR_TS));
+  $("notes").innerHTML=`<b>Notes.</b> Paper engine on public Hyperliquid data, simulated fills, every number after fees + slippage. 
+   Books A–D = original rules (1h trend filter, 1R TP, 30-min timer); A2–D2 = no trend filter, 60-min timer; A3–D3 = 1m-rejection confirmation entries, BE at +0.75R and — since 13:42 ET Nov 2 — the <b>heist exit</b> (TP just before first liquidity, ≤3R, 20-min timer). D / D2 / D3 trade the top-5 volatile coins; the others BTC + top-6 by volume.
+   <b>Floor change:</b> minimum expected net R lowered 1.2R → <b>0.9R at 3:22 PM ET Nov 2</b> — since then ${af.n} trade(s), ${f(af.R)}R (before: ${bf.n} trades, ${f(bf.R)}R).`;
+  renderCal();renderEq();
+  // books
+  const rows=ORDER.map(k=>{const b=(D.books||[]).find(x=>x.key==k)||{};return {k,b,s:stats(T.filter(t=>t.book==k))}}).sort((x,y)=>y.s.R-x.s.R||y.s.n-x.s.n);
+  $("books").innerHTML=`<table><tr><th>#</th><th>Book</th><th>Exit style</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Win %</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Avg R</th><th class=num>Max DD</th><th class=num>Fees R</th><th class=num>Open</th></tr>`+
+   rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.k}</b> <span class=dim style="font-size:11px">${esc((r.b.name||"").split("·").slice(1,2).join(""))}</span></td><td class=muted>${r.b.exit_style=="heist"?'<span class="pill h">heist</span> TP≤3R, '+(r.b.tstop||20)+"m":"1R TP, "+(r.b.tstop||"")+"m"}</td>
+    <td class=num>${r.s.n}</td><td class=num>${r.s.w} / ${r.s.l}</td><td class=num>${r.s.win==null?"–":r.s.win.toFixed(0)+"%"}</td><td class="num ${c(r.s.R)}"><b>${f(r.s.R)}R</b></td><td class="num ${c(r.s.U)}">${fu(r.s.U)}</td>
+    <td class="num ${c(r.s.avg)}">${f(r.s.avg)}</td><td class="num ${r.s.dd<0?"neg":""}">${r.s.dd.toFixed(2)}R</td><td class=num>${r.s.n?"−"+r.s.fr.toFixed(2):"–"}</td><td class=num>${(r.b.open||[]).length}</td></tr>`).join("")+
+   `<tr><td></td><td><b>ALL</b></td><td></td><td class=num><b>${S.n}</b></td><td class=num>${S.w} / ${S.l}</td><td class=num>${S.win==null?"–":S.win.toFixed(0)+"%"}</td><td class="num ${c(S.R)}"><b>${f(S.R)}R</b></td><td class="num ${c(S.U)}"><b>${fu(S.U)}</b></td><td class="num ${c(S.avg)}">${f(S.avg)}</td><td class="num neg">${S.dd.toFixed(2)}R</td><td class=num>−${S.fr.toFixed(2)}</td><td></td></tr></table>`;
+  const G=[["Series 1 · A–D (original)",t=>!/[23]$/.test(t.book)],["Series 2 · A2–D2 (no trend filter, 60m)",t=>/2$/.test(t.book)],["Series 3 · A3–D3 (confirmed)",t=>/3$/.test(t.book)],
+   ["Heist exits",isHeist],["Normal exits (1R TP / timer)",t=>!isHeist(t)],["Volatile-coin books D, D2, D3",t=>/^D/.test(t.book)],["Wide books A–C, A2–C2, A3–C3",t=>!/^D/.test(t.book)],
+   [`Entries before floor change (< 15:22 ET Nov 2)`,t=>t.entry_et<FLOOR_TS],[`Entries after floor change (0.9R)`,t=>t.entry_et>=FLOOR_TS]];
+  $("groups").innerHTML=`<table><tr><th>Group</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Win %</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Avg R</th><th class=num>Max DD</th></tr>`+
+   G.map(([n,fn])=>{const s=stats(T.filter(fn));return `<tr><td>${n}</td><td class=num>${s.n}</td><td class=num>${s.w} / ${s.l}</td><td class=num>${s.win==null?"–":s.win.toFixed(0)+"%"}</td><td class="num ${c(s.R)}">${f(s.R)}R</td><td class="num ${c(s.U)}">${fu(s.U)}</td><td class="num ${c(s.avg)}">${f(s.avg)}</td><td class="num ${s.dd<0?"neg":""}">${s.dd.toFixed(2)}R</td></tr>`}).join("")+"</table>";
+  const days=[...new Set(T.map(t=>t.exit_et.slice(0,10)))].sort().reverse();
+  $("days").innerHTML=`<table><tr><th>Day (ET)</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Cumulative R</th></tr>`+
+   days.map(d=>{const s=stats(T.filter(t=>t.exit_et.slice(0,10)==d)),cu=stats(T.filter(t=>t.exit_et.slice(0,10)<=d));return `<tr style="cursor:pointer" onclick="openD('${d}')"><td class=mono>${d}</td><td class=num>${s.n}</td><td class=num>${s.w} / ${s.l}</td><td class="num ${c(s.R)}"><b>${f(s.R)}R</b></td><td class="num ${c(s.U)}">${fu(s.U)}</td><td class="num ${c(cu.R)}">${f(cu.R)}R</td></tr>`}).join("")+"</table>";
+  const op=(D.books||[]).flatMap(b=>(b.open||[]).map(o=>({...o,book:b.key})));
+  $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Opened (ET)</th><th class=num>Fill</th><th class=num>Stop</th><th class=num>TP</th><th class=num>Mark</th><th class=num>uR</th><th class=num>u$</th></tr>`+
+   op.map(o=>`<tr><td><b>${o.book}</b></td><td>${esc(o.coin)}</td><td class=${o.side>0?"pos":"neg"}>${o.side>0?"LONG":"SHORT"}</td><td class=mono>${esc(o.entry_et)}</td><td class=num>${px(o.fill)}</td><td class=num>${px(o.stop)}</td><td class=num>${px(o.tp)}</td><td class=num>${px(o.mark)}</td><td class="num ${c(o.uR)}">${f(o.uR)}</td><td class="num ${c(o.uusd)}">${fu(o.uusd)}</td></tr>`).join("")+"</table>":`<div class=dim>No open positions right now.</div>`;
+  $("all").innerHTML=TH(1)+T.slice().reverse().map(t=>trRow(t,1)).join("")+"</table>";
+  $("foot").innerHTML=`Source: the engine's own closed-trade list (same as trades.jsonl), published to the <code>scalp-paper-data</code> branch every ~5 min; this page reads it live and recomputes everything in your browser (auto-refresh every 2 min). Net R = gross R − fees R (maker 1.5bp, taker 4.5bp, stop slip 2bp). $ = R × $${RISK.toFixed(2)}. Paper only — no real orders. · <a href="../">Home</a> · <a href="../scalp-paper/">Live engine board</a>`;
+}
+function ym(d){return d.slice(0,7)}
+function mv(k){const [y,m]=MON.split("-").map(Number);const d=new Date(y,m-1+k,1);MON=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");renderCal()}
+function renderCal(){
+  const now=new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});if(!MON)MON=ym(now);
+  const [y,m]=MON.split("-").map(Number);$("mon").textContent=new Date(y,m-1,1).toLocaleString("en",{month:"long",year:"numeric"});
+  const first=new Date(y,m-1,1),start=new Date(first);start.setDate(1-((first.getDay()+6)%7));
+  let h=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class=dow>${d}</div>`).join("")+`<div class="dow wk" style="border:0">Week</div>`;
+  const d=new Date(start);
+  for(let w=0;w<6;w++){let wt=[];for(let i=0;i<7;i++){const k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+      const tt=T.filter(t=>t.exit_et.slice(0,10)==k),s=stats(tt);wt=wt.concat(tt);
+      const cls=["cell",d.getMonth()!=m-1?"out":"",s.n?"has "+(s.R>0?"win":s.R<0?"loss":""):"empty",k==now?"today":""].join(" ");
+      h+=`<div class="${cls}" ${s.n?`onclick="openD('${k}')"`:""}><div class=dn>${d.getDate()}</div>${s.n?`<div class="pnl ${c(s.R)}">${f(s.R)}R</div><div class=cnt>${fu(s.U)} · ${s.n} tr · ${s.w}W/${s.l}L</div>`:`<div class=pnl>–</div>`}</div>`;
+      d.setDate(d.getDate()+1)}
+    const ws=stats(wt);h+=`<div class=wk><div class=l>Week</div><div class="v ${c(ws.R)}">${ws.n?f(ws.R)+"R":"–"}</div><div class=dim style="font-size:10px">${ws.n?fu(ws.U)+" · "+ws.n+" tr":""}</div></div>`;
+    if(d.getMonth()!=m-1&&d>first)break}
+  $("cal").innerHTML=h}
+function setU(u){UNIT=u;$("uR").className=u=="R"?"on":"";$("uU").className=u=="$"?"on":"";renderEq()}
+function renderEq(){
+  if(!T.length){$("eq").innerHTML="<div class=dim>no closed trades yet</div>";return}
+  const k=UNIT=="R"?1:RISK;let cu=0;const v=[{x:"start",y:0}].concat(T.map(t=>({x:t.exit_et,y:(cu+=t.R)*k,t})));
+  const W=1000,H=260,pl=48,pr=12,pt=12,pb=28,ys=v.map(p=>p.y),mn=Math.min(0,...ys),mx=Math.max(0,...ys),r=(mx-mn)||1;
+  const X=i=>pl+i/(v.length-1)*(W-pl-pr),Y=y=>pt+(mx-y)/r*(H-pt-pb);
+  let g="";for(let j=0;j<=4;j++){const yy=mn+r*j/4;g+=`<line x1=${pl} x2=${W-pr} y1=${Y(yy)} y2=${Y(yy)} stroke="#1a1a1a"/><text x=${pl-6} y=${Y(yy)+4} fill="#5c5c5c" font-size=11 text-anchor=end>${UNIT=="R"?yy.toFixed(1):yy.toFixed(2)}</text>`}
+  g+=`<line x1=${pl} x2=${W-pr} y1=${Y(0)} y2=${Y(0)} stroke="#444" stroke-dasharray="4 3"/>`;
+  const fi=v.findIndex(p=>p.t&&p.t.entry_et>=FLOOR_TS);if(fi>0)g+=`<line x1=${X(fi)} x2=${X(fi)} y1=${pt} y2=${H-pb} stroke="#e6c07b" stroke-dasharray="3 3"/><text x=${X(fi)-4} y=${pt+10} fill="#e6c07b" font-size=10 text-anchor=end>floor 0.9R (15:22)</text>`;
+  const pts=v.map((p,i)=>`${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" "),last=v[v.length-1].y,col=last>=0?"#00c805":"#ff4d4f";
+  g+=`<polygon points="${X(0)},${Y(0)} ${pts} ${X(v.length-1)},${Y(0)}" fill="${col}" opacity=.08 /><polyline fill=none stroke="${col}" stroke-width=2 points="${pts}"/>`;
+  g+=v.slice(1).map((p,i)=>`<circle cx=${X(i+1)} cy=${Y(p.y)} r=3.5 fill="${p.t.R>0?"#00c805":"#ff4d4f"}"><title>${esc(p.t.exit_et)} ET · ${p.t.book} ${esc(p.t.coin)} ${f(p.t.R)}R (${fu(p.t.usd)}) · cum ${UNIT=="R"?f(p.y)+"R":fu(p.y)}</title></circle>`).join("");
+  const days=[...new Set(T.map(t=>t.exit_et.slice(0,10)))];
+  for(const d of days){const i=v.findIndex(p=>p.t&&p.t.exit_et.slice(0,10)==d);g+=`<text x=${X(i)} y=${H-8} fill="#8b8b8b" font-size=11>${d.slice(5)}</text>`}
+  $("eq").innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}</svg><div class=dim style="font-size:11px">Cumulative net ${UNIT} after fees, one point per closed trade (hover for details). Now: <b class=${c(last)}>${UNIT=="R"?f(last)+"R":fu(last)}</b>.</div>`}
+function openD(d){const tt=T.filter(t=>t.exit_et.slice(0,10)==d),s=stats(tt);
+  $("drt").innerHTML=`${d} · <span class=${c(s.R)}>${f(s.R)}R</span> · <span class=${c(s.U)}>${fu(s.U)}</span> · ${s.n} trades (${s.w}W/${s.l}L)`;
+  const bk=ORDER.map(k=>({k,s:stats(tt.filter(t=>t.book==k))})).filter(x=>x.s.n);
+  $("drb").innerHTML=`<div class=tbl><table><tr><th>Book</th><th class=num>Trades</th><th class=num>Net R</th><th class=num>Net $</th></tr>${bk.map(b=>`<tr><td><b>${b.k}</b></td><td class=num>${b.s.n}</td><td class="num ${c(b.s.R)}">${f(b.s.R)}R</td><td class="num ${c(b.s.U)}">${fu(b.s.U)}</td></tr>`).join("")}</table></div><div class=tbl>${TH(0)}${tt.map(t=>trRow(t,0)).join("")}</table></div>`;
+  $("ov").className="ov on";$("dr").className="drawer on"}
+function closeD(){$("ov").className="ov";$("dr").className="drawer"}
+document.addEventListener("keydown",e=>{if(e.key=="Escape")closeD()});
+load();setInterval(load,120000);
+</script>
+<a href="/ai-trading-bot-/" id="homelink" style="position:fixed;left:10px;bottom:10px;z-index:99;background:#111;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">⌂ Home</a>
+</body>
+</html>
