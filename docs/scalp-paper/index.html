@@ -18,15 +18,19 @@ select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius
 <h1>Scalp v2 · PAPER live board <span class="pill warn">PAPER ONLY · no live orders</span></h1>
 <div id="status" class="mut">loading…</div>
 <div class="banner" id="rules"></div>
+<h2>With vs without the 1h trend filter (A vs A2 …)</h2>
+<div class="mut" style="font-size:12px">“2” books = identical rules but NO 1h trend filter (longs and shorts both allowed) and a 60-min time stop instead of 30. A–D keep the trend filter and 30-min timer.</div>
+<div class="scroll" id="cmp"></div>
+<h2>“2” books split by 1h trend at entry</h2><div class="scroll" id="split"></div>
 <h2>Books</h2><div class="grid" id="books"></div>
 <h2>Open positions (live uPnL)</h2><div class="scroll" id="open"></div>
 <h2>Armed setups (resting limits / waiting for rejection)</h2><div class="scroll" id="pend"></div>
 <h2>Closed trades <span class="mut" style="font-size:12px">tap a row's “why” for the full trigger</span></h2>
-<div>Book <select id="fb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option></select></div>
+<div>Book <select id="fb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option></select></div>
 <div class="scroll" id="trades"></div>
 <h2>By session</h2><div class="scroll" id="sess"></div>
 <h2>Near-misses & rejected setups</h2><div id="cats"></div>
-<div>Book <select id="nb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option></select>
+<div>Book <select id="nb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option></select>
  Type <select id="nc"><option value="">all</option><option>armed-but-lost</option><option>rejected</option></select></div>
 <div class="scroll" id="near"></div>
 <h2>Heist universe (D)</h2><div id="uni" class="mut"></div>
@@ -51,7 +55,14 @@ function render(){
   $("status").innerHTML=`${st} · bot heartbeat ${hb.ts_et||"?"} (cycle ${hb.cycle??"?"}, flow ws: ${esc(hb.ws)}) · board data updated <b>${D.updated_et}</b> (${Math.round(upd/60)} min ago) · running since ${new Date(D.started).toLocaleString()}`
    +(D.last_eval?` · BTC ${px(D.last_eval.close)} · 1h trend <b>${D.last_eval.trend}</b> · last bar ${D.last_eval.bar} ET`:"")
    +((hb.errors||[]).length?`<br><span class=warn>recent errors: ${esc(hb.errors.slice(-2).join(" | "))}</span>`:"");
-  const R=D.rules;$("rules").innerHTML=`<b>Rules (each book):</b> $${R.book_usd} book · risk $${R.risk_usd} per trade (0.5%) · TP 1R · time stop ${R.tstop} min · daily stop ${R.day_stop} · weekly kill ${R.week_kill} · <b>max ${R.max_trades_day} trades/day per book (raised from 2 for data gathering)</b> · fees maker ${R.maker_bp}bp / taker ${R.taker_bp}bp, stop slip ${R.stop_slip_bp}bp, market slip ${R.mkt_slip_bp}bp. ${R.note}`;
+  const R=D.rules;$("rules").innerHTML=`<b>Rules (each book):</b> $${R.book_usd} book · risk $${R.risk_usd} per trade (0.5%) · TP 1R · time stop ${R.tstop} · daily stop ${R.day_stop} · weekly kill ${R.week_kill} · <b>max ${R.max_trades_day} trades/day per book (raised from 2 for data gathering)</b> · fees maker ${R.maker_bp}bp / taker ${R.taker_bp}bp, stop slip ${R.stop_slip_bp}bp, market slip ${R.mkt_slip_bp}bp. ${R.note}`;
+  const BK=Object.fromEntries(D.books.map(b=>[b.key,b]));
+  const cell=x=>x&&x.n?`<td>${x.n}</td><td>${x.win??"–"}%</td><td class=${cl(x.avgR)}>${f(x.avgR)}R</td><td class=${cl(x.net)}>$${f(x.net)}</td>`:`<td>${x?x.n:0}</td><td>–</td><td>–</td><td>–</td>`;
+  $("cmp").innerHTML=`<table><tr><th rowspan=2>Strategy</th><th colspan=4>With trend filter · 30m timer</th><th colspan=4>NO trend filter · 60m timer</th><th rowspan=2>Δ net (2 − base)</th></tr><tr><th>Trades</th><th>Win%</th><th>Avg R</th><th>Net $</th><th>Trades</th><th>Win%</th><th>Avg R</th><th>Net $</th></tr>`+
+    (D.pairs||[]).map(p=>{const a=BK[p.base],b=BK[p.test];if(!a||!b)return"";const dn=b.net-a.net;return `<tr><td><b>${p.base}</b> vs <b>${p.test}</b><br><span class=mut>${esc(a.name.replace(/^\w+ · /,""))}</span></td>${cell(a)}${cell(b)}<td class=${cl(dn)}>$${f(dn)}</td></tr>`}).join("")+"</table>";
+  const two=D.books.filter(b=>b.trend_filter===false);
+  $("split").innerHTML=`<table><tr><th rowspan=2>Book</th><th colspan=4>With-trend entries</th><th colspan=4>Counter-trend entries</th><th colspan=4>Flat 1h trend</th></tr><tr>${"<th>Trades</th><th>Win%</th><th>Avg R</th><th>Net $</th>".repeat(3)}</tr>`+
+    two.map(b=>`<tr><td><b>${b.key}</b></td>${cell(b.split["with-trend"])}${cell(b.split["counter-trend"])}${cell(b.split["flat"])}</tr>`).join("")+"</table>";
   $("books").innerHTML=D.books.map(b=>`<div class=card><b>${esc(b.name)}</b><div class="big ${cl(b.net)}">$${f(b.net)} <span style="font-size:14px">(${f(b.totR)}R)</span></div>
    <div>${b.n} trades · win ${b.win??"–"}% · avg ${b.avgR==null?"–":f(b.avgR)}R · open ${b.open.length} · armed ${b.pending.length}</div>
    <div class=mut>today ${b.today.taken}/${R.max_trades_day} trades, ${b.today.losses} losses, ${f(b.today.R)}R · week ${f(b.week_R)}R ${b.today.gate&&!b.today.gate.startsWith("max")?`· <span class=warn>${esc(b.today.gate)}</span>`:""}</div>
@@ -61,9 +72,9 @@ function render(){
   const pd=D.books.flatMap(b=>b.pending.map(o=>({...o,book:b.key})));
   $("pend").innerHTML=pd.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Type</th><th>Level</th><th>Stop</th><th>Valid until (ET)</th><th>Closest</th></tr>`+pd.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.status=="go"?"rejection+absorption → enter next bar":o.trig=="limit"?"resting limit":"watching for rejection+absorption"}</td><td>${px(o.px)}</td><td>${px(o.stop)}</td><td>${new Date(o.exp_ts).toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})}</td><td>${o.closest==null?"–":f(o.closest,3)+"%"}</td></tr><tr><td colspan=8><details><summary>trigger</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none</div>";
   const fb=$("fb").value,tr=D.trades.filter(t=>!fb||t.book==fb);
-  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)} tp ${px(t.tp)}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td></tr><tr><td colspan=11><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
+  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th><th>1h trend</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)} tp ${px(t.tp)}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td><td>${t.trend_rel?`<span class=${t.trend_rel=="counter-trend"?"warn":""}>${esc(t.trend_rel)}</span>`:"–"}</td></tr><tr><td colspan=12><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
   const ss=["Asia 20-03","London 03-09:30","US open 9:30-11","US midday 11-16","After-hours 16-20"];
-  $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+["A","B","C","D"].map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
+  $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+D.books.map(b=>b.key).map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
   $("cats").innerHTML=Object.entries(D.near_cats).map(([b,c])=>`<div><b>${b}</b>: `+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class=pill>${esc(k)} · ${v}</span>`).join("")+"</div>").join("");
   const nb=$("nb").value,nc=$("nc").value,nm=D.near.filter(e=>(!nb||e.book==nb)&&(!nc||(nc=="rejected"?e.cat=="rejected":e.cat!="rejected"))).slice(0,250);
   $("near").innerHTML=nm.length?`<table><tr><th>Time (ET)</th><th>Book</th><th>Coin</th><th>Type</th><th>Reason</th></tr>`+nm.map(e=>`<tr><td>${e.t_et}</td><td>${e.book}</td><td>${e.coin}</td><td>${esc(e.cat)}</td><td>${esc(e.reason)}<details><summary>detail</summary><div>${esc(e.detail)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none yet</div>";
