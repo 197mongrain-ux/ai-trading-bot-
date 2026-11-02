@@ -78,7 +78,8 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
   <button onclick="load()">Refresh</button>
 </div>
 <div class="wrap">
-  <div class="hero" id="hero">loading…</div>
+  <div id="perfTop">loading…</div>
+  <div class="hero" id="hero" style="display:none"></div>
   <div class="kpis" id="kpis"></div>
   <div class="note" id="notes"></div>
   <div class="card"><div class="card-h"><h2>Daily PnL calendar (ET, by exit time)</h2><span class="muted" style="font-size:11px">click a day for its trades</span>
@@ -90,6 +91,7 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
   <div class="card"><div class="card-h"><h2>Per book</h2><span class="muted" style="font-size:11px">sorted by total R · max DD = deepest drop from the running peak (closed trades)</span></div>
     <div class="card-b tbl" id="books"></div></div>
   <div class="card"><div class="card-h"><h2>Groups</h2></div><div class="card-b tbl" id="groups"></div></div>
+  <div id="perfBot"></div>
   <div class="card"><div class="card-h"><h2>Per day</h2></div><div class="card-b tbl" id="days"></div></div>
   <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals)</h2></div><div class="card-b tbl" id="open"></div></div>
   <div class="card"><div class="card-h"><h2>All closed trades</h2></div><div class="card-b tbl" id="all"></div></div>
@@ -97,6 +99,7 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
 </div>
 <div class="ov" id="ov" onclick="closeD()"></div>
 <div class="drawer" id="dr"><div class="dr-h"><h3 id="drt"></h3><span class="spacer"></span><button onclick="closeD()">Close ✕</button></div><div class="dr-b" id="drb"></div></div>
+<script src="../assets/perf.js"></script>
 <script>
 const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
 const ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"];
@@ -148,6 +151,11 @@ function render(){
    Books A–D = original rules (1h trend filter, 1R TP, 30-min timer); A2–D2 = no trend filter, 60-min timer; A3–D3 = 1m-rejection confirmation entries, BE at +0.75R and — since 13:42 ET Nov 2 — the <b>heist exit</b> (TP just before first liquidity, ≤3R, 20-min timer). D / D2 / D3 trade the top-5 volatile coins; the others BTC + top-6 by volume.
    <b>Floor change:</b> minimum expected net R lowered 1.2R → <b>0.9R at 3:22 PM ET Nov 2</b> — since then ${af.n} trade(s), ${f(af.R)}R (before: ${bf.n} trades, ${f(bf.R)}R).`;
   renderCal();renderEq();
+  if(window.PERF){ const PT=T.map(t=>({day:t.exit_et.slice(0,10),close_ms:0,close_et:t.exit_et,open_et:t.entry_et,coin:t.coin,side:t.side>0?"long":"short",v:t.R,r:t.R,fees:t.fees_R,book:t.book}));
+    const o={unit:"R",today:now,trades:PT,noList:true,alt:()=>`= <b class=${c(S.U)}>${fu(S.U)}</b> at $${RISK.toFixed(2)} per 1R · paper bot, simulated fills`,
+      extraTable:{title:"By book",key:t=>t.book,sub:"sorted by net R"},
+      note:`All-time = every closed paper trade since the engine started (all ${ORDER.length} books combined, net of fees + slippage). Units are R (1R = $${RISK.toFixed(2)} risk). Drawdown is on closed R from 0. Sessions/weekday use entry time ET.`};
+    PERF.top($("perfTop"),o); PERF.bottom($("perfBot"),o); }
   // books
   const rows=ORDER.map(k=>{const b=(D.books||[]).find(x=>x.key==k)||{};return {k,b,s:stats(T.filter(t=>t.book==k))}}).sort((x,y)=>y.s.R-x.s.R||y.s.n-x.s.n);
   $("books").innerHTML=`<table><tr><th>#</th><th>Book</th><th>Exit style</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Win %</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Avg R</th><th class=num>Max DD</th><th class=num>Fees R</th><th class=num>Open</th></tr>`+
