@@ -25,26 +25,33 @@ a.tile::before{content:"";position:absolute;top:-1px;left:14px;width:56px;height
 .tag{font-family:var(--mono);font-size:9.5px;padding:.1rem .4rem;border-radius:3px;border:1px solid var(--border2);color:var(--muted);margin-left:auto}
 .tag.p{color:var(--amber);border-color:#7a5a1a}.tag.l{color:var(--green);border-color:#1a5c2a}
 .foot{color:var(--dim);font-size:11px}
+.sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.7rem}@media(max-width:820px){.sum{grid-template-columns:1fr}}
+a.sc{display:block;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem}
+a.sc.up{background:linear-gradient(135deg,#03170a,#0b0b0b 70%);border-color:#14451f}a.sc.dn{background:linear-gradient(135deg,#1c0709,#0b0b0b 70%);border-color:#4a161b}
+.sc .l{color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase;display:flex;gap:.4rem}.sc .v{font-family:var(--mono);font-size:1.6rem;font-weight:750;margin:.2rem 0 .3rem}
+.yn{font-family:var(--mono);font-size:10px;font-weight:700;padding:.15rem .45rem;border-radius:4px;border:1px solid #262626}.yn.y{color:var(--green);border-color:#1a5c2a}.yn.n{color:var(--red);border-color:#7a3338}
+.sc .m{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:.35rem;line-height:1.5}.pb{height:6px;background:#151515;border-radius:3px;overflow:hidden;margin-top:.4rem}.pb i{display:block;height:100%;background:var(--green)}
 </style>
 </head>
 <body>
 <div class="top"><span style="color:var(--green);font-size:1.2rem">◆</span><h1>Trading boards</h1><span class="s">Chris Mongrain · all pages in one place · live numbers load from each board</span></div>
 <div class="wrap">
+ <div class="grp"><h2><span class="f">📊</span>All-time summary (each account separate)</h2><div class="sum">
+  <a class="sc" id="sHL" href="pnl/"><div class="l">Hyperliquid · manual · real money</div><div class="v">…</div></a>
+  <a class="sc" id="sPR" href="propr-pnl/"><div class="l">Propr evaluation · simulated $25k</div><div class="v">…</div></a>
+  <a class="sc" id="sSP" href="scalp-pnl/"><div class="l">Scalp paper bot · paper</div><div class="v">…</div></a>
+ </div></div>
  <div class="grp"><h2><span class="f">📁</span>Hyperliquid (mainnet)</h2><div class="tiles">
-  <a class="tile" href="pnl/"><div class="t"><span class="ic">📅</span>PnL calendar<span class="tag l">LIVE</span></div><div class="d">Daily PnL calendar of manual HL trades (click a day for its trades), KPIs, open positions.</div><div class="n" id="hl"></div></a>
+  <a class="tile" href="pnl/"><div class="t"><span class="ic">📅</span>PnL calendar<span class="tag l">LIVE</span></div><div class="d">All-time dashboard (net PnL, profit factor, equity &amp; drawdown, by month / symbol / session, trade log) + daily calendar and open positions.</div><div class="n" id="hl"></div></a>
   <a class="tile" href="journal/"><div class="t"><span class="ic">📓</span>Trade journal</div><div class="d">Every HL trade with chart (entry/exit, stop moves, TP), setup notes, management and result in $ and R.</div><div class="n" id="hlj"></div></a>
  </div></div>
  <div class="grp"><h2><span class="f">📁</span>Propr (evaluation account)</h2><div class="tiles">
-  <a class="tile" href="propr-pnl/"><div class="t"><span class="ic">📅</span>Propr PnL calendar<span class="tag l">LIVE</span></div><div class="d">Propr challenge account: daily PnL, balance, step-1 target progress. Separate from HL.</div><div class="n" id="pr"></div></a>
+  <a class="tile" href="propr-pnl/"><div class="t"><span class="ic">📅</span>Propr PnL calendar<span class="tag l">LIVE</span></div><div class="d">Challenge objectives (target, daily loss, trailing drawdown), all-time dashboard, equity curve, daily calendar. Separate from HL.</div><div class="n" id="pr"></div></a>
   <a class="tile" href="propr-pnl/journal/"><div class="t"><span class="ic">📓</span>Propr trade journal</div><div class="d">Propr trades with charts, management and notes.</div><div class="n" id="prj"></div></a>
  </div></div>
  <div class="grp"><h2><span class="f">📁</span>Scalp paper bot</h2><div class="tiles">
-  <a class="tile" href="scalp-pnl/"><div class="t"><span class="ic">💰</span>Scalp PnL board<span class="tag p">PAPER</span></div><div class="d">Is the bot in profit? Total R/$ after fees, daily calendar, equity curve, per-book table (A–D, A2–D2, A3–D3).</div><div class="n" id="sp"></div></a>
+  <a class="tile" href="scalp-pnl/"><div class="t"><span class="ic">💰</span>Scalp PnL board<span class="tag p">PAPER</span></div><div class="d">Is the bot in profit? All-time R/$ after fees, profit factor, equity &amp; drawdown, breakdowns, calendar, per-book table (A–D, A2–D2, A3–D3).</div><div class="n" id="sp"></div></a>
   <a class="tile" href="scalp-paper/"><div class="t"><span class="ic">⚡</span>Live engine board<span class="tag p">PAPER</span></div><div class="d">Engine status, open positions with charts, pending setups, near-misses, rules per book.</div><div class="n" id="sl"></div></a>
- </div></div>
- <div class="grp"><h2><span class="f">📁</span>Setup rules (Nov 2 template)</h2><div class="tiles">
-  <a class="tile" href="rules-board/"><div class="t"><span class="ic">🎯</span>Rules board<span class="tag l">LIVE</span></div><div class="d">BTC, ETH, SOL, SP500: bias, pass/fail per rule, level + fib zone, stop/TP/R, READY / FORMING / WAIT. Refreshes every 5 min.</div><div class="n" id="rb"></div></a>
-  <a class="tile" href="tv/"><div class="t"><span class="ic">📈</span>TradingView indicator</div><div class="d">"MB Template" Pine v5: fib zone, one flipped level, SL/TP + R, 4h background, small checklist. Copy &amp; paste into the Pine Editor.</div><div class="n"><span class=u>tap to copy the code</span></div></a>
  </div></div>
  <div class="grp"><h2><span class="f">🗄️</span>Archive (no longer updated)</h2><div class="tiles">
   <a class="tile" href="model-b/"><div class="t"><span class="ic">🤖</span>Model B performance<span class="tag">ARCHIVE</span></div><div class="d">Old Model B bot mainnet performance board.</div><div class="n" id="mb"></div></a>
@@ -57,26 +64,30 @@ const $=id=>document.getElementById(id);
 const fu=x=>x==null||isNaN(x)?"–":(x<0?"−$":x>0?"+$":"$")+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const fr=x=>(x>0?"+":"")+(+x).toFixed(2)+"R";const c=x=>x>0?"pos":x<0?"neg":"";
 async function J(u,o){const r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now(),Object.assign({cache:"no-store"},o||{}));if(!r.ok)throw r.status;return r.json()}
+function st(v){const T=v.filter(x=>x!=null),W=T.filter(x=>x>0.005),L=T.filter(x=>x<-0.005),gw=W.reduce((a,b)=>a+b,0),gl=-L.reduce((a,b)=>a+b,0);let cu=0,pk=0,dd=0;for(const x of T){cu+=x;pk=Math.max(pk,cu);dd=Math.min(dd,cu-pk)}
+  return {n:T.length,net:cu,w:W.length,l:L.length,wr:W.length+L.length?100*W.length/(W.length+L.length):null,pf:gl>0?gw/gl:null,dd}}
+function card(id,net,fmt,S,extra){const el=$(id),up=net>0.005;el.className="sc "+(up?"up":"dn");
+  el.innerHTML=el.querySelector(".l").outerHTML+`<div class="v ${c(net)}">${fmt(net)}</div><span class="yn ${up?"y":"n"}">PROFITABLE OVERALL: ${up?"YES":"NO"}</span>`+
+  `<div class=m>${S.n} trades · ${S.wr==null?"–":S.wr.toFixed(0)+"%"} win · PF ${S.pf==null?"–":S.pf.toFixed(2)} · max DD ${fmt(S.dd)}${extra||""}</div>`}
 (async()=>{try{const d=await J("pnl/calendar.json"),k=d.kpis;
+  try{card("sHL",k.all_time,fu,st((d.trades||[]).map(t=>t.net)),`<br>since ${(d.history_from_et||"").slice(0,10)} · equity ${fu(k.equity_spot_usdc).replace("+","")}`)}catch(e){}
   $("hl").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${k.closed} trades · ${k.win_rate}% win · updated ${d.generated_et} ET</div>`;
   $("hlj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("hl").innerHTML="<span class=u>open board for numbers</span>"}})();
 (async()=>{try{const d=await J("propr-pnl/calendar.json"),k=d.kpis,ch=d.challenge||{};
   const bal=ch.balance??ch.true_balance??null;
+  try{const net=bal!=null&&ch.initial?bal-ch.initial:k.all_time,pg=ch.target_usd?Math.max(0,Math.min(100,100*ch.progress_usd/ch.target_usd)):0;
+    card("sPR",net,fu,st((d.trades||[]).map(t=>t.net)),`<br>balance ${fu(bal).replace("+","")} · target ${fu(ch.target_equity).replace("+","")} · ${pg.toFixed(1)}% there<div class=pb><i style="width:${pg}%"></i></div>`)}catch(e){}
   $("pr").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${bal!=null?"balance "+fu(bal).replace("+","")+" · ":""}${k.closed} trades · updated ${d.generated_et} ET</div>`;
   $("prj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("pr").innerHTML="<span class=u>open board for numbers</span>"}})();
 (async()=>{const R="197mongrain-ux/ai-trading-bot-",P="scalp-paper/data.json";let d=null;
   try{d=await J(`https://api.github.com/repos/${R}/contents/${P}?ref=scalp-paper-data`,{headers:{Accept:"application/vnd.github.raw"}})}catch(e){try{d=await J(`https://raw.githubusercontent.com/${R}/scalp-paper-data/${P}`)}catch(e2){}}
-  if(!d){$("sp").innerHTML="<span class=u>open board for numbers</span>";return}
+  if(!d){$("sp").innerHTML="<span class=u>open board for numbers</span>";$("sSP").querySelector(".v").textContent="open board";return}
   const T=d.trades||[],r=T.reduce((a,t)=>a+t.R,0),u=T.reduce((a,t)=>a+(t.usd||0),0),w=T.filter(t=>t.R>0).length,op=(d.books||[]).reduce((a,b)=>a+(b.open||[]).length,0);
+  try{card("sSP",r,fr,st(T.slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1).map(t=>t.R)),`<br>= ${fu(u)} at $${(d.rules?.risk_usd??0.75).toFixed(2)}/R · ${(d.books||[]).length} books`)}catch(e){}
   $("sp").innerHTML=`<span class="big ${c(r)}">${r>0?"In profit":"Not in profit"}</span> · <span class=${c(r)}>${fr(r)} (${fu(u)})</span><div class=u>${T.length} trades · ${w}W/${T.length-w}L · after fees</div>`;
   $("sl").innerHTML=`${op} open position${op==1?"":"s"} · ${(d.books||[]).length} books<div class=u>engine data ${d.updated_et||""}</div>`})();
 (async()=>{try{const d=await J("model-b/board.json");$("mb").innerHTML=`<span class=u>last updated ${(d.generated_et||"").slice(0,16).replace("T"," ")} ET</span>`}catch(e){}})();
 (async()=>{try{const d=await J("positions/plans.json");$("po").innerHTML=`<span class=u>last updated ${d.updated||""}</span>`}catch(e){}})();
-(async()=>{const R="197mongrain-ux/ai-trading-bot-",P="rules-board/data.json";let d=null;
-  try{d=await J(`https://api.github.com/repos/${R}/contents/${P}?ref=rules-board-data`,{headers:{Accept:"application/vnd.github.raw"}})}catch(e){try{d=await J(`https://raw.githubusercontent.com/${R}/rules-board-data/${P}`)}catch(e2){}}
-  if(!d){$("rb").innerHTML="<span class=u>open board for status</span>";return}
-  const M=d.markets||[],k=s=>M.filter(m=>m.status==s).map(m=>m.coin.replace("xyz:","")).join(", ");
-  $("rb").innerHTML=`<span class="big ${k("READY")?"pos":""}">${M.filter(m=>m.status=="READY").length} READY</span> · ${M.filter(m=>m.status=="FORMING").length} forming${k("FORMING")?" ("+k("FORMING")+")":""}<div class=u>updated ${d.updated_et} ET</div>`})();
 </script>
 </body>
 </html>
