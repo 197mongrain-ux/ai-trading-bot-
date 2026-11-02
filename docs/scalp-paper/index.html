@@ -14,7 +14,14 @@ th,td{padding:5px 6px;border-bottom:1px solid var(--b);text-align:left;vertical-
 .scroll{overflow-x:auto}details summary{cursor:pointer;color:var(--a)}details div{white-space:normal;color:var(--m);padding:4px 0}
 select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius:6px;padding:3px}
 .banner{background:#3d2a00;border:1px solid var(--y);border-radius:8px;padding:8px;margin:8px 0}
-</style></head><body><div class="wrap">
+.pcard{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px;margin:10px 0}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:800px){.pgrid{grid-template-columns:1fr}}
+.tvbox{height:380px;border:1px solid var(--b);border-radius:6px;overflow:hidden}.lwbox{height:380px;border:1px solid var(--b);border-radius:6px;position:relative}
+.lv{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.lv span{padding:2px 8px;border-radius:6px;background:#21262d;border:1px solid var(--b);font-size:13px}
+</style>
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head><body><div class="wrap">
 <h1>Scalp v2 · PAPER live board <span class="pill warn">PAPER ONLY · no live orders</span></h1>
 <div id="status" class="mut">loading…</div>
 <div class="banner" id="rules"></div>
@@ -23,17 +30,21 @@ select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius
 <div class="scroll" id="cmp"></div>
 <h2>No-filter books (“2” and “3”) split by 1h trend at entry</h2><div class="scroll" id="split"></div>
 <h2>Books</h2><div class="grid" id="books"></div>
+<h2>Live open positions — charts <span class="mut" style="font-size:12px">left: TradingView live chart (5m, Binance/Bybit perp feed) · right: Hyperliquid 1m candles with entry / stop / TP / first-liquidity lines · cards appear and disappear as paper positions open and close</span></h2>
+<div id="pcards"><div class=mut>loading…</div></div>
 <h2>Open positions (live uPnL)</h2><div class="scroll" id="open"></div>
 <h2>Armed setups (resting limits / waiting for rejection)</h2><div class="scroll" id="pend"></div>
 <h2>Closed trades <span class="mut" style="font-size:12px">tap a row's “why” for the full trigger</span></h2>
 <div>Book <select id="fb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option><option>A3</option><option>B3</option><option>C3</option><option>D3</option></select></div>
 <div class="scroll" id="trades"></div>
+<h2>Per-coin results (all books) <span class="mut" style="font-size:12px">exp. net R = average expected net R at entry (first liquidity after fees, scored trades only)</span></h2><div class="scroll" id="coins"></div>
+<h2>R:R ranking — last cycles with competing entries</h2><div class="scroll" id="rank"></div>
 <h2>By session</h2><div class="scroll" id="sess"></div>
 <h2>Near-misses & rejected setups</h2><div id="cats"></div>
 <div>Book <select id="nb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option><option>A3</option><option>B3</option><option>C3</option><option>D3</option></select>
  Type <select id="nc"><option value="">all</option><option>armed-but-lost</option><option>rejected</option></select></div>
 <div class="scroll" id="near"></div>
-<h2>Heist universe (D)</h2><div id="uni" class="mut"></div>
+<h2>Coin universes (wide books A–C, A2–C2, A3–C3 · heist books D, D2, D3)</h2><div id="uni" class="mut"></div>
 <p class="mut" style="font-size:12px">Data: public Hyperliquid market data (candles, mids, trades stream). Fills simulated: limits fill only when price trades through; stops taker 4.5bp + 2bp slip; TP maker 1.5bp; time stop taker + 1bp. Page auto-refreshes every 90 s.</p>
 </div><script>
 const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
@@ -65,20 +76,56 @@ function render(){
     two.map(b=>`<tr><td><b>${b.key}</b></td>${cell(b.split["with-trend"])}${cell(b.split["counter-trend"])}${cell(b.split["flat"])}</tr>`).join("")+"</table>";
   $("books").innerHTML=D.books.map(b=>`<div class=card><b>${esc(b.name)}</b><div class="big ${cl(b.net)}">$${f(b.net)} <span style="font-size:14px">(${f(b.totR)}R)</span></div>
    <div>${b.n} trades · win ${b.win??"–"}% · avg ${b.avgR==null?"–":f(b.avgR)}R · open ${b.open.length} · armed ${b.pending.length}${b.v==3?` · BE moves ${b.be_moves??0} (scratched ${b.be_scratch??0})`:""}</div>
-   <div class=mut>today ${b.today.taken}/${R.max_trades_day} trades, ${b.today.losses} losses, ${f(b.today.R)}R · week ${f(b.week_R)}R ${b.today.gate&&!b.today.gate.startsWith("max")?`· <span class=warn>${esc(b.today.gate)}</span>`:""}</div>
+   <div class=mut>today ${b.today.taken}/${b.max_day??R.max_trades_day} trades, ${b.today.losses} losses, ${f(b.today.R)}R · week ${f(b.week_R)}R ${b.today.gate&&!b.today.gate.startsWith("max")?`· <span class=warn>${esc(b.today.gate)}</span>`:""}</div>
+   <div class=mut style="font-size:12px">exit: <b>${b.exit_style=="heist"?"HEIST (TP before 1st liquidity, ≤3R, "+b.tstop+"m timer)":"1R TP, "+b.tstop+"m timer (control)"}</b><br>coins: ${(b.coins||[]).join(", ")}${b.by_coin&&Object.keys(b.by_coin).length?"<br>"+Object.entries(b.by_coin).map(([c,x])=>`<span class=pill>${c} ${x.n} · <span class=${cl(x.totR)}>${f(x.totR)}R</span></span>`).join(""):""}</div>
    ${spark(b.equity)}<details><summary>what this book does</summary><div>${esc(b.desc)}</div></details></div>`).join("");
   const op=D.books.flatMap(b=>b.open.map(o=>({...o,book:b.key})));
-  $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Fill</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th><th>Held</th><th>MFE/MAE</th></tr>`+op.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.entry_et}<br><span class=mut>${o.session}</span></td><td>${px(o.fill)}</td><td>${px(o.stop)}${o.be?"<br><span class=ok>BE</span>":""}</td><td>${px(o.tp)}</td><td>${px(o.mark)}</td><td class=${cl(o.uR)}>${f(o.uR)}R<br>$${f(o.uusd)}</td><td>${o.held_min}m</td><td>${f(o.mfe)}/${f(o.mae)}R</td></tr><tr><td colspan=11><details><summary>why</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>flat</div>";
+  $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Fill</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th><th>Held</th><th>MFE/MAE</th><th>Exp net R</th></tr>`+op.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.entry_et}<br><span class=mut>${o.session}</span></td><td>${px(o.fill)}</td><td>${px(o.stop)}${o.be?"<br><span class=ok>BE</span>":""}</td><td>${px(o.tp)}</td><td>${px(o.mark)}</td><td class=${cl(o.uR)}>${f(o.uR)}R<br>$${f(o.uusd)}</td><td>${o.held_min}m</td><td>${f(o.mfe)}/${f(o.mae)}R</td><td>${o.net_R==null?"–":f(o.net_R)+"R"}</td></tr><tr><td colspan=12><details><summary>why</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>flat</div>";
   const pd=D.books.flatMap(b=>b.pending.map(o=>({...o,book:b.key})));
   $("pend").innerHTML=pd.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Type</th><th>Level</th><th>Stop</th><th>Valid until (ET)</th><th>Closest</th></tr>`+pd.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${(BK[o.book]||{}).v==3&&!/absorption/.test(o.trigger||"")?(o.status=="go"?"confirmed 1m rejection → market entry":"waiting for confirmed 1m rejection (no limit)"):o.status=="go"?"rejection+absorption → enter next bar":o.trig=="limit"?"resting limit":"watching for rejection+absorption"}</td><td>${px(o.px)}</td><td>${px(o.stop)}</td><td>${new Date(o.exp_ts).toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})}</td><td>${o.closest==null?"–":f(o.closest,3)+"%"}</td></tr><tr><td colspan=8><details><summary>trigger</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none</div>";
   const fb=$("fb").value,tr=D.trades.filter(t=>!fb||t.book==fb);
-  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th><th>1h trend</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)}${t.stop_pct!=null?` (${f(t.stop_pct,3)}%)`:""} tp ${px(t.tp)}${t.be?" · BE moved":""}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td><td>${t.trend_rel?`<span class=${t.trend_rel=="counter-trend"?"warn":""}>${esc(t.trend_rel)}</span>`:"–"}</td></tr><tr><td colspan=12><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
+  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th><th>1h trend</th><th>Exp net R</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)}${t.stop_pct!=null?` (${f(t.stop_pct,3)}%)`:""} tp ${px(t.tp)}${t.be?" · BE moved":""}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td><td>${t.trend_rel?`<span class=${t.trend_rel=="counter-trend"?"warn":""}>${esc(t.trend_rel)}</span>`:"–"}</td><td>${t.net_R==null?"–":f(t.net_R)+"R"}</td></tr><tr><td colspan=13><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
   const ss=["Asia 20-03","London 03-09:30","US open 9:30-11","US midday 11-16","After-hours 16-20"];
   $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+D.books.map(b=>b.key).map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
   $("cats").innerHTML=Object.entries(D.near_cats).map(([b,c])=>`<div><b>${b}</b>: `+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class=pill>${esc(k)} · ${v}</span>`).join("")+"</div>").join("");
   const nb=$("nb").value,nc=$("nc").value,nm=D.near.filter(e=>(!nb||e.book==nb)&&(!nc||(nc=="rejected"?e.cat=="rejected":e.cat!="rejected"))).slice(0,250);
   $("near").innerHTML=nm.length?`<table><tr><th>Time (ET)</th><th>Book</th><th>Coin</th><th>Type</th><th>Reason</th></tr>`+nm.map(e=>`<tr><td>${e.t_et}</td><td>${e.book}</td><td>${e.coin}</td><td>${esc(e.cat)}</td><td>${esc(e.reason)}<details><summary>detail</summary><div>${esc(e.detail)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none yet</div>";
-  $("uni").innerHTML=`Trading now: <b>${(D.heist||[]).join(", ")||"–"}</b> · ranked (mean 1h range % last 24h, top-15 by volume): `+(D.universe||[]).map(u=>`${u.coin} ${u.range_pct}%`).join(" · ");
+  $("uni").innerHTML=`<b>Wide books</b> (BTC + top-6 by 24h volume, min $50M): <b>${["BTC",...(D.wide||[])].join(", ")}</b> · 24h volume $M: `+(D.wide_info||[]).map(u=>`${u.coin} ${Math.round(u.vlm_musd)}`).join(" · ")+`<br><b>Heist books (D)</b> trading now: <b>${(D.heist||[]).join(", ")||"–"}</b> · ranked (mean 1h range % last 24h, top-15 by volume): `+(D.universe||[]).map(u=>`${u.coin} ${u.range_pct}%`).join(" · ");
 }
+function renderExtra(){
+  const ct=D.coin_table||[];
+  $("coins").innerHTML=ct.length?`<table><tr><th>Coin</th><th>Trades</th><th>Win%</th><th>Avg R</th><th>Total R</th><th>Net $</th><th>Exp net R (n)</th><th>Books</th></tr>`+ct.map(c=>`<tr><td><b>${c.coin}</b></td><td>${c.n}</td><td>${c.win}%</td><td class=${cl(c.avgR)}>${f(c.avgR)}R</td><td class=${cl(c.totR)}>${f(c.totR)}R</td><td class=${cl(c.net)}>$${f(c.net)}</td><td>${c.exp_netR==null?"–":f(c.exp_netR)+"R"} (${c.n_scored})</td><td class=mut>${c.books.join(", ")}</td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
+  const rk=D.last_rank||[];
+  $("rank").innerHTML=`<div class=mut style="font-size:12px">Rule: every entry needs expected net R ≥ ${D.net_r_min??1.2}R; entries triggering in the same 1-min cycle fill best net R first; if a cap / position limit then binds the rest are logged “outranked”.</div>`+(rk.length?`<table><tr><th>Cycle (ET)</th><th>Candidates (best first)</th></tr>`+rk.map(r=>`<tr><td>${r.t_et}</td><td>${r.cands.map(c=>`<span class=pill>${c.book} ${c.coin} ${f(c.net_R)}R · ${esc(c.result)}</span>`).join("")}</td></tr>`).join("")+"</table>":"<div class=mut>no ranked entries yet</div>");
+  renderCards();
+}
+const TVMAP={HYPE:"BYBIT:HYPEUSDT.P",kPEPE:"BINANCE:1000PEPEUSDT.P",kBONK:"BINANCE:1000BONKUSDT.P",kSHIB:"BINANCE:1000SHIBUSDT.P",kFLOKI:"BINANCE:1000FLOKIUSDT.P",PUMP:"BYBIT:PUMPUSDT.P"};
+const tvSym=c=>TVMAP[c]||`BINANCE:${c}USDT.P`;
+const CARDS={};
+function lv(o){return `<span>Entry <b>${px(o.fill)}</b></span><span class=bad>Stop <b>${px(o.stop)}</b>${o.be?" (BE)":""}</span><span class=ok>TP <b>${px(o.tp)}</b> (${o.exit_style=="heist"?"heist, before 1st liquidity, "+f(o.tp_R)+"R":"1R"})</span><span>Timer <b>${o.tstop?o.tstop+"m":"book timer"}</b></span>${o.liq_tp!=null?`<span>1st liquidity <b>${px(o.liq_tp)}</b></span>`:""}<span>Size <b>${o.size!=null?(+o.size).toPrecision(4):"–"}</b> ${o.coin} (~$${o.size&&o.fill?f(o.size*o.fill,0):"–"} notional)</span><span>Exp net R <b>${o.net_R==null?"–":f(o.net_R)}</b></span><span class=${cl(o.uR)}>uPnL <b>${f(o.uR)}R / $${f(o.uusd)}</b> @ ${px(o.mark)}</span><span>In trade <b>${o.held_min}m</b></span><span>MFE/MAE ${f(o.mfe)}/${f(o.mae)}R</span>`}
+async function hlCandles(coin){const end=Date.now(),r=await fetch("https://api.hyperliquid.xyz/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"candleSnapshot",req:{coin,interval:"1m",startTime:end-6*3600e3,endTime:end}})});
+  const j=await r.json();const TZ=-new Date().getTimezoneOffset()*60;return j.map(k=>({time:Math.floor(k.t/1000)+TZ,open:+k.o,high:+k.h,low:+k.l,close:+k.c}))}
+function setLines(c,o){(c.lines||[]).forEach(l=>c.ser.removePriceLine(l));const L=[[o.fill,"#58a6ff","entry"],[o.stop,"#f85149",o.be?"stop (BE)":"stop"],[o.tp,"#3fb950",o.exit_style=="heist"?"TP heist":"TP 1R"]];if(o.liq_tp!=null)L.push([o.liq_tp,"#d29922","1st liquidity"]);
+  c.lines=L.filter(x=>x[0]!=null).map(([p,col,t])=>c.ser.createPriceLine({price:+p,color:col,lineWidth:2,lineStyle:t=="entry"?0:2,axisLabelVisible:true,title:t}))}
+async function loadLW(c,o){try{const d=await hlCandles(o.coin);c.ser.setData(d);setLines(c,o);
+  if(!c.marked&&o.entry_ts){c.ser.setMarkers([{time:Math.floor(Date.parse(o.entry_ts)/60000)*60-new Date().getTimezoneOffset()*60,position:o.side>0?"belowBar":"aboveBar",color:"#58a6ff",shape:o.side>0?"arrowUp":"arrowDown",text:"entry"}]);c.marked=1}}catch(e){c.el.querySelector(".lwbox").insertAdjacentHTML("beforeend","<div class=bad style='position:absolute;top:4px;left:6px'>HL candles failed to load</div>")}}
+function renderCards(){
+  const op=D.books.flatMap(b=>b.open.map(o=>({...o,book:b.key}))),box=$("pcards"),ids=new Set(op.map(o=>o.book+"|"+o.id));
+  for(const k of Object.keys(CARDS))if(!ids.has(k)){clearInterval(CARDS[k].timer);if(CARDS[k].chart)CARDS[k].chart.remove();CARDS[k].el.remove();delete CARDS[k]}
+  if(!op.length){box.querySelectorAll(".mut").forEach(x=>x.remove());if(!box.querySelector(".pcard"))box.innerHTML="<div class=mut>No open paper positions right now — a chart card appears here automatically when a book fills.</div>";return}
+  box.querySelectorAll(":scope > .mut").forEach(x=>x.remove());
+  for(const o of op){const k=o.book+"|"+o.id;let c=CARDS[k];
+    if(!c){const el=document.createElement("div");el.className="pcard";const tid="tv_"+k.replace(/\W/g,"_"),lid="lw_"+k.replace(/\W/g,"_");
+      el.innerHTML=`<div><b>${o.book}</b> · <b>${o.coin}</b> ${sd(o.side)} · id ${o.id} · opened ${o.entry_et} ET <span class=mut>(${esc(o.session||"")})</span> · <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(o.coin))}" target=_blank>open in TradingView</a></div><div class=lv></div>
+       <div class=pgrid><div><div class=mut style="font-size:12px">TradingView ${tvSym(o.coin)} · 5m (switch to 1m in the chart) · if blank, ${o.coin} may be HL-only (no TradingView perp feed) — use the HL chart on the right</div><div class=tvbox id="${tid}"></div></div>
+       <div><div class=mut style="font-size:12px">Hyperliquid ${o.coin} 1m (your local time) · <span style="color:#58a6ff">entry</span> / <span class=bad>stop</span> / <span class=ok>TP</span> / <span class=warn>1st liquidity</span> lines</div><div class=lwbox id="${lid}"></div></div></div>
+       <details><summary>why this trade</summary><div>${esc(o.trigger)}</div></details>`;
+      box.appendChild(el);c=CARDS[k]={el};
+      try{new TradingView.widget({container_id:tid,symbol:tvSym(o.coin),interval:"5",theme:"dark",style:"1",timezone:"America/New_York",autosize:true,hide_side_toolbar:false,allow_symbol_change:true,withdateranges:true,locale:"en"})}catch(e){$(tid).innerHTML="<div class=bad style='padding:8px'>TradingView widget failed to load</div>"}
+      try{const lw=$(lid);c.chart=LightweightCharts.createChart(lw,{autoSize:true,layout:{background:{color:"#0d1117"},textColor:"#c9d1d9"},grid:{vertLines:{color:"#21262d"},horzLines:{color:"#21262d"}},timeScale:{timeVisible:true,secondsVisible:false},rightPriceScale:{borderColor:"#30363d"}});
+        c.ser=c.chart.addCandlestickSeries({upColor:"#3fb950",downColor:"#f85149",borderVisible:false,wickUpColor:"#3fb950",wickDownColor:"#f85149"});loadLW(c,o);c.timer=setInterval(()=>loadLW(c,c.o),60000)}catch(e){$(lid).innerHTML="<div class=bad style='padding:8px'>chart library failed to load — levels are listed above</div>"}}
+    c.o=o;c.el.querySelector(".lv").innerHTML=lv(o);if(c.ser&&c.lines)setLines(c,o)}
+}
+const _render=render;render=function(){_render();try{renderExtra()}catch(e){console.error(e)}};
 $("fb").onchange=render;$("nb").onchange=render;$("nc").onchange=render;load();setInterval(load,90000);
 </script></body></html>
