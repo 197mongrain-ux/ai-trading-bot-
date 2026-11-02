@@ -11,7 +11,7 @@
 .card{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px}
 .big{font-size:22px;font-weight:600}table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{padding:5px 6px;border-bottom:1px solid var(--b);text-align:left;vertical-align:top}th{color:var(--m);font-weight:500}
-.scroll{overflow-x:auto}details summary{cursor:pointer;color:var(--a)}details div{white-space:normal;color:var(--m);padding:4px 0}
+.scroll{overflow-x:auto}details.grp{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:8px 10px;margin:8px 0}details.grp>summary{color:var(--t)}details summary{cursor:pointer;color:var(--a)}details div{white-space:normal;color:var(--m);padding:4px 0}
 select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius:6px;padding:3px}
 .banner{background:#3d2a00;border:1px solid var(--y);border-radius:8px;padding:8px;margin:8px 0}
 .pcard{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px;margin:10px 0}
@@ -34,9 +34,10 @@ select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius
 <div id="pcards"><div class=mut>loading…</div></div>
 <h2>Open positions (live uPnL)</h2><div class="scroll" id="open"></div>
 <h2>Armed setups (resting limits / waiting for rejection)</h2><div class="scroll" id="pend"></div>
-<h2>Closed trades <span class="mut" style="font-size:12px">tap a row's “why” for the full trigger</span></h2>
-<div>Book <select id="fb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option><option>A3</option><option>B3</option><option>C3</option><option>D3</option></select></div>
-<div class="scroll" id="trades"></div>
+<h2>Results by book <span class="mut" style="font-size:12px">summary sorted by total R · tap a book to open its trades · tap a row's “why” for the full trigger</span></h2>
+<div>Order <select id="ord"><option value="R">ranked by total R</option><option value="book">book order A…D3</option></select> <label class=mut><input type=checkbox id="xall"> expand all</label></div>
+<div class="scroll" id="bsum"></div>
+<div id="trades"></div>
 <h2>Per-coin results (all books) <span class="mut" style="font-size:12px">exp. net R = average expected net R at entry (first liquidity after fees, scored trades only)</span></h2><div class="scroll" id="coins"></div>
 <h2>R:R ranking — last cycles with competing entries</h2><div class="scroll" id="rank"></div>
 <h2>By session</h2><div class="scroll" id="sess"></div>
@@ -60,6 +61,24 @@ async function load(){
 function spark(eq){if(!eq.length)return"<div class=mut>no closed trades yet</div>";const v=[150,...eq.map(e=>e.usd)],mn=Math.min(...v),mx=Math.max(...v),w=240,h=50,r=(mx-mn)||1;
   const pts=v.map((y,i)=>`${(i/(v.length-1||1)*w).toFixed(1)},${(h-(y-mn)/r*h).toFixed(1)}`).join(" ");
   return `<svg width="100%" viewBox="0 0 ${w} ${h+2}" preserveAspectRatio="none" style="height:50px"><polyline fill="none" stroke="${v[v.length-1]>=150?"#3fb950":"#f85149"}" stroke-width="1.5" points="${pts}"/></svg>`}
+const BOOK_ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"];const OPEN_GRP=new Set();
+function exitTxt(b){return b.exit_style=="heist"?`HEIST exit (TP before 1st liquidity ≤3R, ${b.tstop}m timer${b.netr_min!=null?", floor "+b.netr_min+"R":""})`:`1R TP, ${b.tstop}m timer`}
+function renderByBook(BK){
+  const g={};for(const t of D.trades){(g[t.book]=g[t.book]||[]).push(t)}
+  const rows=D.books.map(b=>{const tr=(g[b.key]||[]).slice(),n=tr.length,w=tr.filter(t=>t.R>0).length,
+    tot=tr.reduce((a,t)=>a+t.R,0),usd=tr.reduce((a,t)=>a+(t.usd||0),0);return {b,tr,n,w,l:n-w,win:n?Math.round(100*w/n):null,tot,avg:n?tot/n:null,usd,open:b.open.length}});
+  const byR=rows.slice().sort((x,y)=>y.tot-x.tot||y.n-x.n);
+  const ord=$("ord").value=="book"?rows.slice().sort((x,y)=>BOOK_ORDER.indexOf(x.b.key)-BOOK_ORDER.indexOf(y.b.key)):byR;
+  const all={n:rows.reduce((a,r)=>a+r.n,0),w:rows.reduce((a,r)=>a+r.w,0),tot:rows.reduce((a,r)=>a+r.tot,0),usd:rows.reduce((a,r)=>a+r.usd,0),open:rows.reduce((a,r)=>a+r.open,0)};
+  $("bsum").innerHTML=`<table><tr><th>#</th><th>Book</th><th>Exit</th><th>Trades</th><th>W / L</th><th>Win%</th><th>Total R</th><th>Avg R</th><th>$ P&amp;L</th><th>Open</th></tr>`+
+    byR.map((r,k)=>`<tr><td>${k+1}</td><td><a href="#grp-${r.b.key}" onclick="OPEN_GRP.add('${r.b.key}');render()"><b>${r.b.key}</b></a></td><td class=mut style="font-size:12px">${exitTxt(r.b)}</td><td>${r.n}</td><td>${r.w} / ${r.l}</td><td>${r.win==null?"–":r.win+"%"}</td><td class=${cl(r.tot)}><b>${f(r.tot)}R</b></td><td class=${cl(r.avg)}>${r.avg==null?"–":f(r.avg)+"R"}</td><td class=${cl(r.usd)}>$${f(r.usd)}</td><td>${r.open}</td></tr>`).join("")+
+    `<tr><td></td><td><b>ALL</b></td><td></td><td>${all.n}</td><td>${all.w} / ${all.n-all.w}</td><td>${all.n?Math.round(100*all.w/all.n)+"%":"–"}</td><td class=${cl(all.tot)}><b>${f(all.tot)}R</b></td><td class=${cl(all.tot)}>${all.n?f(all.tot/all.n)+"R":"–"}</td><td class=${cl(all.usd)}>$${f(all.usd)}</td><td>${all.open}</td></tr></table>`;
+  const xall=$("xall").checked;
+  $("trades").innerHTML=ord.map(r=>`<details class=grp id="grp-${r.b.key}" data-k="${r.b.key}"${xall||OPEN_GRP.has(r.b.key)?" open":""}><summary><b>${esc(r.b.name)}</b><br><span class=mut style="font-size:12px">${exitTxt(r.b)}</span><br>
+    <span class=pill>${r.n} trades</span><span class=pill>${r.w}W / ${r.l}L</span><span class=pill>win ${r.win==null?"–":r.win+"%"}</span><span class=pill>total <span class=${cl(r.tot)}>${f(r.tot)}R</span></span><span class=pill>avg <span class=${cl(r.avg)}>${r.avg==null?"–":f(r.avg)+"R"}</span></span><span class=pill>P&amp;L <span class=${cl(r.usd)}>$${f(r.usd)}</span></span><span class=pill>open ${r.open}</span></summary>
+    <div class=scroll>${r.n?`<table><tr><th>Entry (ET)</th><th>Exit (ET)</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th><th>$</th><th>Exit reason</th><th>MFE/MAE</th><th>Exp net R</th></tr>`+r.tr.map(t=>`<tr><td>${t.entry_et}<br><span class=mut>${t.session||""}</span></td><td>${t.exit_et||"–"}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${px(t.fill)}<br><span class=mut>stop ${px(t.stop_before_be||t.stop)} · tp ${px(t.tp)}</span></td><td>${px(t.exit)}</td><td class=${cl(t.R)}><b>${f(t.R)}</b></td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${esc(t.how)}${t.be?"<br><span class=mut>BE moved</span>":""}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.net_R==null?"–":f(t.net_R)+"R"}</td></tr><tr><td colspan=11><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>"}</div></details>`).join("");
+  document.querySelectorAll("details.grp").forEach(d=>d.addEventListener("toggle",()=>{d.open?OPEN_GRP.add(d.dataset.k):OPEN_GRP.delete(d.dataset.k)}));
+}
 function render(){
   const hb=D.heartbeat||{},age=hb.ts?(Date.now()-Date.parse(hb.ts))/1000:1e9,upd=(Date.now()-Date.parse(D.updated))/1000;
   const st=age<480?"<span class=ok>● RUNNING</span>":age<1200?"<span class=warn>● LAGGING</span>":"<span class=bad>● NO HEARTBEAT</span>";
@@ -83,8 +102,7 @@ function render(){
   $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Fill</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th><th>Held</th><th>MFE/MAE</th><th>Exp net R</th></tr>`+op.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.entry_et}<br><span class=mut>${o.session}</span></td><td>${px(o.fill)}</td><td>${px(o.stop)}${o.be?"<br><span class=ok>BE</span>":""}</td><td>${px(o.tp)}</td><td>${px(o.mark)}</td><td class=${cl(o.uR)}>${f(o.uR)}R<br>$${f(o.uusd)}</td><td>${o.held_min}m</td><td>${f(o.mfe)}/${f(o.mae)}R</td><td>${o.net_R==null?"–":f(o.net_R)+"R"}</td></tr><tr><td colspan=12><details><summary>why</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>flat</div>";
   const pd=D.books.flatMap(b=>b.pending.map(o=>({...o,book:b.key})));
   $("pend").innerHTML=pd.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Type</th><th>Level</th><th>Stop</th><th>Valid until (ET)</th><th>Closest</th></tr>`+pd.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${(BK[o.book]||{}).v==3&&!/absorption/.test(o.trigger||"")?(o.status=="go"?"confirmed 1m rejection → market entry":"waiting for confirmed 1m rejection (no limit)"):o.status=="go"?"rejection+absorption → enter next bar":o.trig=="limit"?"resting limit":"watching for rejection+absorption"}</td><td>${px(o.px)}</td><td>${px(o.stop)}</td><td>${new Date(o.exp_ts).toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})}</td><td>${o.closest==null?"–":f(o.closest,3)+"%"}</td></tr><tr><td colspan=8><details><summary>trigger</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none</div>";
-  const fb=$("fb").value,tr=D.trades.filter(t=>!fb||t.book==fb);
-  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th><th>1h trend</th><th>Exp net R</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)}${t.stop_pct!=null?` (${f(t.stop_pct,3)}%)`:""} tp ${px(t.tp)}${t.be?" · BE moved":""}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td><td>${t.trend_rel?`<span class=${t.trend_rel=="counter-trend"?"warn":""}>${esc(t.trend_rel)}</span>`:"–"}</td><td>${t.net_R==null?"–":f(t.net_R)+"R"}</td></tr><tr><td colspan=13><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
+  renderByBook(BK);
   const ss=["Asia 20-03","London 03-09:30","US open 9:30-11","US midday 11-16","After-hours 16-20"];
   $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+D.books.map(b=>b.key).map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
   $("cats").innerHTML=Object.entries(D.near_cats).map(([b,c])=>`<div><b>${b}</b>: `+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class=pill>${esc(k)} · ${v}</span>`).join("")+"</div>").join("");
@@ -127,5 +145,5 @@ function renderCards(){
     c.o=o;c.el.querySelector(".lv").innerHTML=lv(o);if(c.ser&&c.lines)setLines(c,o)}
 }
 const _render=render;render=function(){_render();try{renderExtra()}catch(e){console.error(e)}};
-$("fb").onchange=render;$("nb").onchange=render;$("nc").onchange=render;load();setInterval(load,90000);
+$("ord").onchange=render;$("xall").onchange=render;$("nb").onchange=render;$("nc").onchange=render;load();setInterval(load,90000);
 </script></body></html>
