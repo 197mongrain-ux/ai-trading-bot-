@@ -19,11 +19,22 @@
   "exit_type": "SL",
   "tp_initial": 81525.0,
   "tp_final": 82220.0,
-  "mfe_r": 1.49,
-  "mae_r": 1.27,
+  "mfe_r": null,
+  "mae_r": null,
   "chart_tf": "15m",
-  "img_v": "885c3bdc",
+  "img_v": "f6130d19",
   "reason": "Stop loss",
+  "management": "Entered short at 83,891.0 (Oct 11 9:13 PM). Initial stop 84,208.0, target 81,525.0. Stop widened: 84,208.0 \u2192 84,250.0 at 10:15 PM. Target moved 81,525.0 \u2192 83,260.0 at 11:19 PM. Target moved 83,260.0 \u2192 82,780.0 at 11:19 PM. Target moved 82,780.0 \u2192 82,220.0 at 11:19 PM. Stop hit at 84,239.0 (Oct 12 2:56 AM). Held 5h 43m.",
+  "stop_path": [
+   [
+    "21:13",
+    84208.0
+   ],
+   [
+    "22:15",
+    84250.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -46,11 +57,18 @@
   "exit_type": "SL",
   "tp_initial": 84158.0,
   "tp_final": 84158.0,
-  "mfe_r": 0.19,
-  "mae_r": 1.7,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "34bc563f",
   "reason": "Stop loss",
+  "management": "Entered long at 83,483.0 (Oct 12 6:54 AM). Initial stop 83,251.0, target 84,158.0. Stop hit at 83,222.0 (8:20 AM). Held 1h 26m.",
+  "stop_path": [
+   [
+    "06:54",
+    83251.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -73,11 +91,18 @@
   "exit_type": "Market",
   "tp_initial": 86000.0,
   "tp_final": 84000.0,
-  "mfe_r": 0.0,
-  "mae_r": 0.32,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "5d62f382",
   "reason": "Manual (market)",
+  "management": "Entered long at 82,924.0 (Oct 12 12:21 PM). Initial stop 82,332.0, target 86,000.0. Target moved 86,000.0 \u2192 84,000.0 at 12:27 PM. Closed manually at market at 82,836.0 (12:36 PM). Held 15m.",
+  "stop_path": [
+   [
+    "12:28",
+    82332.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -100,11 +125,34 @@
   "exit_type": "TP",
   "tp_initial": 80716.0,
   "tp_final": 81022.0,
-  "mfe_r": 5.24,
-  "mae_r": 0.83,
+  "mfe_r": null,
+  "mae_r": null,
   "chart_tf": "15m",
-  "img_v": "7d5afa6f",
+  "img_v": "97a69344",
   "reason": "Take profit",
+  "management": "Entered short at 82,827.2 (Oct 12 12:36 PM). Initial stop 83,176.0, target 80,716.0. Stop widened: 83,176.0 \u2192 83,630.0 at 4:45 PM. Stop tightened: 83,630.0 \u2192 83,173.0 at 5:20 PM. Stop trailed into profit: 83,173.0 \u2192 82,780.0 at 8:04 PM. Target moved 80,716.0 \u2192 80,022.0 at 7:50 PM. Target moved 80,022.0 \u2192 81,022.0 at 7:50 PM. Take-profit hit at 81,006.0 (8:52 PM). Held 8h 15m.",
+  "stop_path": [
+   [
+    "14:08",
+    83176.0
+   ],
+   [
+    "15:29",
+    83176.0
+   ],
+   [
+    "16:45",
+    83630.0
+   ],
+   [
+    "17:20",
+    83173.0
+   ],
+   [
+    "20:04",
+    82780.0
+   ]
+  ],
   "note": "Bull-trap read: sweep to 83,153 rejected and the 1h closed back under PDL ~82,746. Kept the stop at 83,176 rather than breakeven, trailed it later."
  },
  {
@@ -127,11 +175,18 @@
   "exit_type": "SL",
   "tp_initial": 81006.0,
   "tp_final": 81006.0,
-  "mfe_r": 0.3,
-  "mae_r": 1.34,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "32da28d8",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 12 11:16 PM at 83,050.0, filled Oct 12 11:32 PM. Initial stop 83,449.0, target 81,006.0. Stop hit at 83,471.0 (11:35 PM). Held 2m.",
+  "stop_path": [
+   [
+    "23:32",
+    83449.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -154,11 +209,18 @@
   "exit_type": "SL",
   "tp_initial": 81006.0,
   "tp_final": 81006.0,
-  "mfe_r": 0.48,
-  "mae_r": 1.12,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "27bea551",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 12 11:38 PM at 83,450.0, filled Oct 13 12:32 AM. Initial stop 83,700.0, target 81,006.0. Stop hit at 83,727.0 (1:14 AM). Held 42m.",
+  "stop_path": [
+   [
+    "00:32",
+    83700.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -181,11 +243,18 @@
   "exit_type": "SL",
   "tp_initial": 82937.0,
   "tp_final": 82937.0,
-  "mfe_r": 0.34,
-  "mae_r": 1.14,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "1e6c0bf4",
   "reason": "Stop loss",
+  "management": "Limit long at 81,733.0 filled Oct 14 11:46 AM. Initial stop 81,581.0, target 82,937.0. Stop hit at 81,572.0 (11:58 AM). Held 11m.",
+  "stop_path": [
+   [
+    "11:46",
+    81581.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -208,11 +277,22 @@
   "exit_type": "SL",
   "tp_initial": 80231.0,
   "tp_final": 80231.0,
-  "mfe_r": 2.54,
-  "mae_r": 0.14,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "e1dd6124",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 14 10:50 PM at 81,597.0, filled Oct 14 10:55 PM. Initial stop 81,950.0, target 80,231.0. Stop moved to breakeven: 81,950.0 \u2192 81,597.0 at Oct 15 12:33 AM. Stop hit at 81,600.0 (Oct 15 12:36 AM). Held 1h 41m.",
+  "stop_path": [
+   [
+    "22:55",
+    81950.0
+   ],
+   [
+    "00:33",
+    81597.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -235,11 +315,18 @@
   "exit_type": "SL",
   "tp_initial": 2332.0,
   "tp_final": 2332.0,
-  "mfe_r": 1.6,
-  "mae_r": 1.6,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "544ac328",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 15 9:47 AM at 2,380.0, filled Oct 15 10:10 AM. Initial stop 2,390.0, target 2,332.0. Stop hit at 2,391.9 (10:48 AM). Held 38m.",
+  "stop_path": [
+   [
+    "10:10",
+    2390.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -262,11 +349,18 @@
   "exit_type": "SL",
   "tp_initial": 79841.0,
   "tp_final": 79841.0,
-  "mfe_r": 1.34,
-  "mae_r": 1.25,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "fc3c9b63",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 15 10:02 AM at 81,414.0, filled Oct 15 10:10 AM. Initial stop 81,785.0, target 79,841.0. Stop hit at 81,796.0 (10:48 AM). Held 38m.",
+  "stop_path": [
+   [
+    "10:10",
+    81785.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -289,11 +383,18 @@
   "exit_type": "SL",
   "tp_initial": 101.02,
   "tp_final": 101.02,
-  "mfe_r": 0.4,
-  "mae_r": 1.12,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "200331df",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 15 9:47 AM at 104.00, filled Oct 15 10:42 AM. Initial stop 104.89, target 101.02. Stop hit at 104.89 (10:56 AM). Held 14m.",
+  "stop_path": [
+   [
+    "10:42",
+    104.89
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -316,11 +417,22 @@
   "exit_type": "SL",
   "tp_initial": 100.85,
   "tp_final": 100.85,
-  "mfe_r": 0.62,
-  "mae_r": 2.15,
-  "chart_tf": "5m",
+  "mfe_r": null,
+  "mae_r": null,
+  "chart_tf": null,
   "img_v": "0238fa6b",
   "reason": "Stop loss",
+  "management": "Entered short at 104.79 (Oct 15 10:57 AM). Initial stop 105.31, target 100.85. Stop widened: 105.31 \u2192 105.39 at 10:58 AM. Stop hit at 105.45 (11:03 AM). Held 6m.",
+  "stop_path": [
+   [
+    "10:57",
+    105.31
+   ],
+   [
+    "10:58",
+    105.39
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -343,11 +455,18 @@
   "exit_type": "SL",
   "tp_initial": 100.92,
   "tp_final": 100.92,
-  "mfe_r": 1.06,
+  "mfe_r": 0.0,
   "mae_r": 1.32,
   "chart_tf": "15m",
-  "img_v": "b74e2d28",
+  "img_v": "29cc310e",
   "reason": "Stop loss",
+  "management": "Entered short at 105.80 (Oct 15 11:06 AM). Initial stop 107.00, target 100.92. Stop hit at 107.04 (Oct 16 7:12 AM). Held 20h 5m.",
+  "stop_path": [
+   [
+    "11:10",
+    107.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -370,11 +489,18 @@
   "exit_type": "SL",
   "tp_initial": 80800.0,
   "tp_final": 79845.0,
-  "mfe_r": 2.41,
+  "mfe_r": 1.74,
   "mae_r": 1.14,
   "chart_tf": "15m",
-  "img_v": "bae2b3a6",
+  "img_v": "5c0482b4",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 15 2:35 PM at 82,500.0, filled Oct 15 3:06 PM. Initial stop 82,850.0, target 80,800.0. Target moved 80,800.0 \u2192 79,845.0 at 3:09 PM. Stop hit at 82,849.0 (Oct 16 7:25 AM). Held 16h 19m.",
+  "stop_path": [
+   [
+    "15:06",
+    82850.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -400,8 +526,15 @@
   "mfe_r": 2.12,
   "mae_r": 1.58,
   "chart_tf": "5m",
-  "img_v": "e7d53c00",
+  "img_v": "774a9114",
   "reason": "Stop loss",
+  "management": "Resting limit long placed Oct 16 4:20 PM at 102.41, filled Oct 17 5:31 PM. Initial stop 102.15, target 105.50. Stop hit at 102.15 (5:32 PM). Held 0m.",
+  "stop_path": [
+   [
+    "17:31",
+    102.15
+   ]
+  ],
   "note": "SOL long 17.7 @ 102.41, stopped at 102.15 (-$5.64)."
  },
  {
@@ -427,8 +560,19 @@
   "mfe_r": 2.37,
   "mae_r": 2.51,
   "chart_tf": "5m",
-  "img_v": "29919196",
+  "img_v": "e808338c",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 18 3:14 PM at 81,133.0, filled Oct 18 3:16 PM. Initial stop 81,339.0, target 80,735.0. Stop widened: 81,339.0 \u2192 81,450.0 at 3:16 PM. Target moved 80,735.0 \u2192 80,180.0 at 3:16 PM. Closed in 2 pieces (partials). Stop hit at 81,299.6 (6:00 PM). Held 2h 44m.",
+  "stop_path": [
+   [
+    "15:16",
+    81339.0
+   ],
+   [
+    "15:16",
+    81450.0
+   ]
+  ],
   "note": "Trimmed 0.0196 @ 81,050 (+$1.63); rest stopped at 81,434. Stop moved to 81,450 and TP 80,180 at 3R."
  },
  {
@@ -454,8 +598,15 @@
   "mfe_r": 0.1,
   "mae_r": 1.23,
   "chart_tf": "5m",
-  "img_v": "0ce8f91e",
+  "img_v": "edb99083",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 18 5:23 PM at 2,367.0, filled Oct 18 5:53 PM. Initial stop 2,404.5, target 2,255.0. Stop hit at 2,405.5 (7:27 PM). Held 1h 33m.",
+  "stop_path": [
+   [
+    "17:53",
+    2404.5
+   ]
+  ],
   "note": "Stop was tight relative to ETH's noise near the level."
  },
  {
@@ -481,8 +632,15 @@
   "mfe_r": 0.14,
   "mae_r": 1.24,
   "chart_tf": "5m",
-  "img_v": "3b1fc772",
+  "img_v": "8aba71b1",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 18 7:56 PM at 0.004267, filled Oct 18 9:28 PM. Initial stop 0.004406, target 0.003827. Stop hit at 0.004407 (10:47 PM). Held 1h 19m.",
+  "stop_path": [
+   [
+    "21:28",
+    0.004406
+   ]
+  ],
   "note": "Same data-trade rules; 10x max on PUMP."
  },
  {
@@ -508,8 +666,15 @@
   "mfe_r": 0.13,
   "mae_r": 1.04,
   "chart_tf": "15m",
-  "img_v": "ba2a47a1",
+  "img_v": "77763c85",
   "reason": "Stop loss",
+  "management": "Limit short at 82,075.3 filled Oct 18 7:42 PM. Initial stop 82,822.0, target 79,730.0. Stop hit at 82,829.0 (Oct 19 12:49 AM). Held 5h 7m.",
+  "stop_path": [
+   [
+    "19:42",
+    82822.0
+   ]
+  ],
   "note": "Entered from the chart before a clean BOS confirmation. Lesson: prefer a clear BOS then pullback entry over the first tap of a 4h level."
  },
  {
@@ -535,8 +700,15 @@
   "mfe_r": 2.54,
   "mae_r": 0.42,
   "chart_tf": "15m",
-  "img_v": "5a6eab1e",
+  "img_v": "3078bbb2",
   "reason": "Take profit",
+  "management": "Resting limit short placed Oct 19 3:56 AM at 82,840.0, filled Oct 19 4:18 AM. Initial stop 83,400.0, target 80,840.0. Target moved 80,840.0 \u2192 81,556.0 at 7:11 PM. Take-profit hit at 81,551.0 (8:20 PM). Held 16h 2m.",
+  "stop_path": [
+   [
+    "04:18",
+    83400.0
+   ]
+  ],
   "note": "Re-entry at 82,840 after the prior 82,075 short got stopped at 82,829. Original TP 81,160 moved to 80,840 for ~3.6R. At 7 PM, data showed only ~41% odds for 80,840 vs ~69% for 81,556 sitting in front of the $94M Coinglass liquidation cluster at 81,630, so TP was moved to 81,556 (2.3R). Price bottomed ~81,417 and bounced, so the move paid off; the old TP would not have filled."
  },
  {
@@ -562,8 +734,15 @@
   "mfe_r": 0.57,
   "mae_r": 1.05,
   "chart_tf": "15m",
-  "img_v": "5736b886",
+  "img_v": "cbad58e7",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 19 1:25 PM at 104.58, filled Oct 19 4:15 PM. Initial stop 106.25, target 100.56. Target moved 100.56 \u2192 101.59 at 7:11 PM. Stop hit at 106.28 (Oct 20 10:04 AM). Held 17h 48m.",
+  "stop_path": [
+   [
+    "16:15",
+    106.25
+   ]
+  ],
   "note": "Short 14.28 @ 104.58, 20x isolated, filled 4:15 PM ET Oct 19 with stop 106.25 and TP 100.56. At 7 PM Chris had the TP pulled in to 101.59 (about 1.8R) for a more attainable fill, the same evening the BTC TP was moved in front of the liquidation cluster; stop left alone. Price got about 0.57R in favour, never reached the closer target, and was stopped at 106.28 on Oct 20."
  },
  {
@@ -589,8 +768,19 @@
   "mfe_r": 1.89,
   "mae_r": 1.7,
   "chart_tf": "15m",
-  "img_v": "f7be9add",
+  "img_v": "7fc5d9e6",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 19 6:55 PM at 0.004484, filled Oct 19 6:56 PM. Initial stop 0.004573, target 0.004089. Stop widened: 0.004573 \u2192 0.004617 at 6:59 PM. Stop hit at 0.004622 (Oct 20 10:07 AM). Held 15h 11m.",
+  "stop_path": [
+   [
+    "18:56",
+    0.004573
+   ],
+   [
+    "18:59",
+    0.004617
+   ]
+  ],
   "note": "Short 132,541 @ 0.004484 at 10x isolated (PUMP's max), opened at 1% risk with stop 0.004573 and TP 0.004089 (~4.4R). Right after the fill Chris had the stop moved to just above the wick at 0.004617 at the same size, raising risk to ~1.5% and cutting the target to ~3R. It ran about 1.9R in favour without tagging the TP, then reversed and stopped at 0.004622 on Oct 20."
  },
  {
@@ -614,10 +804,17 @@
   "tp_initial": 2326.9,
   "tp_final": 2326.9,
   "mfe_r": 2.13,
-  "mae_r": 1.11,
+  "mae_r": 1.79,
   "chart_tf": "15m",
-  "img_v": "c8e1abd6",
+  "img_v": "9df940c1",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 18 11:08 PM at 2,425.0, filled Oct 18 11:10 PM. Initial stop 2,450.0, target 2,326.9. Stop hit at 2,452.0 (Oct 20 10:10 AM). Held 1d 11h 0m.",
+  "stop_path": [
+   [
+    "23:10",
+    2450.0
+   ]
+  ],
   "note": "Short 0.4271 @ 2,425 at 20x isolated, filled 11:10 PM ET Oct 18 with stop 2,450 and TP 2,326.9; both were left untouched for the whole trade. It ran about 2.1R in favour but never reached the target, then reversed and was stopped at 2,452 on Oct 20."
  },
  {
@@ -643,8 +840,19 @@
   "mfe_r": 0.2,
   "mae_r": 0.31,
   "chart_tf": "15m",
-  "img_v": "856f1682",
+  "img_v": "b73d5749",
   "reason": "Manual (market)",
+  "management": "Limit long at 82,746.0 filled Oct 20 1:22 PM. Initial stop 81,479.0, no take-profit order. Stop trailed into profit: 81,479.0 \u2192 82,780.0 at 5:33 PM. Closed manually at market at 82,806.0 (5:40 PM). Held 4h 18m.",
+  "stop_path": [
+   [
+    "13:22",
+    81479.0
+   ],
+   [
+    "17:33",
+    82780.0
+   ]
+  ],
   "note": "Long 0.01702 @ 82,746, opened under the new main exit plan: wide stop at 81,479 (at least 1.5x the 4h ATR, size cut to keep 2% risk), take 25% at 1R, then breakeven and run the remaining 75% to 2R. Around 5:33 PM ET Chris had it switched to a near-breakeven stop at 82,780 and a single full-size TP at the day's high, 83,400. A few minutes later, at 5:40 PM, he closed it manually at 82,806 because he didn't like the setup, for roughly breakeven. Part of the takeaway feeding his next step: he felt the 1.5 ATR stop and 1R TP1 are too far for BTC swings and wants to work on a quicker % TP1 with OTE entries."
  },
  {
@@ -670,8 +878,19 @@
   "mfe_r": 0.17,
   "mae_r": 0.37,
   "chart_tf": "15m",
-  "img_v": "ebbee71e",
+  "img_v": "7f56306f",
   "reason": "Manual (market)",
+  "management": "Resting limit long placed Oct 20 1:22 PM at 2,446.1, filled Oct 20 1:31 PM. Initial stop 2,386.7, no take-profit order. Stop trailed into profit: 2,386.7 \u2192 2,447.3 at 5:33 PM. Closed manually at market at 2,448.8 (5:40 PM). Held 4h 9m.",
+  "stop_path": [
+   [
+    "13:31",
+    2386.7
+   ],
+   [
+    "17:33",
+    2447.3
+   ]
+  ],
   "note": "Long 0.3698 @ 2,446.1, opened alongside the BTC long under the main exit plan: wide stop at 2,386.7 (at least 1.5x the 4h ATR, size cut to keep 2% risk), 25% at 1R, then breakeven and run 75% to 2R. Around 5:33 PM ET Chris had the stop moved to near breakeven at 2,447.3 with a single full-size TP at the day's high, 2,476. At 5:40 PM he closed it manually at 2,448.8 because he didn't like the setup, finishing about flat."
  },
  {
@@ -697,8 +916,19 @@
   "mfe_r": 0.06,
   "mae_r": 1.25,
   "chart_tf": "15m",
-  "img_v": "1941988a",
+  "img_v": "dcb4348f",
   "reason": "Stop loss",
+  "management": "Resting limit long placed Oct 21 5:43 PM at 84,450.0, filled Oct 21 6:47 PM. Initial stop 83,216.0, target 87,272.0. Closed in 2 pieces (partials). Stop hit at 83,210.0 (10:15 PM). Held 3h 28m.",
+  "stop_path": [
+   [
+    "18:47",
+    83216.0
+   ],
+   [
+    "18:47",
+    83216.0
+   ]
+  ],
   "note": "Long 0.02571 BTC @ 84,450, held as two legs with the stop at 83,216; the stop was never moved. It got barely 0.06R in favour before sliding, and both legs were stopped together at 83,210 at 10:15 PM ET. Right after, Chris looked at a re-entry long near PDL 82,613 (a 15m sweep-and-reclaim or a resting limit lower down) instead of chasing, sizing it at 2% risk on the reduced balance."
  },
  {
@@ -724,8 +954,19 @@
   "mfe_r": 0.31,
   "mae_r": 1.15,
   "chart_tf": "15m",
-  "img_v": "0d495e6f",
+  "img_v": "0b4d7810",
   "reason": "Stop loss",
+  "management": "Limit long at 82,923.0 filled Oct 21 10:30 PM. Initial stop 82,500.0, target 83,196.0. Target moved 83,196.0 \u2192 84,041.0 at 10:30 PM. Closed in 2 pieces (partials). Stop hit at 82,500.0 (Oct 22 2:45 AM). Held 4h 14m.",
+  "stop_path": [
+   [
+    "22:30",
+    82500.0
+   ],
+   [
+    "22:30",
+    82500.0
+   ]
+  ],
   "note": "Re-entry long 0.04661 BTC @ 82,923 (20x isolated, maker fill ~10:30 PM ET), taken right after the 84,450 long was stopped at 83,210. The plan was a fixed post-only buy (first ~82,976, then moved to 82,839, which came too late; an alternative resting limit at 81,985 was cancelled unfilled), stop 82,500 for 2% risk (~$22 on ~$1,101). Split in two halves: A targeting 83,196 (~0.5R) and B targeting 84,041 PDC (~2.3R), both stopped at 82,500; no watcher managed it. It never got going (max ~0.3R in favor) and hit the stop at 2:45 AM ET, a second consecutive BTC long loss that night."
  },
  {
@@ -751,8 +992,27 @@
   "mfe_r": 0.95,
   "mae_r": 0.65,
   "chart_tf": "5m",
-  "img_v": "1c3936b3",
+  "img_v": "b09a3eab",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 22 3:07 PM at 81,677.0, filled Oct 22 9:47 PM. Initial stop 81,949.0, target 81,000.0. Target moved 81,000.0 \u2192 80,800.0 at 9:47 PM. Target moved 80,800.0 \u2192 81,000.0 at 9:47 PM. Target moved 81,000.0 \u2192 80,800.0 at 9:47 PM. Closed in 4 pieces (partials). Stop hit at 81,953.0 (10:36 PM). Held 49m.",
+  "stop_path": [
+   [
+    "21:47",
+    81949.0
+   ],
+   [
+    "21:47",
+    81949.0
+   ],
+   [
+    "21:47",
+    81949.0
+   ],
+   [
+    "21:47",
+    81949.0
+   ]
+  ],
   "note": "Short 0.0672 BTC @ 81,677, filled 9:47 PM ET Oct 22, initial stop 82,150 and TP 81,000. During the trade the stop was tightened to 81,949 and the TP moved down to 80,800; price reached about 0.95R in favour but never tagged the target. The stop filled at 81,953 at 10:36 PM ET for about -$22 net, leaving the account flat at about $1,057 USDC (2% risk \u2248 $21). Right after, Chris re-shorted at 81,896 at 1x isolated with no stop or TP by his own choice."
  },
  {
@@ -778,8 +1038,10 @@
   "mfe_r": null,
   "mae_r": null,
   "chart_tf": "15m",
-  "img_v": "10a7e0c2",
+  "img_v": "c0662525",
   "reason": "Manual (market)",
+  "management": "Limit short at 81,896.0 filled Oct 22 10:48 PM. No stop order was found for this trade. Target moved 75,500.0 \u2192 80,964.0 at Oct 23 2:22 PM. Closed manually at market at 81,326.0 (Oct 23 3:40 PM). Held 16h 52m.",
+  "stop_path": [],
   "note": "Re-short taken right after the 81,677 short was stopped at 81,953: 0.01252 BTC @ 81,896, filled 10:48 PM ET Oct 22, at 1x isolated using almost all spot USDC (about $1,025 margin, liquidation about 161,735). By Chris's explicit choice it was opened with no stop and no TP, so no R multiple applies. TP orders were later added (first 75,500, last 80,964) but never filled; the position was closed at market at 81,326 at 3:40 PM ET Oct 23 for about +$6.25 net."
  },
  {
@@ -805,8 +1067,19 @@
   "mfe_r": 0.19,
   "mae_r": 0.34,
   "chart_tf": "15m",
-  "img_v": "0d73a1b2",
+  "img_v": "5852039a",
   "reason": "Manual (market)",
+  "management": "Resting limit long placed Oct 24 4:09 PM at 8.920, filled Oct 24 5:01 PM. Initial stop 8.400, target 10.000. Target moved 10.000 \u2192 10.800 at 5:01 PM. Closed manually at market at 8.952 (Oct 25 7:24 PM). Held 1d 2h 23m.",
+  "stop_path": [
+   [
+    "17:01",
+    8.4
+   ],
+   [
+    "17:01",
+    8.4
+   ]
+  ],
   "note": "Long taken from a CS app signal: two ALO buys of 10.14 AVAX at 8.92 (5x isolated), each with a stop at 8.40, for 1% risk (about $10.65 on 1,065 USDC). Half A targeted 10.00 and Half B 10.80, about 2.8R combined. Both halves had filled by the morning of Oct 25 and sat slightly red (about -$2.4) early on. The position was closed at market around 8.95 on the evening of Oct 25 for a small scratch win; the reason for the manual exit wasn't recorded."
  },
  {
@@ -832,8 +1105,15 @@
   "mfe_r": 2.42,
   "mae_r": 0.89,
   "chart_tf": "1h",
-  "img_v": "1cf05cb1",
+  "img_v": "b5178e05",
   "reason": "Manual (market)",
+  "management": "Resting limit short placed Oct 24 2:19 PM at 80,566.0, filled Oct 24 2:58 PM. Initial stop 81,070.0, target 79,188.0. Target moved 79,188.0 \u2192 79,500.0 at Oct 26 2:35 PM. Closed manually at market at 79,677.9 (Oct 26 11:26 PM). Held 2d 8h 28m.",
+  "stop_path": [
+   [
+    "14:58",
+    81070.0
+   ]
+  ],
   "note": "Resting ALO short of 0.03851 BTC at 80,566 (10x isolated) placed Oct 24 after cancelling the unfilled 81,652 short, with stop 81,070 and TP 79,188, risking about $21.28 (2% of 1,064 USDC) for about 2.45R. It filled by the morning of Oct 25 and was about +$10 early on; the TP was later moved to 79,500 (the reason wasn't recorded). On the evening of Oct 26 Chris closed it at market near 79,678 together with his Propr BTC short, locking the win before bed under his new rule: don't sleep on positions and don't turn winners into losers."
  },
  {
@@ -859,8 +1139,15 @@
   "mfe_r": 0.58,
   "mae_r": 1.61,
   "chart_tf": "5m",
-  "img_v": "1fbd084d",
+  "img_v": "3803aa90",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 27 10:09 AM at 80,170.0, filled Oct 27 10:13 AM. Initial stop 80,490.0, target 79,567.0. Stop hit at 80,514.9 (11:20 AM). Held 1h 7m.",
+  "stop_path": [
+   [
+    "10:13",
+    80490.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -886,8 +1173,15 @@
   "mfe_r": 0.35,
   "mae_r": 2.2,
   "chart_tf": "15m",
-  "img_v": "9006e60b",
+  "img_v": "610df106",
   "reason": "Stop loss",
+  "management": "Resting limit short placed Oct 27 12:07 PM at 80,547.0, filled Oct 27 12:17 PM. Initial stop 80,880.0, target 79,950.0. Target moved 79,950.0 \u2192 80,100.0 at 12:39 PM. Stop hit at 81,005.0 (5:31 PM). Held 5h 13m.",
+  "stop_path": [
+   [
+    "12:17",
+    80880.0
+   ]
+  ],
   "note": "No notes recorded"
  },
  {
@@ -913,8 +1207,99 @@
   "mfe_r": 0.44,
   "mae_r": 1.36,
   "chart_tf": "5m",
-  "img_v": "8c8165ce",
+  "img_v": "a275c351",
   "reason": "Stop loss",
+  "management": "Resting limit long placed Oct 29 3:20 PM at 80,650.0, filled Oct 29 4:01 PM. Initial stop 80,250.0, target 81,350.0. Target moved 81,350.0 \u2192 81,740.0 at 4:01 PM. Closed in 2 pieces (partials). Stop hit at 80,244.0 (4:05 PM). Held 4m.",
+  "stop_path": [
+   [
+    "16:01",
+    80250.0
+   ],
+   [
+    "16:01",
+    80250.0
+   ]
+  ],
   "note": "Resting post-only limit long of 0.035 BTC at 80,650 (20x isolated, sized at 1.5% risk), set up in the afternoon with the stop at 80,250 and the target split into two legs at 81,350 and 81,740. It filled at 4:01 PM ET, got only about 0.44R in favour, then reversed and hit the stop at 4:05 PM ET for about -1.1R after fees. No further reasoning for the entry was recorded.\nWhy: BTC was the only coin trending up on the 4h and 1h (+DI over -DI, ADX about 21, under 25). Entry was a pullback to the fib 0.618 of the 79,890 to 81,955 leg, with the stop under the 0.786 and the 80,290 level. Split TPs at the 81,350 Asia high and 81,740, with breakeven after TP1. It was taken late (3:09 PM ET) and filled at 4:01, and the trend was weak, so this was a marginal setup."
+ },
+ {
+  "id": "xyz-SP500-20261102-1020",
+  "coin": "xyz:SP500",
+  "side": "short",
+  "size": 0.159,
+  "entry": 7645.0,
+  "exit": 7543.9,
+  "stop": 7645.0,
+  "initial_stop": 7700.0,
+  "fees": 0.1386,
+  "net": 15.9363,
+  "r_mult": 1.82,
+  "open_ms": 1793632819302,
+  "close_ms": 1793652958870,
+  "open_et": "2026-11-02 10:20",
+  "close_et": "2026-11-02 15:55",
+  "result": "WIN",
+  "exit_type": "Market",
+  "tp_initial": 7528.0,
+  "tp_final": 7528.0,
+  "mfe_r": 1.94,
+  "mae_r": 0.26,
+  "chart_tf": "15m",
+  "img_v": "9c979cd2",
+  "reason": "Manual (market)",
+  "management": "Resting limit short placed Nov 1 9:28 PM at 7,645.0, filled Nov 2 10:20 AM. Initial stop 7,700.0, target 7,528.0. Stop moved to breakeven: 7,700.0 \u2192 7,645.0 at 1:11 PM (Chris asked for breakeven stops on all shorts). Closed manually at market at 7,543.9 (3:55 PM): Chris closed it himself before the US cash close. Held 5h 35m.",
+  "stop_path": [
+   [
+    "10:20",
+    7700.0
+   ],
+   [
+    "13:11",
+    7645.0
+   ]
+  ],
+  "note": "Setup (Nov 2 template trade): SP500 short. 4h downtrend with the EMAs stacked bearish (20 < 50 < 200: 7,614 / 7,640 / 7,686), ADX 33. Entry 7,645 was a limit at the broken Oct 30 overnight lows (7,637 to 7,647, flipped support to resistance), the 0.61 fib retracement of the 7,720.7 to 7,526 impulse. Original stop 7,700 (about 0.72%, just above the 7,660 minor swing high), TP 7,528 (2 points in front of the 7,526 impulse low), about 2.1R planned.\nHL: short 0.159 at 10x isolated, about 1% risk (about $10 at the original stop incl. fees). Filled 10:20 AM ET Nov 2.\nManagement: stop moved to breakeven (7,645) at 1:11 PM ET at Chris's request; TP left at 7,528.\nExit: Chris closed it manually at market just before the cash close, at 7,543.9 (3:55 PM ET). The breakeven stop and TP were cancelled automatically when the position closed.\nResult: +$16.07 gross, $0.14 fees, +$15.94 net, about +1.8R.\nChris: an excellent, well-thought-out trade. Its format, sizing, stop distance and retracement entry are now the template for the new setup watch."
+ },
+ {
+  "id": "BTC-20261101-0115",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.01723,
+  "entry": 78000.0,
+  "exit": 76765.0,
+  "stop": 78000.0,
+  "initial_stop": 79150.0,
+  "fees": 0.7649,
+  "net": 20.5141,
+  "r_mult": 1.04,
+  "open_ms": 1793513721431,
+  "close_ms": 1793653121334,
+  "open_et": "2026-11-01 01:15",
+  "close_et": "2026-11-02 15:58",
+  "result": "WIN",
+  "exit_type": "Market",
+  "tp_initial": 76264.0,
+  "tp_final": 76264.0,
+  "mfe_r": 1.16,
+  "mae_r": 0.74,
+  "chart_tf": "15m",
+  "img_v": "4c95e3e6",
+  "reason": "Manual (market)",
+  "management": "Resting limit short placed Oct 31 2:16 PM at 78,000.0, filled Nov 1 1:15 AM. Initial stop 79,150.0, target 76,264.0. Stop tightened: 79,150.0 \u2192 78,865.0 at Nov 2 11:05 AM. Stop moved to breakeven: 78,865.0 \u2192 78,000.0 at Nov 2 1:11 PM (Chris asked for breakeven stops on all shorts). Closed manually at market at 76,765.0 (Nov 2 3:58 PM): Chris closed it himself to finish the day with no open positions, happy with the trade. Held 1d 14h 43m.",
+  "stop_path": [
+   [
+    "01:15",
+    79150.0
+   ],
+   [
+    "11:05",
+    78865.0
+   ],
+   [
+    "13:11",
+    78000.0
+   ]
+  ],
+  "note": "Setup (Nov 2 template trade): BTC short. 4h downtrend (EMAs 20/50/200 at 78,315 / 79,508 / 81,065, ADX 29, -DI over +DI). Entry 78,000 was a limit at the round number and the broken Oct 30 1h low (flipped support to resistance), the 0.69 fib retracement of the 78,772 to 76,264 impulse. TP 76,264 at the impulse low (first liquidity), about 1.51R planned from the original stop 79,150 (about 0.5% above the 78,772 swing high, 1.47% away).\nHL: short 0.01723 at 20x isolated, about 2% risk (about $20.6 at the original stop incl. fees). Filled 1:15 AM ET Nov 1.\nManagement: stop tightened to 78,865 at 11:05 AM ET Nov 2, then moved to breakeven (78,000) at 1:11 PM ET at Chris's request; TP left at 76,264.\nExit: Chris closed it manually at market at 76,765 (3:58 PM ET) at the end of the day (day done). The remaining stop and TP were cancelled automatically when the position closed.\nResult: +$21.28 gross, $0.76 fees, +$20.51 net, about +1.0R on the original 79,150 stop.\nChris: happy with this trade. Same format as the SP500 short, and part of the template for the new setup watch."
  }
 ]
