@@ -1,0 +1,292 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MB Template — TradingView indicator</title>
+<style>body{margin:0;background:#0d1014;color:#e9edf2;font:16px/1.5 system-ui,sans-serif;padding:18px 14px 70px;max-width:1100px}
+h1{font-size:24px;margin:0 0 6px}.mut{color:#8b96a5}ol li{margin:4px 0}
+.btn{background:#2b6cff;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:16px;cursor:pointer;margin:6px 8px 6px 0;text-decoration:none;display:inline-block}
+.btn.s{background:#232a34}pre{background:#10151b;border:1px solid #252c36;border-radius:10px;padding:14px;overflow:auto;font-size:12.5px;max-height:70vh}
+.card{background:#151a21;border:1px solid #252c36;border-radius:12px;padding:14px 16px;margin:14px 0}</style></head><body>
+<h1>MB Template <span class="mut" style="font-size:16px;font-weight:400">· TradingView Pine v5 indicator · Nov 2 rules</span></h1>
+<div class="card"><b>Add it to TradingView</b><ol>
+<li>Tap <b>Copy code</b> below.</li><li>In TradingView open <b>Pine Editor</b> (bottom panel) → <b>Open → New indicator</b>, select all and paste over the default code.</li>
+<li>Click <b>Save</b>, then <b>Add to chart</b>. Use a <b>1h</b> chart (15m/5m also work; above 1h the table says "use ≤1h chart").</li>
+<li>Settings (gear) → <i>Show</i> group hides any piece: fib zone, level, SL/TP, background, table, table position.</li></ol>
+<button class="btn" id="cp">Copy code</button><a class="btn s" href="mb_template.pine" download>Download .pine</a><a class="btn s" href="mb_template.txt">Plain text</a> <span id="ok" class="mut"></span></div>
+<div class="card"><b>What it draws (current setup only, no history)</b><ul>
+<li>Shaded box = 0.50–0.79 fib zone of the latest 1h impulse ≥ 3 ATR (red = short, green = long)</li>
+<li>Orange line = the key flipped level, tagged <i>round</i> / <i>swing</i> / <i>PDH/PDL</i></li>
+<li>Dashed red = stop (0.5% past the swing, % shown) · dashed teal = target just before the impulse extreme (R shown once)</li>
+<li>Faint red/green background = 4h trend (EMA20/50/200 stacked + DI + ADX ≥ 20)</li>
+<li>Corner checklist: rules 1, 2, 3, 4, 5, 7, 9 and a READY / WAIT / NO cell with distance to the level</li></ul>
+<span class="mut">Same rules as the <a href="../rules-board/" style="color:#7fb6ff">live rules board</a>. Small differences are possible: TV uses 1h pivots only, while the board also uses 15m pivots and prior-day lows/highs as levels.</span></div>
+<pre id="src">//@version=5
+// MB Template — Nov 2 rules (today&#x27;s BTC 78,000 / SP500 7,645 shorts), minimal display.
+// Shows only the CURRENT setup: 0.50–0.79 fib zone of the latest qualifying 1h impulse, one flipped level,
+// stop + target (R shown once), a faint 4h-trend background, and a small checklist. Use on a 1h (or 15m/5m) chart.
+// Higher-timeframe data uses confirmed bars only ([1] + lookahead_on), so values don&#x27;t repaint.
+indicator(&quot;MB Template&quot;, shorttitle=&quot;MB&quot;, overlay=true, max_boxes_count=3, max_lines_count=6, max_labels_count=6, max_bars_back=600)
+
+// ───────── Show / hide
+gS = &quot;Show&quot;
+showZone = input.bool(true,  &quot;Fib zone 0.50–0.79&quot;,   group=gS)
+showLvl  = input.bool(true,  &quot;Key flipped level&quot;,    group=gS)
+showSLTP = input.bool(true,  &quot;Stop / Target&quot;,        group=gS)
+showBg   = input.bool(true,  &quot;4h trend background&quot;,  group=gS)
+showTbl  = input.bool(true,  &quot;Checklist table&quot;,      group=gS)
+tblPos   = input.string(&quot;Top right&quot;, &quot;Table position&quot;, options=[&quot;Top right&quot;, &quot;Bottom right&quot;, &quot;Top left&quot;, &quot;Bottom left&quot;], group=gS)
+
+// ───────── Rule settings (defaults = setup_watch tolerances)
+gR = &quot;Rules&quot;
+adxMin  = input.float(20.0, &quot;Rule 1 · 4h ADX min&quot;,                 group=gR)
+impAtr  = input.float(3.0,  &quot;Rule 2 · impulse ≥ x × 1h ATR&quot;,        group=gR)
+lookH   = input.int(96,     &quot;Rule 2 · look-back (1h bars)&quot;, minval=24, maxval=200, group=gR)
+fibLo   = input.float(0.50, &quot;Rule 4 · fib zone from&quot;,               group=gR)
+fibHi   = input.float(0.79, &quot;Rule 4 · fib zone to&quot;,                 group=gR)
+emaTol  = input.float(0.3,  &quot;Rule 5 · EMA tolerance %&quot;,             group=gR)
+stopBuf = input.float(0.5,  &quot;Rule 6 · stop past swing %&quot;,           group=gR)
+stopMin = input.float(0.5,  &quot;Rule 6 · stop min %&quot;,                  group=gR)
+stopMax = input.float(2.25, &quot;Rule 6 · stop max %&quot;,                  group=gR)
+minRR   = input.float(1.4,  &quot;Rule 7 · min R&quot;,                       group=gR)
+tpFront = input.float(0.03, &quot;Rule 7 · TP in front of extreme %&quot;,    group=gR)
+brkPct  = input.float(0.05, &quot;Level broken by a close beyond %&quot;,     group=gR)
+rclPct  = input.float(0.15, &quot;Level void if reclaimed by %&quot;,         group=gR)
+zonePct = input.float(0.15, &quot;&#x27;At level&#x27; within %&quot;,                  group=gR)
+roundIn = input.float(0.0,  &quot;Round-number step (0 = auto)&quot;,         group=gR)
+
+pp(x, p) =&gt; x + math.abs(x) * p / 100.0
+fmt(x) =&gt; str.tostring(x, format.mintick)
+
+// ───────── Higher-timeframe data (confirmed bars only)
+f_htf() =&gt;
+    [dp, dm, ad] = ta.dmi(14, 14)
+    [ta.ema(close, 20)[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1], dp[1], dm[1], ad[1]]
+[e20, e50, e200, diP, diM, adx4] = request.security(syminfo.tickerid, &quot;240&quot;, f_htf(), lookahead=barmerge.lookahead_on)
+e200h = request.security(syminfo.tickerid, &quot;60&quot;, ta.ema(close, 200)[1], lookahead=barmerge.lookahead_on)
+[pl1, pl2, pl3, ph1, ph2, ph3] = request.security(syminfo.tickerid, &quot;D&quot;, [low[1], low[2], low[3], high[1], high[2], high[3]], lookahead=barmerge.lookahead_on)
+
+// ───────── Setup finder (short logic; longs are evaluated on negated prices). Runs in the 1h context on closed bars.
+f_setup(hh, ll, cc, at, tt, active, rst) =&gt;
+    float L = na
+    float H = na
+    float tH = na
+    float lvl = na
+    float kind = na
+    float stp = na
+    float tp = na
+    float rr = na
+    float sOk = 0.0
+    float inZ = 0.0
+    float flp = 0.0
+    float imp = 0.0
+    float liF = na
+    float hiS = na
+    if active and not na(at[lookH + 205])
+        int li = 0
+        float lo = ll
+        for i = 1 to lookH - 1
+            if ll[i] &lt; lo
+                lo := ll[i]
+                li := i
+        L := lo
+        liF := li
+        float hs = -1e30
+        float cs = -1e30
+        if li &gt; 0
+            for i = 0 to li - 1
+                hs := math.max(hs, hh[i])
+                cs := math.max(cs, cc[i])
+        hiS := hs
+        float a0 = at[li]
+        cH = array.new_float()
+        cT = array.new_float()
+        pv = array.new_float()
+        pm = array.new_float()
+        float runMax = -1e30
+        float minC = 1e30
+        for j = li + 1 to li + 200
+            minC := math.min(minC, cc[j - 1])
+            // staircase of swing highs (each the highest high between itself and the low)
+            if j &lt;= li + lookH and hh[j] &gt; runMax
+                runMax := hh[j]
+                bool loc = true
+                for k = math.max(j - 2, 0) to j + 2
+                    if hh[k] &gt; hh[j]
+                        loc := false
+                if loc and runMax - L &gt;= impAtr * a0
+                    array.push(cH, runMax)
+                    array.push(cT, tt[j])
+            // 1h pivot lows (n = 3) formed before the low; pm = lowest close between pivot and low
+            if j &gt;= 3
+                bool piv = true
+                for k = j - 3 to j + 3
+                    if k != j and ll[k] &lt; ll[j]
+                        piv := false
+                if piv
+                    array.push(pv, ll[j])
+                    array.push(pm, minC)
+        int nC = array.size(cH)
+        imp := nC &gt; 0 and li &gt;= 3 ? 1.0 : 0.0
+        float tpx = pp(L, tpFront)
+        float bestScore = -1.0
+        float bestAbs = 1e30
+        if nC &gt; 0
+            for c = 0 to math.min(nC, 4) - 1
+                float Hc = array.get(cH, c)
+                float rng = Hc - L
+                float zLo = L + fibLo * rng
+                float zHi = L + fibHi * rng
+                int nP = array.size(pv)
+                int nR = int(math.min(20, math.floor((zHi - zLo) / rst) + 2))
+                for q = 0 to nP + nR - 1
+                    float lv = na
+                    float kd = 1.0
+                    bool ok = false
+                    if q &lt; nP
+                        lv := array.get(pv, q)
+                        ok := lv &gt; L and lv &lt; Hc and array.get(pm, q) &lt; pp(lv, -brkPct) and cs &lt;= pp(lv, rclPct)
+                    else
+                        lv := math.ceil(zLo / rst) * rst + (q - nP) * rst
+                        kd := 2.0
+                        if lv &lt;= zHi and lv &gt; L and lv &lt; Hc and cs &lt;= pp(lv, rclPct)
+                            float mn = 1e30
+                            for j = li to li + 199
+                                if cc[j] &gt; lv and mn &lt; pp(lv, -brkPct)
+                                    ok := true
+                                    break
+                                mn := math.min(mn, cc[j])
+                    if ok
+                        flp := 1.0
+                        bool iz = lv &gt;= zLo and lv &lt;= zHi
+                        float anc = Hc
+                        for c2 = 0 to nC - 1
+                            if array.get(cH, c2) &gt; pp(lv, 0.05)
+                                anc := array.get(cH, c2)
+                                break
+                        float st = pp(anc, stopBuf)
+                        float spc = (st - lv) / math.abs(lv) * 100
+                        bool so = spc &gt;= stopMin and spc &lt;= stopMax and hiS &lt; st
+                        float r_ = (lv - tpx) / (st - lv)
+                        float dist = (lv - cc) / math.abs(lv) * 100
+                        float sc = (iz ? 8 : 0) + (so and r_ &gt;= minRR ? 4 : 0) + (dist &gt; -zonePct ? 2 : 0)
+                        if sc &gt; bestScore or (sc == bestScore and math.abs(dist) &lt; bestAbs)
+                            bestScore := sc
+                            bestAbs := math.abs(dist)
+                            lvl := lv
+                            kind := kd
+                            H := Hc
+                            tH := array.get(cT, c)
+                            stp := st
+                            tp := tpx
+                            rr := r_
+                            sOk := so ? 1.0 : 0.0
+                            inZ := iz ? 1.0 : 0.0
+        if na(H) and nC &gt; 0
+            H := array.get(cH, 0)
+            tH := array.get(cT, 0)
+    [L, H, tH, lvl, kind, stp, tp, rr, sOk, inZ, flp, imp, liF, hiS]
+
+rstep = roundIn &gt; 0 ? roundIn : close &gt;= 20000 ? 500.0 : close &gt;= 1000 ? 25.0 : close &gt;= 50 ? 1.0 : close &gt;= 5 ? 0.1 : 0.01
+act = time &gt;= timenow - 2 * 86400000
+[aL, aH, aTH, aLv, aK, aSt, aTp, aRR, aSo, aIz, aFl, aIm, aLi, aHs] = request.security(syminfo.tickerid, &quot;60&quot;, f_setup(high[1], low[1], close[1], ta.atr(14)[1], time[1], act, rstep), lookahead=barmerge.lookahead_on)
+[bL, bH, bTH, bLv, bK, bSt, bTp, bRR, bSo, bIz, bFl, bIm, bLi, bHs] = request.security(syminfo.tickerid, &quot;60&quot;, f_setup(-low[1], -high[1], -close[1], ta.atr(14)[1], time[1], act, rstep), lookahead=barmerge.lookahead_on)
+
+// ───────── Bias (rule 1) and side
+bear = e20 &lt; e50 and e50 &lt; e200 and diM &gt; diP and adx4 &gt;= adxMin
+bull = e20 &gt; e50 and e50 &gt; e200 and diP &gt; diM and adx4 &gt;= adxMin
+isShort = bear ? true : bull ? false : e20 &lt; e50
+sg = isShort ? 1.0 : -1.0
+L   = isShort ? aL  : -bL
+H   = isShort ? aH  : -bH
+tH  = isShort ? aTH : bTH
+lvl = isShort ? aLv : -bLv
+knd = isShort ? aK  : bK
+stp = isShort ? aSt : -bSt
+tp  = isShort ? aTp : -bTp
+rr  = isShort ? aRR : bRR
+sOk = isShort ? aSo : bSo
+inZ = isShort ? aIz : bIz
+flp = isShort ? aFl : bFl
+imp = isShort ? aIm : bIm
+zA  = L + fibLo * (H - L)
+zB  = L + fibHi * (H - L)
+
+// ───────── Rules
+r1 = bear or bull
+r2 = imp &gt; 0
+r3 = flp &gt; 0 and not na(lvl)
+r4 = inZ &gt; 0 and not na(lvl)
+r5 = not na(lvl) and (isShort ? lvl &lt;= pp(e200h, emaTol) and lvl &lt;= pp(e50, emaTol) : lvl &gt;= pp(e200h, -emaTol) and lvl &gt;= pp(e50, -emaTol))
+r7 = not na(rr) and rr &gt;= minRR and sOk &gt; 0 and (isShort ? high &lt; stp : low &gt; stp)
+etMin = hour(timenow, &quot;America/New_York&quot;) * 60 + minute(timenow, &quot;America/New_York&quot;)
+r9 = etMin &gt;= 660 and etMin &lt; 840 ? 2 : etMin &gt;= 570 and etMin &lt; 960 ? 1 : 0
+distPct = na(lvl) ? na : math.abs(lvl - close) / close * 100
+atLvl = not na(distPct) and distPct &lt;= zonePct
+status = not r1 or not r2 ? &quot;NO&quot; : r1 and r2 and r3 and r4 and r5 and r7 and r9 &gt; 0 ? &quot;READY&quot; : &quot;WAIT&quot;
+rTol = (close &gt;= 20000 ? 500.0 : close &gt;= 1000 ? (close &gt;= 2000 and close &lt; 5000 ? 50.0 : 25.0) : close &gt;= 50 ? 1.0 : 0.1)
+isRound = not na(lvl) and (knd == 2 or math.abs(lvl - math.round(lvl / rTol) * rTol) / lvl * 100 &lt;= 0.15)
+nearD(x) =&gt; not na(x) and not na(lvl) and math.abs(lvl - x) / lvl * 100 &lt;= 0.05
+isPD = nearD(pl1) or nearD(pl2) or nearD(pl3) or nearD(ph1) or nearD(ph2) or nearD(ph3)
+lvTag = isRound ? &quot;round&quot; : isPD ? &quot;PDH/PDL&quot; : &quot;swing&quot;
+
+// ───────── Background (subtle)
+bgcolor(showBg and bear ? color.new(color.red, 93) : showBg and bull ? color.new(color.green, 93) : na, title=&quot;4h trend&quot;)
+
+// ───────── Drawings: current setup only (recreated on the last bar, nothing kept in history)
+var box   zBox = na
+var line  lLv  = na
+var line  lSt  = na
+var line  lTp  = na
+var label tLv  = na
+var label tSt  = na
+var label tTp  = na
+if barstate.islast
+    box.delete(zBox)
+    line.delete(lLv)
+    line.delete(lSt)
+    line.delete(lTp)
+    label.delete(tLv)
+    label.delete(tSt)
+    label.delete(tTp)
+    xR = time + 3 * timeframe.in_seconds() * 1000
+    left = na(tH) ? time - 48 * 3600000 : int(tH)
+    cZ = isShort ? color.red : color.green
+    if showZone and r2 and not na(H)
+        zBox := box.new(left, math.max(zA, zB), time, math.min(zA, zB), xloc=xloc.bar_time, extend=extend.right, border_color=color.new(cZ, 75), bgcolor=color.new(cZ, 90))
+    if showLvl and r3
+        lLv := line.new(left, lvl, time, lvl, xloc=xloc.bar_time, extend=extend.right, color=color.new(color.orange, 0), width=2)
+        tLv := label.new(xR, lvl, fmt(lvl) + &quot; · &quot; + lvTag, xloc=xloc.bar_time, style=label.style_label_left, color=color.new(color.orange, 15), textcolor=color.black, size=size.small)
+    if showSLTP and r3 and not na(stp)
+        lSt := line.new(left, stp, time, stp, xloc=xloc.bar_time, extend=extend.right, color=color.new(color.red, 20), style=line.style_dashed)
+        lTp := line.new(left, tp, time, tp, xloc=xloc.bar_time, extend=extend.right, color=color.new(color.teal, 20), style=line.style_dashed)
+        tSt := label.new(xR, stp, &quot;SL &quot; + fmt(stp) + &quot;  (&quot; + str.tostring(math.abs(stp - lvl) / lvl * 100, &quot;#.##&quot;) + &quot;%)&quot;, xloc=xloc.bar_time, style=label.style_label_left, color=color.new(color.red, 30), textcolor=color.white, size=size.small)
+        tTp := label.new(xR, tp, &quot;TP &quot; + fmt(tp) + &quot;  ·  &quot; + str.tostring(rr, &quot;#.##&quot;) + &quot;R&quot;, xloc=xloc.bar_time, style=label.style_label_left, color=color.new(color.teal, 30), textcolor=color.white, size=size.small)
+
+// ───────── Checklist table
+pos = tblPos == &quot;Top right&quot; ? position.top_right : tblPos == &quot;Bottom right&quot; ? position.bottom_right : tblPos == &quot;Top left&quot; ? position.top_left : position.bottom_left
+var table tb = table.new(pos, 2, 9, bgcolor=color.new(#0d1014, 15), border_width=0, frame_color=color.new(color.gray, 70), frame_width=1)
+cOK = color.new(color.lime, 0)
+cNO = color.new(#ff5c5c, 0)
+cSoft = color.new(color.orange, 0)
+mk(ok) =&gt; ok ? &quot;✓&quot; : &quot;✗&quot;
+cl(ok) =&gt; ok ? cOK : cNO
+row(r, txt, ok) =&gt;
+    table.cell(tb, 0, r, txt, text_color=color.new(color.white, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, r, mk(ok), text_color=cl(ok), text_size=size.small)
+if barstate.islast and showTbl
+    table.cell(tb, 0, 0, &quot;MB &quot; + (r1 ? (isShort ? &quot;▼ SHORT&quot; : &quot;▲ LONG&quot;) : &quot;· no 4h trend&quot;), text_color=r1 ? (isShort ? cNO : cOK) : color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, 0, &quot;&quot;, text_size=size.small)
+    row(1, &quot;1 4h trend&quot;, r1)
+    row(2, &quot;2 Impulse ≥&quot; + str.tostring(impAtr) + &quot; ATR&quot;, r2)
+    row(3, &quot;3 Flipped level&quot;, r3)
+    row(4, &quot;4 Fib .50–.79&quot;, r4)
+    row(5, &quot;5 EMA200 1h / 50 4h&quot;, r5)
+    row(6, &quot;7 Target ≥&quot; + str.tostring(minRR) + &quot;R&quot;, r7)
+    table.cell(tb, 0, 7, &quot;9 Time 11–14 ET&quot;, text_color=color.new(color.white, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, 7, r9 == 2 ? &quot;✓&quot; : r9 == 1 ? &quot;~&quot; : &quot;✗&quot;, text_color=r9 == 2 ? cOK : r9 == 1 ? cSoft : cNO, text_size=size.small)
+    stTxt = timeframe.in_seconds() &gt; 3600 ? &quot;use ≤1h chart&quot; : status + (na(distPct) ? &quot;&quot; : atLvl ? &quot; · at level&quot; : &quot; · &quot; + str.tostring(distPct, &quot;#.##&quot;) + &quot;% away&quot;)
+    stBg = status == &quot;READY&quot; ? color.new(color.lime, 20) : status == &quot;WAIT&quot; ? color.new(color.orange, 35) : color.new(color.gray, 55)
+    table.cell(tb, 0, 8, stTxt, text_color=color.black, bgcolor=stBg, text_size=size.normal, text_halign=text.align_left)
+    table.cell(tb, 1, 8, &quot;&quot;, bgcolor=stBg)
+</pre>
+<a href="/ai-trading-bot-/" id="homelink" style="position:fixed;left:10px;bottom:10px;z-index:99;background:#111;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">⌂ Home</a>
+<script>document.getElementById("cp").onclick=async()=>{const t=document.getElementById("src").textContent;try{await navigator.clipboard.writeText(t);document.getElementById("ok").textContent="copied ✓"}catch(e){const r=document.createRange();r.selectNodeContents(document.getElementById("src"));getSelection().removeAllRanges();getSelection().addRange(r);document.getElementById("ok").textContent="selected — press Ctrl/Cmd+C"}}</script>
+</body></html>

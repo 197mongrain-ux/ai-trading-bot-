@@ -1,0 +1,61 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup Rules Board — Nov 2 template</title>
+<style>
+:root{--bg:#0d1014;--card:#151a21;--line:#252c36;--tx:#e9edf2;--mut:#8b96a5;--g:#2ecc71;--r:#ff5c5c;--y:#f5b942;--b:#5aa9ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:17px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:18px 14px 70px}
+h1{font-size:24px;margin:0 0 4px}.sub{color:var(--mut);font-size:14px;margin-bottom:6px}.win{font-size:15px;margin:0 0 18px;padding:8px 12px;border-radius:8px;background:#1b2028;display:inline-block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;max-width:1500px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 18px 14px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.coin{font-size:26px;font-weight:700}.px{color:var(--mut);font-size:15px}
+.st{font-weight:800;font-size:18px;padding:6px 14px;border-radius:10px;letter-spacing:.5px}
+.READY{background:rgba(46,204,113,.18);color:var(--g);border:1px solid var(--g)}.FORMING{background:rgba(245,185,66,.14);color:var(--y);border:1px solid var(--y)}.WAIT{background:#1e242c;color:var(--mut);border:1px solid #39414c}
+.bias{margin:8px 0 10px;font-size:16px}.bear{color:var(--r);font-weight:700}.bull{color:var(--g);font-weight:700}.none{color:var(--mut);font-weight:700}
+.note{background:#10151b;border-left:3px solid var(--b);padding:9px 11px;border-radius:6px;font-size:15px;margin-bottom:12px}
+.lv{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:0 0 12px}.lv div{background:#10151b;border-radius:8px;padding:8px 10px}.lv .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px}.lv .v{font-size:18px;font-weight:650}
+.tag{display:inline-block;font-size:13px;padding:3px 9px;border-radius:20px;background:#22303f;color:#9fd0ff;margin-left:6px;vertical-align:middle}
+.rules{list-style:none;margin:0;padding:0}.rules li{display:grid;grid-template-columns:28px 1fr;gap:6px;padding:7px 0;border-top:1px solid var(--line)}
+.ic{font-size:18px;font-weight:800;text-align:center}.ok{color:var(--g)}.no{color:var(--r)}.soft{color:var(--y)}
+.rn{font-weight:600;font-size:15px}.rt{color:var(--mut);font-size:13.5px}
+.upd{color:var(--mut);font-size:12.5px;margin-top:10px}
+details{margin-top:22px;max-width:1500px;color:var(--mut);font-size:14px}summary{cursor:pointer;color:var(--tx)}
+</style></head><body>
+<h1>Setup Rules Board <span style="color:var(--mut);font-weight:400;font-size:16px">· Nov 2 template</span></h1>
+<div class="sub" id="sub">loading…</div>
+<div class="win" id="win"></div>
+<div class="grid" id="grid"></div>
+<details><summary>The rules (from today's BTC 78,000 / SP500 7,645 shorts)</summary><ol>
+<li>4h trend clear: EMA20/50/200 stacked, DI aligned, ADX ≥ 20</li><li>1h impulse ≥ 3× ATR within 96h (extreme ≥ 3 bars old)</li>
+<li>Entry at a broken / flipped level (swing, PDH/PDL, round number) that has held</li><li>Level inside the 0.50–0.79 fib of the impulse</li>
+<li>Level on the right side of 1h EMA200 and 4h EMA50 (±0.3%)</li><li>Stop 0.5% past the swing, 0.5–2.25% away; fixed-$ risk (HL ~2% @20x, Propr 0.2–0.5%)</li>
+<li>TP just before the impulse extreme, ≥ 1.4R</li><li>Set and leave</li><li>Prefer 11:00–14:00 ET; nothing new after ~16:00 ET</li><li>Round number = bonus tag only</li></ol>
+READY = rules 1–7 pass and inside 9:30–16:00 ET · FORMING = trend + impulse in place, something else missing · WAIT = no trend or no impulse. Data refreshes every 5 min from public Hyperliquid data. Information only — no orders are placed.</details>
+<a href="/ai-trading-bot-/" id="homelink" style="position:fixed;left:10px;bottom:10px;z-index:99;background:#111;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">⌂ Home</a>
+<script>
+const REPO="197mongrain-ux/ai-trading-bot-",BR="rules-board-data",P="rules-board/data.json";
+const $=id=>document.getElementById(id);
+const esc=s=>(s??"").toString().replace(/[&<>]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[ch]));
+const n=x=>x==null?"–":(+x).toLocaleString("en-US",{maximumFractionDigits:2});
+async function load(){
+  const urls=[`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`];
+  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){render(await r.json());return}}catch(e){}}
+  $("sub").innerHTML="<span class=no>could not load data — retrying</span>";}
+function render(D){
+  const age=Math.round((Date.now()-D.updated_ts)/60000);
+  $("sub").innerHTML=`Updated <b>${esc(D.updated_et)} ET</b> (${age} min ago) · refreshes every 5 min`+(age>15?" · <span class=no>data is stale</span>":"")+(D.errors?.length?` · <span class=no>${esc(D.errors.join("; "))}</span>`:"");
+  const w=D.window||{};$("win").innerHTML=`<span class="${w.code=="pref"?"ok":w.code=="ok"?"soft":"no"}">●</span> Time: ${esc(w.text)}`;
+  $("grid").innerHTML=(D.markets||[]).map(m=>{
+    const bc=m.side=="short"?"bear":m.side=="long"?"bull":"none",s=m.setup;
+    const rules=m.rules.map(r=>`<li><span class="ic ${r.ok?(r.soft?"soft":"ok"):"no"}">${r.ok?(r.soft?"~":"✓"):"✗"}</span><div><div class="rn">${r.n}. ${esc(r.name)}</div><div class="rt">${esc(r.txt)}</div></div></li>`).join("");
+    const lv=s?`<div class="lv">
+      <div><div class="k">Level ${esc(s.kind)}</div><div class="v">${n(s.level)}</div></div>
+      <div><div class="k">Fib zone 0.50–0.79</div><div class="v">${n(s.zone[0])}–${n(s.zone[1])}</div></div>
+      <div><div class="k">Stop</div><div class="v no">${n(s.stop)} <span style="font-size:13px">(${s.stop_pct}%)</span></div></div>
+      <div><div class="k">Target · R</div><div class="v ok">${n(s.tp)} · ${s.rr}R</div></div></div>
+      <div class="rt" style="margin:-4px 0 12px">Price ${s.at_level?"<b class=ok>at the level</b>":s.dist_pct+"% from the level"} · impulse ${n(s.impulse[0])} → ${n(s.impulse[1])}</div>`:"";
+    return `<div class="card"><div class="top"><div><div class="coin">${esc(m.name)}</div><div class="px">${n(m.price)}</div></div><div class="st ${m.status}">${m.status}</div></div>
+     <div class="bias">Bias: <span class="${bc}">${m.side=="short"?"▼ SHORT":m.side=="long"?"▲ LONG":"—"}</span> <span style="color:var(--mut)">(${esc(m.bias)} 4h)</span>${m.level_quality?`<span class="tag" title="${esc(m.level_quality_reason)}">${esc(m.level_quality)}</span>`:""}</div>
+     <div class="note">${esc(m.note)}</div>${lv}<ul class="rules">${rules}</ul><div class="upd">updated ${esc(D.updated_et)} ET</div></div>`}).join("");
+}
+load();setInterval(load,120000);
+</script></body></html>
