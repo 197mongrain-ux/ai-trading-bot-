@@ -1,0 +1,73 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scalp v2 · PAPER live board</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--b:#30363d;--t:#e6edf3;--m:#8b949e;--g:#3fb950;--r:#f85149;--y:#d29922;--a:#58a6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1200px;margin:auto;padding:12px}h1{font-size:20px;margin:4px 0}h2{font-size:16px;margin:22px 0 8px;border-bottom:1px solid var(--b);padding-bottom:4px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;margin:2px 4px 2px 0;background:#21262d;border:1px solid var(--b)}
+.ok{color:var(--g)}.bad{color:var(--r)}.warn{color:var(--y)}.mut{color:var(--m)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px}
+.big{font-size:22px;font-weight:600}table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:5px 6px;border-bottom:1px solid var(--b);text-align:left;vertical-align:top}th{color:var(--m);font-weight:500}
+.scroll{overflow-x:auto}details summary{cursor:pointer;color:var(--a)}details div{white-space:normal;color:var(--m);padding:4px 0}
+select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius:6px;padding:3px}
+.banner{background:#3d2a00;border:1px solid var(--y);border-radius:8px;padding:8px;margin:8px 0}
+</style></head><body><div class="wrap">
+<h1>Scalp v2 · PAPER live board <span class="pill warn">PAPER ONLY · no live orders</span></h1>
+<div id="status" class="mut">loading…</div>
+<div class="banner" id="rules"></div>
+<h2>Books</h2><div class="grid" id="books"></div>
+<h2>Open positions (live uPnL)</h2><div class="scroll" id="open"></div>
+<h2>Armed setups (resting limits / waiting for rejection)</h2><div class="scroll" id="pend"></div>
+<h2>Closed trades <span class="mut" style="font-size:12px">tap a row's “why” for the full trigger</span></h2>
+<div>Book <select id="fb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option></select></div>
+<div class="scroll" id="trades"></div>
+<h2>By session</h2><div class="scroll" id="sess"></div>
+<h2>Near-misses & rejected setups</h2><div id="cats"></div>
+<div>Book <select id="nb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option></select>
+ Type <select id="nc"><option value="">all</option><option>armed-but-lost</option><option>rejected</option></select></div>
+<div class="scroll" id="near"></div>
+<h2>Heist universe (D)</h2><div id="uni" class="mut"></div>
+<p class="mut" style="font-size:12px">Data: public Hyperliquid market data (candles, mids, trades stream). Fills simulated: limits fill only when price trades through; stops taker 4.5bp + 2bp slip; TP maker 1.5bp; time stop taker + 1bp. Page auto-refreshes every 90 s.</p>
+</div><script>
+const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
+let D=null;const $=id=>document.getElementById(id);
+const f=(x,d=2)=>x==null?"–":(+x).toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d});
+const px=x=>x==null?"–":(x>=1000?(+x).toLocaleString(undefined,{maximumFractionDigits:1}):x>=1?(+x).toFixed(4):(+x).toPrecision(5));
+const cl=x=>x==null?"":(x>0?"ok":x<0?"bad":"");const sd=s=>s>0?"<span class=ok>LONG</span>":"<span class=bad>SHORT</span>";
+const esc=s=>(s??"").toString().replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+async function load(){
+  const urls=[`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`];
+  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=await r.json();render();return}}catch(e){}}
+  $("status").innerHTML="<span class=bad>could not load data</span>";}
+function spark(eq){if(!eq.length)return"<div class=mut>no closed trades yet</div>";const v=[150,...eq.map(e=>e.usd)],mn=Math.min(...v),mx=Math.max(...v),w=240,h=50,r=(mx-mn)||1;
+  const pts=v.map((y,i)=>`${(i/(v.length-1||1)*w).toFixed(1)},${(h-(y-mn)/r*h).toFixed(1)}`).join(" ");
+  return `<svg width="100%" viewBox="0 0 ${w} ${h+2}" preserveAspectRatio="none" style="height:50px"><polyline fill="none" stroke="${v[v.length-1]>=150?"#3fb950":"#f85149"}" stroke-width="1.5" points="${pts}"/></svg>`}
+function render(){
+  const hb=D.heartbeat||{},age=hb.ts?(Date.now()-Date.parse(hb.ts))/1000:1e9,upd=(Date.now()-Date.parse(D.updated))/1000;
+  const st=age<240?"<span class=ok>● RUNNING</span>":age<900?"<span class=warn>● LAGGING</span>":"<span class=bad>● NO HEARTBEAT</span>";
+  $("status").innerHTML=`${st} · bot heartbeat ${hb.ts_et||"?"} (cycle ${hb.cycle??"?"}, flow ws: ${esc(hb.ws)}) · board data updated <b>${D.updated_et}</b> (${Math.round(upd/60)} min ago) · running since ${new Date(D.started).toLocaleString()}`
+   +(D.last_eval?` · BTC ${px(D.last_eval.close)} · 1h trend <b>${D.last_eval.trend}</b> · last bar ${D.last_eval.bar} ET`:"")
+   +((hb.errors||[]).length?`<br><span class=warn>recent errors: ${esc(hb.errors.slice(-2).join(" | "))}</span>`:"");
+  const R=D.rules;$("rules").innerHTML=`<b>Rules (each book):</b> $${R.book_usd} book · risk $${R.risk_usd} per trade (0.5%) · TP 1R · time stop ${R.tstop} min · daily stop ${R.day_stop} · weekly kill ${R.week_kill} · <b>max ${R.max_trades_day} trades/day per book (raised from 2 for data gathering)</b> · fees maker ${R.maker_bp}bp / taker ${R.taker_bp}bp, stop slip ${R.stop_slip_bp}bp, market slip ${R.mkt_slip_bp}bp. ${R.note}`;
+  $("books").innerHTML=D.books.map(b=>`<div class=card><b>${esc(b.name)}</b><div class="big ${cl(b.net)}">$${f(b.net)} <span style="font-size:14px">(${f(b.totR)}R)</span></div>
+   <div>${b.n} trades · win ${b.win??"–"}% · avg ${b.avgR==null?"–":f(b.avgR)}R · open ${b.open.length} · armed ${b.pending.length}</div>
+   <div class=mut>today ${b.today.taken}/${R.max_trades_day} trades, ${b.today.losses} losses, ${f(b.today.R)}R · week ${f(b.week_R)}R ${b.today.gate&&!b.today.gate.startsWith("max")?`· <span class=warn>${esc(b.today.gate)}</span>`:""}</div>
+   ${spark(b.equity)}<details><summary>what this book does</summary><div>${esc(b.desc)}</div></details></div>`).join("");
+  const op=D.books.flatMap(b=>b.open.map(o=>({...o,book:b.key})));
+  $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Fill</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th><th>Held</th><th>MFE/MAE</th></tr>`+op.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.entry_et}<br><span class=mut>${o.session}</span></td><td>${px(o.fill)}</td><td>${px(o.stop)}</td><td>${px(o.tp)}</td><td>${px(o.mark)}</td><td class=${cl(o.uR)}>${f(o.uR)}R<br>$${f(o.uusd)}</td><td>${o.held_min}m</td><td>${f(o.mfe)}/${f(o.mae)}R</td></tr><tr><td colspan=11><details><summary>why</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>flat</div>";
+  const pd=D.books.flatMap(b=>b.pending.map(o=>({...o,book:b.key})));
+  $("pend").innerHTML=pd.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Type</th><th>Level</th><th>Stop</th><th>Valid until (ET)</th><th>Closest</th></tr>`+pd.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.status=="go"?"rejection+absorption → enter next bar":o.trig=="limit"?"resting limit":"watching for rejection+absorption"}</td><td>${px(o.px)}</td><td>${px(o.stop)}</td><td>${new Date(o.exp_ts).toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})}</td><td>${o.closest==null?"–":f(o.closest,3)+"%"}</td></tr><tr><td colspan=8><details><summary>trigger</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none</div>";
+  const fb=$("fb").value,tr=D.trades.filter(t=>!fb||t.book==fb);
+  $("trades").innerHTML=tr.length?`<table><tr><th>ID</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Session</th><th>Fill → Exit</th><th>Exit</th><th>R</th><th>$</th><th>MFE/MAE</th><th>Dur</th></tr>`+tr.map(t=>`<tr><td>${t.id}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${t.entry_et}</td><td>${t.session}</td><td>${px(t.fill)} → ${px(t.exit)}<br><span class=mut>stop ${px(t.stop)} tp ${px(t.tp)}</span></td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${f(t.R)}</td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.dur_min}m</td></tr><tr><td colspan=11><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
+  const ss=["Asia 20-03","London 03-09:30","US open 9:30-11","US midday 11-16","After-hours 16-20"];
+  $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+["A","B","C","D"].map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
+  $("cats").innerHTML=Object.entries(D.near_cats).map(([b,c])=>`<div><b>${b}</b>: `+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class=pill>${esc(k)} · ${v}</span>`).join("")+"</div>").join("");
+  const nb=$("nb").value,nc=$("nc").value,nm=D.near.filter(e=>(!nb||e.book==nb)&&(!nc||(nc=="rejected"?e.cat=="rejected":e.cat!="rejected"))).slice(0,250);
+  $("near").innerHTML=nm.length?`<table><tr><th>Time (ET)</th><th>Book</th><th>Coin</th><th>Type</th><th>Reason</th></tr>`+nm.map(e=>`<tr><td>${e.t_et}</td><td>${e.book}</td><td>${e.coin}</td><td>${esc(e.cat)}</td><td>${esc(e.reason)}<details><summary>detail</summary><div>${esc(e.detail)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none yet</div>";
+  $("uni").innerHTML=`Trading now: <b>${(D.heist||[]).join(", ")||"–"}</b> · ranked (mean 1h range % last 24h, top-15 by volume): `+(D.universe||[]).map(u=>`${u.coin} ${u.range_pct}%`).join(" · ");
+}
+$("fb").onchange=render;$("nb").onchange=render;$("nc").onchange=render;load();setInterval(load,90000);
+</script></body></html>
