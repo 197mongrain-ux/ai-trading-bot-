@@ -1,0 +1,117 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Propr $25k paper bot (PAPER)</title><style>
+body{margin:0;background:#050505}
+/* ==== simple view (Nov 2) ==== */
+.sv{max-width:900px;margin:0 auto;padding:18px 16px 40px;font-family:-apple-system,"Segoe UI",Roboto,Inter,system-ui,sans-serif;color:#e8e8e8;font-size:17px;line-height:1.45}
+.sv h1{font-size:24px;margin:4px 0 2px;font-weight:700}
+.sv .upd{color:#8b8b8b;font-size:14px;margin-bottom:18px}
+.sv .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;border:1px solid #7a5a1a;color:#e6c07b;background:#140e06;vertical-align:middle;margin-left:6px}
+.sv .g{color:#22c55e}.sv .r{color:#ff5a5f}.sv .m{color:#8b8b8b}
+.sv .total{border-radius:14px;padding:18px 20px;margin:0 0 26px;border:1px solid #262626;background:#0e0e0e}
+.sv .total.win{background:linear-gradient(180deg,#05200e,#0b0b0b);border-color:#14532d}.sv .total.loss{background:linear-gradient(180deg,#240a0c,#0b0b0b);border-color:#5c1a1f}
+.sv .total .cap{font-size:14px;color:#a3a3a3;margin-bottom:4px}
+.sv .total .big2{font-size:34px;font-weight:800;line-height:1.15}
+.sv .total .sub2{font-size:16px;color:#cfcfcf;margin-top:4px}
+.sv h2{font-size:19px;margin:30px 0 12px;font-weight:700}
+.sv .fams{display:grid;grid-template-columns:1fr;gap:16px}
+@media(min-width:820px){.sv .fams{grid-template-columns:1fr 1fr}}
+.sv .fam{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:16px 16px 10px}
+.sv .fam.best{border-color:#22c55e;box-shadow:0 0 0 1px #14532d inset}
+.sv .fam h3{margin:0;font-size:19px;font-weight:700}
+.sv .fam .what{color:#9a9a9a;font-size:14px;margin:4px 0 10px}
+.sv .fam .sum{font-size:16px;margin:0 0 10px}
+.sv .bestb{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:#05200e;color:#22c55e;border:1px solid #14532d;margin-left:6px;vertical-align:middle}
+.sv table{width:100%;border-collapse:collapse;font-size:16px}
+.sv th{white-space:nowrap;background:none;font-size:12px;color:#8b8b8b;font-weight:600;text-transform:uppercase;letter-spacing:.05em;text-align:right;padding:6px 4px;border-bottom:1px solid #262626}
+.sv th:first-child,.sv td:first-child{text-align:left}
+.sv td{white-space:normal;padding:9px 4px;border-bottom:1px solid #1a1a1a;text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
+.sv tr:last-child td{border-bottom:0}
+.sv td .vs{display:block;font-size:12px;color:#7a7a7a;font-weight:400;line-height:1.3;margin-top:2px}
+.sv tr.copy td{color:#bdbdbd}.sv tr.sep td{padding:10px 4px 2px;font-size:12px;color:#7a7a7a;text-transform:uppercase;letter-spacing:.05em;text-align:left;border-bottom:0}
+.sv tr.best1 td:first-child b::after{content:" ★";color:#22c55e}
+.sv tr.zero td{color:#5c5c5c}
+.sv .box{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:10px 16px}
+.sv .fine{color:#8b8b8b;font-size:14px;margin-top:10px}
+.sv details.more{margin-top:34px;border:1px solid #262626;border-radius:14px;background:#0a0a0a}
+.sv details.more>summary{cursor:pointer;padding:16px 18px;font-size:17px;font-weight:600;color:#6ea8fe;list-style:none}
+.sv details.more>summary::-webkit-details-marker{display:none}
+.sv details.more>summary::before{content:"▸ ";}.sv details.more[open]>summary::before{content:"▾ ";}
+.sv .opos{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:14px 16px;margin:0 0 12px}
+.sv .opos .h{font-size:18px;font-weight:700}.sv .opos .l{font-size:15px;color:#bdbdbd;margin-top:4px}
+.sv .none{color:#8b8b8b;font-size:16px;padding:6px 0}
+.sv a{color:#6ea8fe}
+.sv .grid4{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;margin-top:12px}
+@media(min-width:700px){.sv .grid4{grid-template-columns:repeat(4,1fr)}}
+.sv .k{font-size:13px;color:#9a9a9a}.sv .v{font-size:22px;font-weight:700}
+.sv .bar{height:8px;background:#1d1d1d;border-radius:6px;overflow:hidden;margin-top:6px}.sv .bar i{display:block;height:100%;background:#22c55e}
+.sv .st{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:999px;margin-left:8px;vertical-align:middle;border:1px solid #333}
+.sv .st.READY,.sv .st.ORDER{background:#05200e;color:#22c55e;border-color:#14532d}.sv .st.IN{background:#0b1730;color:#6ea8fe;border-color:#1e3a8a}
+.sv .st.WAIT,.sv .st.BLOCKED{background:#1a1406;color:#e6c07b;border-color:#7a5a1a}.sv .st.NO{background:#1a0a0b;color:#ff8a8f;border-color:#5c1a1f}
+.sv ul.rl{list-style:none;padding:0;margin:8px 0 4px}.sv ul.rl li{padding:4px 0;font-size:15px;border-bottom:1px solid #161616}
+.sv ul.rl li .t{color:#8b8b8b;font-size:13px;display:block}
+.sv pre{white-space:pre-wrap;font-size:12px;color:#a3a3a3}
+.sv .warn{border:1px solid #5c1a1f;background:#1a0a0b;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#ff8a8f}
+</style></head><body><div class="sv">
+<h1>Propr $25k paper bot <span class="tag">PAPER ONLY</span></h1>
+<div class="upd" id="upd">loading…</div>
+<div id="app"></div>
+</div>
+<script>
+const REPO="197mongrain-ux/ai-trading-bot-",BR="propr-paper-data",P="propr-paper/data.json";
+const $=s=>document.getElementById(s);
+const usd=(x,s)=>x==null?"—":(s&&x>0?"+":"")+(x<0?"−$":"$")+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const num=x=>x==null?"—":Number(x).toLocaleString();
+const cls=x=>x>0?"g":x<0?"r":"m";
+async function load(){
+  let d=null;
+  try{const r=await fetch(`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,{headers:{Accept:"application/vnd.github.raw"}});if(r.ok)d=await r.json();}catch(e){}
+  if(!d){try{const r=await fetch(`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`);if(r.ok)d=await r.json();}catch(e){}}
+  if(!d){$("upd").textContent="could not load data - retrying";return;}
+  render(d);
+}
+function rules(m){return `<ul class="rl">${m.rules.map(x=>`<li>${x.ok?(x.soft?'<span class="g">✓</span>':'<span class="g">✓</span>'):'<span class="r">✗</span>'} <b>${x.n}.</b> ${x.name}<span class="t">${x.txt||""}</span></li>`).join("")}</ul>`}
+function tradeRow(t){return `<tr><td><b>${t.market} ${t.side.toUpperCase()}</b><span class="vs">${t.entry_et.slice(5)} → ${t.exit_et.slice(11)} · ${t.how}</span></td><td>${num(t.entry)} → ${num(t.exit)}</td><td class="${cls(t.net_usd)}">${usd(t.net_usd,1)}<span class="vs">${t.R>0?"+":""}${t.R}R</span></td></tr>`}
+function render(d){
+  const a=d.account;
+  $("upd").innerHTML=`Simulated account, automated entries on BTC + SPX with your Nov 2 rules. Updated ${d.updated_et} ET · checklist ${d.last_eval_et||"—"} ET`;
+  let h="";
+  if(a.dead)h+=`<div class="warn"><b>Simulated breach</b> - ${a.dead.why} (${a.dead.at_et} ET). The bot stopped trading.</div>`;
+  const prog=Math.min(100,Math.max(0,a.target_progress_pct));
+  h+=`<div class="total ${a.total_pnl>0?"win":a.total_pnl<0?"loss":""}"><div class="cap">Balance · ${a.phase_name}</div>
+  <div class="big2">${usd(a.balance)}</div><div class="sub2">Equity ${usd(a.equity)} · overall <span class="${cls(a.total_pnl)}">${usd(a.total_pnl,1)}</span></div>
+  <div class="grid4">
+   <div><div class="k">Today's P&amp;L</div><div class="v ${cls(a.today_pnl)}">${usd(a.today_pnl,1)}</div></div>
+   <div><div class="k">Daily loss room left</div><div class="v">${usd(a.daily_room)}</div><div class="k">floor ${usd(a.daily_floor)}</div></div>
+   <div><div class="k">Max drawdown room</div><div class="v">${usd(a.dd_room)}</div><div class="k">floor ${usd(a.dd_floor)}</div></div>
+   <div><div class="k">To target</div><div class="v">${a.target_equity?usd(a.to_target):"done"}</div><div class="k">${prog}% of the way to ${usd(a.target_equity)}</div></div>
+  </div><div class="bar"><i style="width:${prog}%"></i></div></div>`;
+  h+=`<h2>Markets</h2><div class="fams">`;
+  for(const m of d.markets){
+    const st=m.status.split(" ")[0];
+    let body="";
+    if(m.position){const p=m.position;body=`<div class="opos"><div class="h">In a ${p.side} · <span class="${cls(p.upnl)}">${usd(p.upnl,1)}</span></div><div class="l">entry ${num(p.entry)} · stop ${num(p.stop)} · TP ${num(p.tp)} · size ${p.size} · risk ${usd(p.risk_usd)}<br>since ${p.entry_et} ET</div></div>`}
+    else if(m.order){const o=m.order;body=`<div class="opos"><div class="h">Limit ${o.side} resting at ${num(o.limit)}</div><div class="l">stop ${num(o.stop)} · TP ${num(o.tp)} (${o.rr}R) · size ${o.size} · risk ${usd(o.risk_usd)}<br>placed ${o.placed_et} ET · cancelled at 10:55 PM ET if not filled</div></div>`}
+    else body=`<div class="none">No position, no order.</div>`;
+    const s=m.setup;
+    h+=`<div class="fam"><h3>${m.name} <span class="st ${st}">${m.status}</span></h3>
+     <div class="what">price ${num(m.price)} · ${m.side?m.side+" side":""}${s?` · level ${num(s.level)} (${s.dist_pct}% away)`:""}</div>${body}
+     <div class="sum">${m.rules.filter(x=>x.ok).length}/${m.rules.length} rules pass${m.rules.filter(x=>!x.ok).length?": waiting on "+m.rules.filter(x=>!x.ok).map(x=>x.n).join(", "):""}</div></div>`;
+  }
+  h+=`</div><h2>Today's trades</h2>`;
+  h+=d.today_trades.length?`<div class="box"><table><tr><th>Trade</th><th>Price</th><th>P&amp;L</th></tr>${d.today_trades.slice().reverse().map(tradeRow).join("")}</table></div>`:`<div class="none">No trades yet today (Propr day resets ${a.day_resets_et} ET).</div>`;
+  // details
+  let x=`<details class="more"><summary>Show details</summary><div style="padding:0 18px 18px">`;
+  for(const m of d.markets){x+=`<h2>${m.name} checklist</h2>${rules(m)}`;if(m.order)x+=`<div class="fine">${m.order.why}</div>`;if(m.position)x+=`<div class="fine">${m.position.why}</div>`}
+  x+=`<h2>Account limits</h2><div class="box"><table>
+   <tr><td>Start-of-day balance (00:00 UTC)</td><td>${usd(a.sod_balance)}</td></tr><tr><td>Daily loss floor (−5%)</td><td>${usd(a.daily_floor)}</td></tr>
+   <tr><td>Lowest equity today</td><td>${usd(a.worst_today)}</td></tr><tr><td>High-water mark</td><td>${usd(a.hwm)}</td></tr><tr><td>Max drawdown floor ($2,000 trailing)</td><td>${usd(a.dd_floor)}</td></tr>
+   <tr><td>Equity if every stop hit now</td><td>${usd(a.worst_case_if_all_stops)}</td></tr></table></div>`;
+  x+=`<h2>All trades</h2>`+(d.trades.length?`<div class="box"><table><tr><th>Trade</th><th>Price</th><th>P&amp;L</th></tr>${d.trades.map(tradeRow).join("")}</table></div>`:`<div class="none">None yet.</div>`);
+  x+=`<h2>Skipped setups</h2>`+(d.skipped.length?`<div class="box"><table>${d.skipped.slice(0,25).map(s=>`<tr><td><b>${s.coin.replace("xyz:","")} ${s.side} @ ${num(s.level)}</b><span class="vs">${s.et} ET · ${s.status}</span></td><td style="text-align:left;font-size:14px">${s.reason}</td></tr>`).join("")}</table></div>`:`<div class="none">None.</div>`);
+  if(d.backtest){const b=d.backtest;x+=`<h2>Backtest <span class="tag">BACKTEST - not live</span></h2><div class="fine">${b.days} days, ${b.from_et} → ${b.to_et} ET, ${b.data}. Fills/exits on 15m bars; stop assumed first if stop and TP share a bar.</div><div class="box"><table><tr><th>Variant</th><th>Trades</th><th>Win%</th><th>R</th><th>$</th><th>Max DD</th></tr>${Object.entries(b.variants).map(([k,v])=>`<tr><td>${k}</td><td>${v.trades}</td><td>${v.win_rate??"—"}</td><td>${v.R}</td><td class="${cls(v.net_usd)}">${usd(v.net_usd,1)}</td><td>${usd(v.max_dd_usd)}</td></tr>`).join("")}</table></div>`}
+  x+=`<h2>How the bot trades</h2><div class="fine">Rules 1–7 + 9 are your Nov 2 template checklist (same code as the rules board). Rule 8: risk ${d.cfg.risk_pct}% of balance incl. fees, ≤10x, and a stop-out may not touch the daily or drawdown floor. Rule 10: one position per market, nothing overnight. When all pass, a resting limit sits at the level with the stop and TP attached. Exits: stop, TP, or flat at 10:55 PM ET. Breakeven: ${d.cfg.be}. Fees: BTC 0.015%/0.045%, SPX 0.003%/0.009% (maker/taker); stop slippage 2bp. Simulated only - no real orders.</div>`;
+  x+=`<h2>Recent log</h2><pre>${d.journal.slice(0,30).map(j=>`${j.et} ${j.ev} ${j.coin||""} ${j.reason||j.how||""}`).join("\n")}</pre></div></details>`;
+  $("app").innerHTML=h+x;
+}
+load();setInterval(load,60000);
+</script></body></html>
