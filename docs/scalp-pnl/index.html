@@ -91,9 +91,11 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
   <div class="card"><div class="card-h"><h2>Per book</h2><span class="muted" style="font-size:11px">sorted by total R · max DD = deepest drop from the running peak (closed trades)</span></div>
     <div class="card-b tbl" id="books"></div></div>
   <div class="card"><div class="card-h"><h2>Groups</h2></div><div class="card-b tbl" id="groups"></div></div>
+  <div class="card"><div class="card-h"><h2>Session test · regular hours (RTH) vs after hours (AH)</h2><span class="muted" style="font-size:11px">RTH = weekdays 9:30–16:00 ET by entry time · new Nov 2 21:30 ET</span></div><div class="card-b tbl" id="sessbk"></div></div>
+  <div class="card"><div class="card-h"><h2>Per book · RTH vs AH split</h2><span class="muted" style="font-size:11px">original books, by entry time ET</span></div><div class="card-b tbl" id="sesssplit"></div></div>
   <div id="perfBot"></div>
   <div class="card"><div class="card-h"><h2>Per day</h2></div><div class="card-b tbl" id="days"></div></div>
-  <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals)</h2></div><div class="card-b tbl" id="open"></div></div>
+  <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals · incl. session test books)</h2></div><div class="card-b tbl" id="open"></div></div>
   <div class="card"><div class="card-h"><h2>All closed trades</h2></div><div class="card-b tbl" id="all"></div></div>
   <div class="footer" id="foot"></div>
 </div>
@@ -103,6 +105,9 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
 <script>
 const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
 const ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"];
+const SORDER=["A-RTH","B-RTH","C-RTH","A2-RTH","B2-RTH","C2-RTH","A3-RTH","B3-RTH","C3-RTH","D-AH","D2-AH","D3-AH"];
+const isRTH=et=>{if(!et)return false;const d=new Date(et.slice(0,10)+"T00:00:00Z").getUTCDay(),m=+et.slice(11,13)*60+ +et.slice(14,16);return d>=1&&d<=5&&m>=570&&m<960};
+let TS=[];
 const FLOOR_TS="2026-11-02 15:22";  // NETR_MIN lowered 1.2R -> 0.9R (ET)
 let D=null,T=[],RISK=0.75,BOOK=150,MON=null,UNIT="R";
 const $=id=>document.getElementById(id);
@@ -127,14 +132,15 @@ function trRow(t,showDay){return `<tr><td class=mono>${showDay?esc(t.exit_et):es
 const TH=d=>`<table><tr><th>${d?"Exit (ET)":"Exit"}</th><th>Book</th><th>Coin</th><th>Side</th><th class=num>Fill</th><th class=num>Exit</th><th>How</th><th class=num>Held</th><th class=num>Gross R</th><th class=num>Fees R</th><th class=num>Net R</th><th class=num>Net $</th><th></th><th>Why</th></tr>`;
 function render(){
   RISK=D.rules?.risk_usd??0.75;BOOK=D.rules?.book_usd??150;
-  T=(D.trades||[]).slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1);
+  const ALLT=(D.trades||[]).slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1);
+  T=ALLT.filter(t=>ORDER.includes(t.book)); TS=ALLT.filter(t=>!ORDER.includes(t.book));
   const S=stats(T),inP=S.R>0;
   const st=(D.started||"").replace("T"," ").slice(0,16);
   const startET=st?new Date(D.started).toLocaleString("en-CA",{timeZone:"America/New_York",hour12:false}).replace(",","").slice(0,16):"–";
   $("sub").textContent=`data ${D.updated_et||""} · running since ${startET} ET · $${RISK.toFixed(2)} risk per trade = 1R · ${ORDER.length} books × $${BOOK}`;
   $("hero").className="hero "+(inP?"win":"loss");
   $("hero").innerHTML=`<div class="big ${inP?"pos":"neg"}">${S.n?(inP?"YES — in profit overall":"NO — not in profit overall"):"No closed trades yet"}</div>
-   <div class="s">all books combined, after fees: <b class=${c(S.R)}>${f(S.R)}R</b> · <b class=${c(S.U)}>${fu(S.U)}</b> over ${S.n} trades (${S.w}W / ${S.l}L)</div>`;
+   <div class="s">all 12 original books combined (session test copies excluded — they repeat their parents' trades), after fees: <b class=${c(S.R)}>${f(S.R)}R</b> · <b class=${c(S.U)}>${fu(S.U)}</b> over ${S.n} trades (${S.w}W / ${S.l}L)</div>`;
   const now=new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});
   const td=stats(T.filter(t=>t.exit_et.slice(0,10)==now));
   const bs=ORDER.map(k=>({k,s:stats(T.filter(t=>t.book==k))})).filter(x=>x.s.n);
@@ -165,9 +171,23 @@ function render(){
    `<tr><td></td><td><b>ALL</b></td><td></td><td class=num><b>${S.n}</b></td><td class=num>${S.w} / ${S.l}</td><td class=num>${S.win==null?"–":S.win.toFixed(0)+"%"}</td><td class="num ${c(S.R)}"><b>${f(S.R)}R</b></td><td class="num ${c(S.U)}"><b>${fu(S.U)}</b></td><td class="num ${c(S.avg)}">${f(S.avg)}</td><td class="num neg">${S.dd.toFixed(2)}R</td><td class=num>−${S.fr.toFixed(2)}</td><td></td></tr></table>`;
   const G=[["Series 1 · A–D (original)",t=>!/[23]$/.test(t.book)],["Series 2 · A2–D2 (no trend filter, 60m)",t=>/2$/.test(t.book)],["Series 3 · A3–D3 (confirmed)",t=>/3$/.test(t.book)],
    ["Heist exits",isHeist],["Normal exits (1R TP / timer)",t=>!isHeist(t)],["Volatile-coin books D, D2, D3",t=>/^D/.test(t.book)],["Wide books A–C, A2–C2, A3–C3",t=>!/^D/.test(t.book)],
+   ["Entries in regular hours (wkdy 9:30–16:00 ET)",t=>isRTH(t.entry_et)],["Entries after hours / weekend",t=>!isRTH(t.entry_et)],
    [`Entries before floor change (< 15:22 ET Nov 2)`,t=>t.entry_et<FLOOR_TS],[`Entries after floor change (0.9R)`,t=>t.entry_et>=FLOOR_TS]];
   $("groups").innerHTML=`<table><tr><th>Group</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Win %</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Avg R</th><th class=num>Max DD</th></tr>`+
    G.map(([n,fn])=>{const s=stats(T.filter(fn));return `<tr><td>${n}</td><td class=num>${s.n}</td><td class=num>${s.w} / ${s.l}</td><td class=num>${s.win==null?"–":s.win.toFixed(0)+"%"}</td><td class="num ${c(s.R)}">${f(s.R)}R</td><td class="num ${c(s.U)}">${fu(s.U)}</td><td class="num ${c(s.avg)}">${f(s.avg)}</td><td class="num ${s.dd<0?"neg":""}">${s.dd.toFixed(2)}R</td></tr>`}).join("")+"</table>";
+  const sr=s=>`<td class=num>${s.n}</td><td class=num>${s.n?s.win.toFixed(0)+"%":"–"}</td><td class="num ${c(s.R)}">${s.n?f(s.R)+"R":"–"}</td><td class="num ${c(s.avg)}">${f(s.avg)}</td>`;
+  const SH="<th class=num>Trades</th><th class=num>Win %</th><th class=num>Net R</th><th class=num>Avg R</th>";
+  const sp=D.session_pairs||SORDER.map(k=>({book:k,parent:k.split("-")[0],window:k.split("-")[1],btc_only:k.endsWith("RTH")}));
+  $("sessbk").innerHTML=`<div class=muted style="font-size:12px;margin-bottom:6px"><b>-RTH</b> books = copies of A–C, A2–C2, A3–C3 that trade <b>BTC only</b> and only arm/enter on weekdays 9:30–16:00 ET. <b>-AH</b> books = copies of D, D2, D3 (same volatile coins) that only arm/enter outside that window. Same rules, $${RISK.toFixed(2)} risk, daily stop and fees; parents unchanged. “Parent in window” is the hindsight benchmark from the parent's own trades (BTC only for -RTH). These books are <b>not</b> in the totals above.</div>
+   <table><tr><th rowspan=2>Test book</th><th colspan=4>Test book live</th><th colspan=4>Parent, in this window</th><th colspan=4>Parent, outside it</th><th class=num rowspan=2>Open</th></tr><tr>${SH.repeat(3)}</tr>`+
+   sp.map(p=>{const pt=T.filter(t=>t.book==p.parent&&(!p.btc_only||t.coin=="BTC")),inW=pt.filter(t=>p.window=="RTH"?isRTH(t.entry_et):!isRTH(t.entry_et)),outW=pt.filter(t=>!inW.includes(t));
+     const b=(D.books||[]).find(x=>x.key==p.book)||{};
+     return `<tr><td><b>${p.book}</b> <span class=dim style="font-size:11px">${p.window=="RTH"?"BTC · RTH":"AH"} · parent ${p.parent}</span></td>${sr(stats(TS.filter(t=>t.book==p.book)))}${sr(stats(inW))}${sr(stats(outW))}<td class=num>${(b.open||[]).length}</td></tr>`}).join("")+
+   `<tr><td><b>All -RTH</b></td>${sr(stats(TS.filter(t=>/-RTH$/.test(t.book))))}<td colspan=9></td></tr><tr><td><b>All -AH</b></td>${sr(stats(TS.filter(t=>/-AH$/.test(t.book))))}<td colspan=9></td></tr></table>`+
+   (TS.length?`<details><summary class=muted style="cursor:pointer;margin-top:6px">Session-book closed trades (${TS.length})</summary>${TH(1)+TS.slice().reverse().map(t=>trRow(t,1)).join("")}</table></details>`:`<div class=dim style="margin-top:6px">No closed trades in the session test books yet.</div>`);
+  $("sesssplit").innerHTML=`<table><tr><th rowspan=2>Book</th><th colspan=4>RTH · all coins</th><th colspan=4>AH · all coins</th><th colspan=4>RTH · BTC</th><th colspan=4>AH · BTC</th></tr><tr>${SH.repeat(4)}</tr>`+
+   ORDER.map(k=>{const bt=T.filter(t=>t.book==k),r=bt.filter(t=>isRTH(t.entry_et)),a=bt.filter(t=>!isRTH(t.entry_et));return `<tr><td><b>${k}</b></td>${sr(stats(r))}${sr(stats(a))}${sr(stats(r.filter(t=>t.coin=="BTC")))}${sr(stats(a.filter(t=>t.coin=="BTC")))}</tr>`}).join("")+
+   `<tr><td><b>ALL</b></td>${sr(stats(T.filter(t=>isRTH(t.entry_et))))}${sr(stats(T.filter(t=>!isRTH(t.entry_et))))}${sr(stats(T.filter(t=>isRTH(t.entry_et)&&t.coin=="BTC")))}${sr(stats(T.filter(t=>!isRTH(t.entry_et)&&t.coin=="BTC")))}</tr></table>`;
   const days=[...new Set(T.map(t=>t.exit_et.slice(0,10)))].sort().reverse();
   $("days").innerHTML=`<table><tr><th>Day (ET)</th><th class=num>Trades</th><th class=num>W / L</th><th class=num>Net R</th><th class=num>Net $</th><th class=num>Cumulative R</th></tr>`+
    days.map(d=>{const s=stats(T.filter(t=>t.exit_et.slice(0,10)==d)),cu=stats(T.filter(t=>t.exit_et.slice(0,10)<=d));return `<tr style="cursor:pointer" onclick="openD('${d}')"><td class=mono>${d}</td><td class=num>${s.n}</td><td class=num>${s.w} / ${s.l}</td><td class="num ${c(s.R)}"><b>${f(s.R)}R</b></td><td class="num ${c(s.U)}">${fu(s.U)}</td><td class="num ${c(cu.R)}">${f(cu.R)}R</td></tr>`}).join("")+"</table>";
