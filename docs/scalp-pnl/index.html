@@ -105,6 +105,22 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
 .sv .opos .h{font-size:18px;font-weight:700}.sv .opos .l{font-size:15px;color:#bdbdbd;margin-top:4px}
 .sv .none{color:#8b8b8b;font-size:16px;padding:6px 0}
 .sv a{color:#6ea8fe}
+.sv details.trlist{margin-top:16px}
+.sv details.trlist table{width:100%;border-collapse:collapse;font-size:15px}
+.sv details.trlist th{text-align:left;font-size:12px;color:#8b8b8b;font-weight:600;padding:6px 8px;text-transform:uppercase}
+.sv details.trlist td{padding:9px 8px;border-top:1px solid #1f1f1f}
+.sv details.trlist tr[data-id]{cursor:pointer}.sv details.trlist tr[data-id]:hover{background:#151515}
+.sv details.trlist td.go{color:#8b8b8b;text-align:right;font-size:20px}
+.sv .trmore{margin:10px 8px;background:#1a1a1a;color:#e8e8e8;border:1px solid #333;border-radius:8px;padding:6px 12px;font-size:14px;cursor:pointer}
+.trmodal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 10px}
+.trbox{position:relative;background:#0e0e0e;border:1px solid #333;border-radius:14px;max-width:720px;width:100%;padding:16px 16px 18px;color:#e8e8e8;font-family:-apple-system,"Segoe UI",Roboto,Inter,system-ui,sans-serif;font-size:15px;line-height:1.45}
+.trbox h3{margin:0 30px 10px 0;font-size:19px}.trbox .g{color:#22c55e}.trbox .r{color:#ff5a5f}.trbox .m{color:#8b8b8b}
+.trx{position:absolute;top:10px;right:12px;background:none;border:0;color:#aaa;font-size:20px;cursor:pointer}
+.trbox .tchart{width:100%;height:auto;display:block;border-radius:8px;border:1px solid #222}
+.trlegend{font-size:12px;color:#8b8b8b;margin:6px 0 10px}
+.trj{border-collapse:collapse;width:100%}.trj td{padding:5px 6px;border-top:1px solid #1f1f1f;vertical-align:top}.trj td:first-child{color:#8b8b8b;width:120px}
+.trnote{margin-top:12px;background:#111827;border:1px solid #1e3a5f;border-radius:10px;padding:10px 12px}
+.trraw{margin-top:10px;font-size:12px;color:#8b8b8b}.trraw summary{cursor:pointer}.trraw div{margin-top:6px;word-break:break-word}
 
 .sv details.more .topbar{position:static}
 </style>
@@ -386,9 +402,102 @@ SV.renderResults=function(D,el){
   ${K.map(k=>row(k+" · "+SV.BOOK2[k].name,T.filter(t=>t.book==k))).join("")}${row("D + A2",T)}</table></div>
   <div class=fine>Split by entry time (ET).</div>`;
 };
+/* ==== trade list + click -> chart + bot journal (Nov 3, Chris) — display only ==== */
+SV.CH=null;SV.CHP=null;SV.trOpen=false;SV.trAll=false;
+SV.loadCharts=function(force){if(SV.CHP&&!force)return SV.CHP;
+ const R="197mongrain-ux/ai-trading-bot-",B="scalp-paper-data",P="scalp-paper/charts.json";
+ const urls=[`https://api.github.com/repos/${R}/contents/${P}?ref=${B}&t=${Date.now()}`,`https://raw.githubusercontent.com/${R}/${B}/${P}?t=${Date.now()}`];
+ SV.CHP=(async()=>{for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){SV.CH=(await r.json()).trades||{};return SV.CH}}catch(e){}}SV.CH=SV.CH||{};return SV.CH})();
+ return SV.CHP};
+SV.etToMs=function(et){/* "YYYY-MM-DD HH:MM" in New York time -> epoch ms */
+ for(const off of ["-05:00","-04:00"]){const d=new Date(et.replace(" ","T")+":00"+off);
+  const f=d.toLocaleString("sv-SE",{timeZone:"America/New_York",hour12:false}).slice(0,16);if(f==et.slice(0,16))return d.getTime()}
+ return new Date(et.replace(" ","T")+":00-05:00").getTime()};
+SV.liveCandles=async function(t){/* fallback when the cached chart file does not have this trade yet: public Hyperliquid API */
+ const e0=SV.etToMs(t.entry_et),e1=SV.etToMs(t.exit_et),pre=Math.max(25,Math.min(60,(e1-e0)/60000))*60000;
+ const r=await fetch("https://api.hyperliquid.xyz/info",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({type:"candleSnapshot",req:{coin:t.coin,interval:"1m",startTime:e0-pre,endTime:Math.min(Date.now(),e1+20*60000)}})});
+ const k=await r.json();return {entry_ms:e0,exit_ms:e1,c:k.map(x=>[+x.t,+x.o,+x.h,+x.l,+x.c])}};
+SV.px=function(x){if(x==null)return"–";const a=Math.abs(x);const d=a>=1000?1:a>=100?2:a>=1?4:a>=0.01?5:7;return (+x).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d})};
+SV.svgChart=function(t,k){
+ const c=k.c;if(!c||!c.length)return '<div class=m>No candles available for this trade.</div>';
+ const W=680,H=300,L=8,Rm=92,T=12,Bm=26,pw=W-L-Rm,ph=H-T-Bm;
+ const lines=[t.fill,t.stop,t.tp,t.exit].filter(v=>v!=null);
+ let lo=Math.min(...c.map(x=>x[3]),...lines),hi=Math.max(...c.map(x=>x[2]),...lines);const pad=(hi-lo)*0.06||hi*0.001;lo-=pad;hi+=pad;
+ const n=c.length,t0=c[0][0],step=60000,cw=pw/n;
+ const X=ms=>L+((ms-t0)/step+0.5)*cw,Y=p=>T+(hi-p)/(hi-lo)*ph;
+ let s=`<svg viewBox="0 0 ${W} ${H}" class=tchart xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif">`;
+ s+=`<rect x=0 y=0 width=${W} height=${H} fill="#0b0b0b"/>`;
+ const em=k.entry_ms,xm=k.exit_ms;
+ s+=`<rect x=${X(em)-cw/2} y=${T} width=${Math.max(cw,X(xm)-X(em)+cw)} height=${ph} fill="${t.R>0?"#22c55e":"#ff5a5f"}" opacity=.08 />`;
+ for(let i=0;i<n;i++){const d=new Date(c[i][0]);if(d.getUTCMinutes()%15)continue;const x=X(c[i][0]);
+  s+=`<line x1=${x} x2=${x} y1=${T} y2=${T+ph} stroke="#1c1c1c"/><text x=${x} y=${H-8} fill="#777" font-size=11 text-anchor=middle>${d.toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"numeric",minute:"2-digit",hour12:false})}</text>`}
+ for(const x of c){const up=x[4]>=x[1],col=up?"#22c55e":"#ff5a5f",cx=L+((x[0]-t0)/step+0.5)*cw,bw=Math.max(1,cw*0.7);
+  s+=`<line x1=${cx} x2=${cx} y1=${Y(x[2])} y2=${Y(x[3])} stroke="${col}"/><rect x=${cx-bw/2} y=${Y(Math.max(x[1],x[4]))} width=${bw} height=${Math.max(1,Math.abs(Y(x[1])-Y(x[4])))} fill="${col}"/>`}
+ const hl=(p,col,lab,dash)=>p==null?"":`<line x1=${L} x2=${L+pw} y1=${Y(p)} y2=${Y(p)} stroke="${col}" stroke-width=1.3 ${dash?'stroke-dasharray="5 4"':""}/><rect x=${L+pw+2} y=${Y(p)-9} width=${Rm-4} height=18 rx=3 fill="${col}"/><text x=${L+pw+6} y=${Y(p)+4} font-size=11 fill="#000" font-weight=700>${lab} ${SV.px(p)}</text>`;
+ // keep labels from overlapping: draw in price order
+ s+=hl(t.tp,"#22c55e","TP",1)+hl(t.stop,"#ff5a5f","SL",1)+hl(t.fill,"#60a5fa","IN",0);
+ const ey=Y(t.fill),xy=Y(t.exit),lg=t.side>0;
+ s+=`<path d="M${X(em)} ${ey+(lg?4:-4)} l-7 ${lg?12:-12} l14 0 z" fill="#60a5fa" stroke="#000"/>`;
+ s+=`<line x1=${X(em)} x2=${X(xm)} y1=${ey} y2=${xy} stroke="#e6c07b" stroke-dasharray="2 3"/>`;
+ s+=`<circle cx=${X(xm)} cy=${xy} r=6 fill="#e6c07b" stroke="#000"/>`;
+ s+=`<text x=${Math.min(X(xm)+9,L+pw-40)} y=${xy+(xy<T+20?16:-9)} font-size=11 fill="#e6c07b" font-weight=700>exit ${SV.px(t.exit)}</text>`;
+ return s+'</svg>'};
+SV.howTxt=function(h){h=h||"";if(/^TP/.test(h))return "Hit the target ("+(h.match(/\((.*)\)/)||[,"1R"])[1]+")";
+ if(/same bar/.test(h))return "Stopped out in the same minute it filled";if(/^stop/.test(h))return "Stopped out";
+ let m=h.match(/time stop (\d+)m/);if(m)return "Time stop: closed at market after "+m[1]+" min";
+ if(/^breakeven/.test(h))return "Breakeven stop (scratch)";return h};
+SV.note=function(t){/* plain-English reason, built only from the bot's own recorded setup text */
+ const g=t.trigger||"",side=t.side>0?"buy":"sell",out=[];let m,m2;
+ const tr=g.match(/1h trend (up|down|flat)/),nf=/no trend filter/.test(g);
+ const trend=tr?(tr[1]=="flat"?"the 1-hour trend was flat":"the 1-hour trend was "+tr[1]):"";
+ if((m=g.match(/5m impulse ([\d.,]+)-([\d.,]+) \(([\d.]+)x ATR5\)/))){
+  const a=+m[1].replace(/,/g,""),b=+m[2].replace(/,/g,""),dir=b>a?"up":"down";
+  const f=g.match(/pullback zone ([\d.]+) fib/),lv=g.match(/flipped level ([\d.,]+) \(([^)]*)\)/);
+  let s=(trend?trend[0].toUpperCase()+trend.slice(1)+(nf?((m2=g.match(/\((with-trend|counter-trend|flat)\)/))&&m2[1]=="counter-trend"?`, so this was a counter-trend ${t.side>0?"long":"short"} (this version has no trend filter)`:" (this version has no trend filter)"):"")+". ":"")+`A strong 5-min move ${dir} (${m[3]}× normal size), then price pulled back`;
+  s+=f?` to the ${f[1]} fib`:"";s+=lv?`, which lined up with an old level at ${lv[1]} that had flipped between support and resistance.`:".";out.push(s);
+  if(/limit .* resting/.test(g))out.push(`It rested a limit ${side} there and got filled`+((m=g.match(/expected net R ([\d.]+)/))?`, expecting about +${m[1]}R after fees.`:"."));
+  else if(/CONFIRMED: 1m rejection/.test(g))out.push(`It waited for a 1-min rejection candle at the level, then entered at market`+((m=g.match(/expected net R ([\d.]+)/))?`, expecting about +${m[1]}R after fees.`:"."));
+ }else if((m=g.match(/5m close ([\d.,]+) broke (above|below) level ([\d.,]+)/))){
+  out.push((trend?trend[0].toUpperCase()+trend.slice(1)+". ":"")+`A 5-min candle closed ${m[2]} the level ${m[3]}, and the bot ${side=="buy"?"bought":"sold"} the retest of that level`+((m=g.match(/expected net R ([\d.]+)/))?`, expecting about +${m[1]}R after fees.`:"."));
+ }else out.push(g.split(";").slice(0,2).join("; "));
+ return out.join(" ")};
+SV.BOOKNAME=k=>(SV.BOOK2&&SV.BOOK2[k]?SV.BOOK2[k].name:k);
+SV.openTrade=async function(id){
+ const t=(D.trades||[]).find(x=>x.id==id);if(!t)return;const M=$("trmodal");
+ const rth=SV.isRTH(t.entry_et),j=[
+  ["Book",`${SV.esc(SV.BOOKNAME(t.book))} (${t.book})`],["Trade",`${t.side>0?"Long":"Short"} ${SV.esc(t.coin)}`],
+  ["Entry",`${SV.esc(t.entry_et)} ET @ ${SV.px(t.fill)}`],["Exit",`${SV.esc(t.exit_et)} ET @ ${SV.px(t.exit)} · ${t.dur_min??"?"} min`],
+  ["Stop / target",`${SV.px(t.stop)} / ${SV.px(t.tp)}`],["Result",`<b class="${SV.c(t.R)}">${SV.fR(t.R)}</b> (${SV.fU(t.usd||0)} paper) · after fees`],
+  ["Hours",rth?"Regular hours (9:30–4 ET)":"After hours"],["Exit reason",SV.esc(SV.howTxt(t.how))]];
+ M.querySelector(".trbody").innerHTML=`<h3>${t.side>0?"Long":"Short"} ${SV.esc(t.coin)} · ${t.book} · <span class="${SV.c(t.R)}">${SV.fR(t.R)}</span></h3>
+  <div class=trchart>loading chart…</div>
+  <div class=trlegend><span style="color:#60a5fa">▲ entry</span> <span style="color:#e6c07b">● exit</span> <span style="color:#ff5a5f">-- stop</span> <span style="color:#22c55e">-- target</span> · 1-min Hyperliquid candles, ET</div>
+  <table class=trj>${j.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>
+  <div class=trnote><b>Why the bot took it:</b> ${SV.esc(SV.note(t))}</div>
+  <details class=trraw><summary>Bot's raw log</summary><div>${SV.esc(t.trigger)}</div></details>`;
+ M.style.display="flex";
+ let k=null;try{const C=await SV.loadCharts();let v=C[id];if(!v){const C2=await SV.loadCharts(true);v=C2[id]}
+  if(v&&v.c&&v.c.length)k={entry_ms:Date.parse(v.entry_ts),exit_ms:Date.parse(v.exit_ts),c:v.c};else k=await SV.liveCandles(t)}catch(e){try{k=await SV.liveCandles(t)}catch(e2){}}
+ const el=M.querySelector(".trchart");if(el)el.innerHTML=k?SV.svgChart(t,k):'<div class=m>Chart data not available right now.</div>'};
+SV.renderTradeList=function(D,host){
+ if(!$("trmodal")){const m=document.createElement("div");m.id="trmodal";m.className="trmodal";
+  m.innerHTML='<div class=trbox><button class=trx aria-label=close>✕</button><div class=trbody></div></div>';document.body.appendChild(m);
+  m.addEventListener("click",e=>{if(e.target===m||e.target.classList.contains("trx"))m.style.display="none"});
+  document.addEventListener("keydown",e=>{if(e.key=="Escape")m.style.display="none"})}
+ const T=SV.trades(D).filter(t=>SV.KEEP.includes(t.book)).reverse(),N=SV.trAll?T.length:Math.min(25,T.length);
+ const row=t=>`<tr data-id="${SV.esc(t.id)}"><td>${SV.esc((t.exit_et||"").slice(5,16))}</td><td>${t.book}</td><td>${t.side>0?"Long":"Short"} <b>${SV.esc(t.coin)}</b></td><td class="${SV.c(t.R)}"><b>${SV.fR(t.R)}</b></td><td class=m>${SV.isRTH(t.entry_et)?"reg":"AH"}</td><td class=go>›</td></tr>`;
+ const d=document.createElement("details");d.className="more trlist";d.open=SV.trOpen;
+ d.innerHTML=`<summary>Trades (${T.length}) <span class=m style="font-weight:400;font-size:14px">— newest first · tap one for its chart and the bot's journal</span></summary>
+  <table><tr><th>Closed (ET)</th><th>Book</th><th>Trade</th><th>R</th><th>Hours</th><th></th></tr>${T.slice(0,N).map(row).join("")}</table>
+  ${T.length>N?`<button class=trmore>Show all ${T.length}</button>`:""}`;
+ d.addEventListener("toggle",()=>{SV.trOpen=d.open});
+ d.addEventListener("click",e=>{const tr=e.target.closest("tr[data-id]");if(tr)SV.openTrade(tr.dataset.id);if(e.target.classList.contains("trmore")){SV.trAll=true;SV.renderTradeList(D,host)}});
+ const old=host.querySelector(".trlist");if(old)old.replaceWith(d);else{const f=host.querySelector(".fine");f?f.after(d):host.appendChild(d)}
+ if(T.length)SV.loadCharts()};
 
 const _oldRender=render;
-render=function(){try{SV.renderResults(D,$("svmain"));$("svupd").textContent="Updated "+(D.updated_et||"")+" · refreshes every 2 min · all numbers after fees";}catch(e){console.error(e);$("svmain").textContent="could not draw summary"}
+render=function(){try{SV.renderResults(D,$("svmain"));try{SV.renderTradeList(D,$("svmain"))}catch(e){console.error(e)}$("svupd").textContent="Updated "+(D.updated_et||"")+" · refreshes every 2 min · all numbers after fees";}catch(e){console.error(e);$("svmain").textContent="could not draw summary"}
  try{_oldRender()}catch(e){console.error(e)}};
 load();setInterval(load,120000);
 </script>
