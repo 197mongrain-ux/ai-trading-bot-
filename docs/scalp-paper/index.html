@@ -1,289 +1,71 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scalp bot · live now</title>
+<title>Scalp bot · D + A2 (paper)</title>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--b:#30363d;--t:#e6edf3;--m:#8b949e;--g:#3fb950;--r:#f85149;--y:#d29922;--a:#58a6ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
-.wrap{max-width:1200px;margin:auto;padding:12px}h1{font-size:20px;margin:4px 0}h2{font-size:16px;margin:22px 0 8px;border-bottom:1px solid var(--b);padding-bottom:4px}
-.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;margin:2px 4px 2px 0;background:#21262d;border:1px solid var(--b)}
-.ok{color:var(--g)}.bad{color:var(--r)}.warn{color:var(--y)}.mut{color:var(--m)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.card{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px}
-.big{font-size:22px;font-weight:600}table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:5px 6px;border-bottom:1px solid var(--b);text-align:left;vertical-align:top}th{color:var(--m);font-weight:500}
-.scroll{overflow-x:auto}details.grp{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:8px 10px;margin:8px 0}details.grp>summary{color:var(--t)}details summary{cursor:pointer;color:var(--a)}details div{white-space:normal;color:var(--m);padding:4px 0}
-select{background:#21262d;color:var(--t);border:1px solid var(--b);border-radius:6px;padding:3px}
-.banner{background:#3d2a00;border:1px solid var(--y);border-radius:8px;padding:8px;margin:8px 0}
-.pcard{background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px;margin:10px 0}
-.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:800px){.pgrid{grid-template-columns:1fr}}
-.tvbox{height:380px;border:1px solid var(--b);border-radius:6px;overflow:hidden}.lwbox{height:380px;border:1px solid var(--b);border-radius:6px;position:relative}
-.lv{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.lv span{padding:2px 8px;border-radius:6px;background:#21262d;border:1px solid var(--b);font-size:13px}
-/* ==== simple view (Nov 2) ==== */
-.sv{max-width:900px;margin:0 auto;padding:18px 16px 40px;font-family:-apple-system,"Segoe UI",Roboto,Inter,system-ui,sans-serif;color:#e8e8e8;font-size:17px;line-height:1.45}
-.sv h1{font-size:24px;margin:4px 0 2px;font-weight:700}
-.sv .upd{color:#8b8b8b;font-size:14px;margin-bottom:18px}
-.sv .tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;border:1px solid #7a5a1a;color:#e6c07b;background:#140e06;vertical-align:middle;margin-left:6px}
-.sv .g{color:#22c55e}.sv .r{color:#ff5a5f}.sv .m{color:#8b8b8b}
-.sv .total{border-radius:14px;padding:18px 20px;margin:0 0 26px;border:1px solid #262626;background:#0e0e0e}
-.sv .total.win{background:linear-gradient(180deg,#05200e,#0b0b0b);border-color:#14532d}.sv .total.loss{background:linear-gradient(180deg,#240a0c,#0b0b0b);border-color:#5c1a1f}
-.sv .total .cap{font-size:14px;color:#a3a3a3;margin-bottom:4px}
-.sv .total .big2{font-size:34px;font-weight:800;line-height:1.15}
-.sv .total .sub2{font-size:16px;color:#cfcfcf;margin-top:4px}
-.sv h2{font-size:19px;margin:30px 0 12px;font-weight:700}
-.sv .fams{display:grid;grid-template-columns:1fr;gap:16px}
-@media(min-width:820px){.sv .fams{grid-template-columns:1fr 1fr}}
-.sv .fam{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:16px 16px 10px}
-.sv .fam.best{border-color:#22c55e;box-shadow:0 0 0 1px #14532d inset}
-.sv .fam h3{margin:0;font-size:19px;font-weight:700}
-.sv .fam .what{color:#9a9a9a;font-size:14px;margin:4px 0 10px}
-.sv .fam .sum{font-size:16px;margin:0 0 10px}
-.sv .bestb{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:#05200e;color:#22c55e;border:1px solid #14532d;margin-left:6px;vertical-align:middle}
-.sv table{width:100%;border-collapse:collapse;font-size:16px}
-.sv th{white-space:nowrap;background:none;font-size:12px;color:#8b8b8b;font-weight:600;text-transform:uppercase;letter-spacing:.05em;text-align:right;padding:6px 4px;border-bottom:1px solid #262626}
-.sv th:first-child,.sv td:first-child{text-align:left}
-.sv td{white-space:normal;padding:9px 4px;border-bottom:1px solid #1a1a1a;text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
-.sv tr:last-child td{border-bottom:0}
-.sv td .vs{display:block;font-size:12px;color:#7a7a7a;font-weight:400;line-height:1.3;margin-top:2px}
-.sv tr.copy td{color:#bdbdbd}.sv tr.sep td{padding:10px 4px 2px;font-size:12px;color:#7a7a7a;text-transform:uppercase;letter-spacing:.05em;text-align:left;border-bottom:0}
-.sv tr.best1 td:first-child b::after{content:" ★";color:#22c55e}
-.sv tr.zero td{color:#5c5c5c}
-.sv .box{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:10px 16px}
-.sv .fine{color:#8b8b8b;font-size:14px;margin-top:10px}
-.sv details.more{margin-top:34px;border:1px solid #262626;border-radius:14px;background:#0a0a0a}
-.sv details.more>summary{cursor:pointer;padding:16px 18px;font-size:17px;font-weight:600;color:#6ea8fe;list-style:none}
-.sv details.more>summary::-webkit-details-marker{display:none}
-.sv details.more>summary::before{content:"▸ ";}.sv details.more[open]>summary::before{content:"▾ ";}
-.sv .opos{background:#0e0e0e;border:1px solid #262626;border-radius:14px;padding:14px 16px;margin:0 0 12px}
-.sv .opos .h{font-size:18px;font-weight:700}.sv .opos .l{font-size:15px;color:#bdbdbd;margin-top:4px}
-.sv .none{color:#8b8b8b;font-size:16px;padding:6px 0}
-.sv a{color:#6ea8fe}
-
-.sv details.more h2{font-size:16px}
-.sv details.more{font-size:14px}
-</style>
-<script src="https://s3.tradingview.com/tv.js"></script>
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-</head><body><div class="wrap">
-<div class="sv" style="padding-left:0;padding-right:0"><h1>Scalp bot · live now <span class="tag">PAPER ONLY</span></h1><div class="upd" id="svupd">loading…</div><div id="svlive">loading…</div>
-<details class="more" id="svcharts"><summary>Charts for open trades</summary><div style="padding:0 14px 14px">
-<h2>Live open positions — charts <span class="mut" style="font-size:12px">left: TradingView live chart (5m, Binance/Bybit perp feed) · right: Hyperliquid 1m candles with entry / stop / TP / first-liquidity lines · cards appear and disappear as paper positions open and close</span></h2>
-<div id="pcards"><div class=mut>loading…</div></div>
-</div></details>
-<details class="more" id="svmore"><summary>Show details <span class="m" style="font-weight:400;font-size:14px">— rules, every book, armed setups, near misses, coins</span></summary><div style="padding:0 14px 14px">
-<div id="status" class="mut">loading…</div>
-<div class="banner" id="rules"></div>
-<h2>v1 vs no-filter vs confirmed (A / A2 / A3 …)</h2>
-<div class="mut" style="font-size:12px">“2” books = identical rules but NO 1h trend filter (longs and shorts both allowed) and a 60-min time stop instead of 30. A–D keep the trend filter and 30-min timer. <b>“3” books</b> (added Nov 2 PM) = the “2” rules plus: entry only after a confirmed 1m rejection candle at the level (market on that close, no resting limit; B3 keeps the absorption filter), stop at least 0.30% from entry (size cut to keep $0.75 risk), 1R TP must fit before the first untaken liquidity or the setup is skipped (“no room”), and the stop moves to entry+fees once MFE reaches +0.75R.</div>
-<div class="scroll" id="cmp"></div>
-<h2>No-filter books (“2” and “3”) split by 1h trend at entry</h2><div class="scroll" id="split"></div>
-<h2>Session test — regular hours (RTH) vs after hours (AH) <span class="pill warn">new Nov 2 21:30 ET</span></h2>
-<div class="mut" style="font-size:12px">RTH = weekdays 9:30–16:00 ET; AH = everything else (evenings, overnight, weekends). <b>“-RTH” books</b> are copies of A, B, C, A2, B2, C2, A3, B3, C3 that trade <b>BTC only</b> and only arm/enter inside RTH. <b>“-AH” books</b> are copies of D, D2, D3 (volatile-coin scanner, same coins) that only arm/enter outside RTH. Same rules, $0.75 risk, daily stop and fees as the parent; parents are unchanged. The “parent in window” column is the hindsight benchmark from the parent's own trades; the “live” column is what the gated book does from now on. <span id="sessnow"></span></div>
-<div class="scroll" id="sesscmp"></div>
-<h2>Every book split RTH vs AH <span class="mut" style="font-size:12px">by entry time ET · all coins, and BTC only</span></h2><div class="scroll" id="sesssplit"></div>
-<h2>Books</h2><div class="grid" id="books"></div>
-<h2>Open positions (live uPnL)</h2><div class="scroll" id="open"></div>
-<h2>Armed setups (resting limits / waiting for rejection)</h2><div class="scroll" id="pend"></div>
-<h2>Results by book <span class="mut" style="font-size:12px">summary sorted by total R · tap a book to open its trades · tap a row's “why” for the full trigger</span></h2>
-<div>Order <select id="ord"><option value="R">ranked by total R</option><option value="book">book order A…D3-AH</option></select> <label class=mut><input type=checkbox id="xall"> expand all</label></div>
-<div class="scroll" id="bsum"></div>
-<div id="trades"></div>
-<h2>Per-coin results (all books) <span class="mut" style="font-size:12px">exp. net R = average expected net R at entry (first liquidity after fees, scored trades only)</span></h2><div class="scroll" id="coins"></div>
-<h2>R:R ranking — last cycles with competing entries</h2><div class="scroll" id="rank"></div>
-<h2>By session</h2><div class="scroll" id="sess"></div>
-<h2>Near-misses & rejected setups</h2><div id="cats"></div>
-<div>Book <select id="nb"><option value="">all</option><option>A</option><option>B</option><option>C</option><option>D</option><option>A2</option><option>B2</option><option>C2</option><option>D2</option><option>A3</option><option>B3</option><option>C3</option><option>D3</option><option>A-RTH</option><option>B-RTH</option><option>C-RTH</option><option>A2-RTH</option><option>B2-RTH</option><option>C2-RTH</option><option>A3-RTH</option><option>B3-RTH</option><option>C3-RTH</option><option>D-AH</option><option>D2-AH</option><option>D3-AH</option></select>
- Type <select id="nc"><option value="">all</option><option>armed-but-lost</option><option>rejected</option><option value="session">outside session</option></select></div>
-<div class="scroll" id="near"></div>
-<h2>Coin universes (wide books A–C, A2–C2, A3–C3 · heist books D, D2, D3)</h2><div id="uni" class="mut"></div>
-<p class="mut" style="font-size:12px">Data: public Hyperliquid market data (candles, mids, trades stream). Fills simulated: limits fill only when price trades through; stops taker 4.5bp + 2bp slip; TP maker 1.5bp; time stop taker + 1bp. Page auto-refreshes every 90 s.</p>
-</div></details></div>
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:900px;margin:auto;padding:12px}h1{font-size:20px;margin:4px 0}h3{margin:14px 0 6px;font-size:14px;color:var(--m);font-weight:600}
+.ok{color:var(--g)}.bad{color:var(--r)}.mut{color:var(--m)}.warn{color:var(--y)}
+.card{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:12px;margin:10px 0}
+.top{display:flex;flex-wrap:wrap;gap:18px;align-items:baseline}.top div{min-width:90px}.top b{display:block;font-size:24px}
+.k{font-size:12px;color:var(--m)}.row{display:flex;flex-wrap:wrap;gap:16px}.row div b{display:block;font-size:19px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:5px 6px;border-bottom:1px solid var(--b);text-align:left}th{color:var(--m);font-weight:500;font-size:12px}
+.scroll{overflow-x:auto}details{margin-top:10px}details summary{cursor:pointer;color:var(--a)}
+.tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:12px;background:#21262d;border:1px solid var(--b)}
+.live{background:#0f2a17;border:1px solid #2ea04355;border-radius:8px;padding:8px;margin-top:10px}
+</style></head><body><div class="wrap">
+<h1>Scalp bot — PAPER only <span class="tag">D + A2</span></h1>
+<div class="mut" id="status">loading…</div>
+<div class="card" id="total"></div>
+<div id="books"></div>
+<details class="card"><summary>Show details</summary><div id="details"></div></details>
+<div class="mut" style="font-size:12px;margin:10px 0">Paper only: simulated fills on public Hyperliquid data. $0.75 risk per trade (1R = $0.75). Regular hours = weekdays 9:30–16:00 ET. Marks refresh live from Hyperliquid every 30s; everything else updates when the bot publishes (about every 5 min, sooner on trades).</div>
 </div><script>
-const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
-let D=null;const $=id=>document.getElementById(id);
-const f=(x,d=2)=>x==null?"–":(+x).toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d});
+const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json",KEEP=["D","A2"],RUSD=0.75;
+const NAMES={D:"D · Alt scanner (top-5 volatile HL perps)",A2:"A2 · Fib pullback, 60-min timer"};
+let D=null,MIDS={};const $=id=>document.getElementById(id);
+const f=(x,d=2)=>x==null||isNaN(x)?"–":(+x).toFixed(d);
+const usd=x=>x==null||isNaN(x)?"–":(x<0?"-$":"$")+Math.abs(x).toFixed(2);
+const sg=(x,d=2)=>x==null||isNaN(x)?"–":(x>0?"+":"")+(+x).toFixed(d);
 const px=x=>x==null?"–":(x>=1000?(+x).toLocaleString(undefined,{maximumFractionDigits:1}):x>=1?(+x).toFixed(4):(+x).toPrecision(5));
-const cl=x=>x==null?"":(x>0?"ok":x<0?"bad":"");const sd=s=>s>0?"<span class=ok>LONG</span>":"<span class=bad>SHORT</span>";
-const esc=s=>(s??"").toString().replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const cl=x=>x==null?"":(x>0?"ok":x<0?"bad":"");const esc=s=>(s??"").toString().replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function st(tr){const n=tr.length,w=tr.filter(t=>t.R>0).length,R=tr.reduce((a,t)=>a+t.R,0),u=tr.reduce((a,t)=>a+t.usd,0);return{n,w,win:n?100*w/n:null,R,u}}
+function uR(p){const m=MIDS[p.coin]??p.mark;if(m==null||!p.risk)return[null,null,m];const r=(p.side*(m-p.fill)-0.00045*m-0.00015*p.fill)/p.risk;return[r,r*RUSD,m]}
 async function load(){
   const urls=[`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`];
-  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=await r.json();render();return}}catch(e){}}
+  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=await r.json();await mids();render();return}}catch(e){}}
   $("status").innerHTML="<span class=bad>could not load data</span>";}
-function spark(eq){if(!eq.length)return"<div class=mut>no closed trades yet</div>";const v=[150,...eq.map(e=>e.usd)],mn=Math.min(...v),mx=Math.max(...v),w=240,h=50,r=(mx-mn)||1;
-  const pts=v.map((y,i)=>`${(i/(v.length-1||1)*w).toFixed(1)},${(h-(y-mn)/r*h).toFixed(1)}`).join(" ");
-  return `<svg width="100%" viewBox="0 0 ${w} ${h+2}" preserveAspectRatio="none" style="height:50px"><polyline fill="none" stroke="${v[v.length-1]>=150?"#3fb950":"#f85149"}" stroke-width="1.5" points="${pts}"/></svg>`}
-const BOOK_ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3","A-RTH","B-RTH","C-RTH","A2-RTH","B2-RTH","C2-RTH","A3-RTH","B3-RTH","C3-RTH","D-AH","D2-AH","D3-AH"];
-const isSess=k=>/-(RTH|AH)$/.test(k);const OPEN_GRP=new Set();
-function exitTxt(b){return b.exit_style=="heist"?`HEIST exit (TP before 1st liquidity ≤3R, ${b.tstop}m timer${b.netr_min!=null?", floor "+b.netr_min+"R":""})`:`1R TP, ${b.tstop}m timer`}
-function renderByBook(BK){
-  const g={};for(const t of D.trades){(g[t.book]=g[t.book]||[]).push(t)}
-  const rows=D.books.map(b=>{const tr=(g[b.key]||[]).slice(),n=tr.length,w=tr.filter(t=>t.R>0).length,
-    tot=tr.reduce((a,t)=>a+t.R,0),usd=tr.reduce((a,t)=>a+(t.usd||0),0);return {b,tr,n,w,l:n-w,win:n?Math.round(100*w/n):null,tot,avg:n?tot/n:null,usd,open:b.open.length}});
-  const byR=rows.slice().sort((x,y)=>y.tot-x.tot||y.n-x.n);
-  const ord=$("ord").value=="book"?rows.slice().sort((x,y)=>BOOK_ORDER.indexOf(x.b.key)-BOOK_ORDER.indexOf(y.b.key)):byR;
-  const pr=rows.filter(r=>!isSess(r.b.key));
-  const all={n:pr.reduce((a,r)=>a+r.n,0),w:pr.reduce((a,r)=>a+r.w,0),tot:pr.reduce((a,r)=>a+r.tot,0),usd:pr.reduce((a,r)=>a+r.usd,0),open:pr.reduce((a,r)=>a+r.open,0)};
-  $("bsum").innerHTML=`<table><tr><th>#</th><th>Book</th><th>Exit</th><th>Trades</th><th>W / L</th><th>Win%</th><th>Total R</th><th>Avg R</th><th>$ P&amp;L</th><th>Open</th></tr>`+
-    byR.map((r,k)=>`<tr><td>${k+1}</td><td><a href="#grp-${r.b.key}" onclick="OPEN_GRP.add('${r.b.key}');render()"><b>${r.b.key}</b></a></td><td class=mut style="font-size:12px">${exitTxt(r.b)}</td><td>${r.n}</td><td>${r.w} / ${r.l}</td><td>${r.win==null?"–":r.win+"%"}</td><td class=${cl(r.tot)}><b>${f(r.tot)}R</b></td><td class=${cl(r.avg)}>${r.avg==null?"–":f(r.avg)+"R"}</td><td class=${cl(r.usd)}>$${f(r.usd)}</td><td>${r.open}</td></tr>`).join("")+
-    `<tr><td></td><td><b>ALL</b><br><span class=mut style="font-size:11px">original 12 books (session copies excluded so trades aren't double-counted)</span></td><td></td><td>${all.n}</td><td>${all.w} / ${all.n-all.w}</td><td>${all.n?Math.round(100*all.w/all.n)+"%":"–"}</td><td class=${cl(all.tot)}><b>${f(all.tot)}R</b></td><td class=${cl(all.tot)}>${all.n?f(all.tot/all.n)+"R":"–"}</td><td class=${cl(all.usd)}>$${f(all.usd)}</td><td>${all.open}</td></tr></table>`;
-  const xall=$("xall").checked;
-  $("trades").innerHTML=ord.map(r=>`<details class=grp id="grp-${r.b.key}" data-k="${r.b.key}"${xall||OPEN_GRP.has(r.b.key)?" open":""}><summary><b>${esc(r.b.name)}</b><br><span class=mut style="font-size:12px">${exitTxt(r.b)}</span><br>
-    <span class=pill>${r.n} trades</span><span class=pill>${r.w}W / ${r.l}L</span><span class=pill>win ${r.win==null?"–":r.win+"%"}</span><span class=pill>total <span class=${cl(r.tot)}>${f(r.tot)}R</span></span><span class=pill>avg <span class=${cl(r.avg)}>${r.avg==null?"–":f(r.avg)+"R"}</span></span><span class=pill>P&amp;L <span class=${cl(r.usd)}>$${f(r.usd)}</span></span><span class=pill>open ${r.open}</span></summary>
-    <div class=scroll>${r.n?`<table><tr><th>Entry (ET)</th><th>Exit (ET)</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th><th>$</th><th>Exit reason</th><th>MFE/MAE</th><th>Exp net R</th></tr>`+r.tr.map(t=>`<tr><td>${t.entry_et}<br><span class=mut>${t.session||""}</span></td><td>${t.exit_et||"–"}</td><td>${t.coin}</td><td>${sd(t.side)}</td><td>${px(t.fill)}<br><span class=mut>stop ${px(t.stop_before_be||t.stop)} · tp ${px(t.tp)}</span></td><td>${px(t.exit)}</td><td class=${cl(t.R)}><b>${f(t.R)}</b></td><td class=${cl(t.usd)}>${f(t.usd)}</td><td>${esc(t.how)}${t.be?"<br><span class=mut>BE moved</span>":""}</td><td>${f(t.mfe)}/${f(t.mae)}</td><td>${t.net_R==null?"–":f(t.net_R)+"R"}</td></tr><tr><td colspan=11><details><summary>why / trigger</summary><div><b>Trigger:</b> ${esc(t.trigger)}<br><b>Result:</b> ${esc(t.why)} (gross ${f(t.gross_R)}R, fees+slip ${f(t.fees_R)}R)</div></details></td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>"}</div></details>`).join("");
-  document.querySelectorAll("details.grp").forEach(d=>d.addEventListener("toggle",()=>{d.open?OPEN_GRP.add(d.dataset.k):OPEN_GRP.delete(d.dataset.k)}));
-}
-function render(){
-  const hb=D.heartbeat||{},age=hb.ts?(Date.now()-Date.parse(hb.ts))/1000:1e9,upd=(Date.now()-Date.parse(D.updated))/1000;
-  const st=age<480?"<span class=ok>● RUNNING</span>":age<1200?"<span class=warn>● LAGGING</span>":"<span class=bad>● NO HEARTBEAT</span>";
-  $("status").innerHTML=`${st} · bot heartbeat ${hb.ts_et||"?"} (cycle ${hb.cycle??"?"}, flow ws: ${esc(hb.ws)}) · board data updated <b>${D.updated_et}</b> (${Math.round(upd/60)} min ago) · running since ${new Date(D.started).toLocaleString()}`
-   +(D.last_eval?` · BTC ${px(D.last_eval.close)} · 1h trend <b>${D.last_eval.trend}</b> · last bar ${D.last_eval.bar} ET`:"")
-   +((hb.errors||[]).length?`<br><span class=warn>recent errors: ${esc(hb.errors.slice(-2).join(" | "))}</span>`:"");
-  const R=D.rules;$("rules").innerHTML=`<b>Rules (each book):</b> $${R.book_usd} book · risk $${R.risk_usd} per trade (0.5%) · TP 1R · time stop ${R.tstop} · daily stop ${R.day_stop} · weekly kill ${R.week_kill} · <b>max ${R.max_trades_day} trades/day per book (raised from 2 for data gathering)</b> · fees maker ${R.maker_bp}bp / taker ${R.taker_bp}bp, stop slip ${R.stop_slip_bp}bp, market slip ${R.mkt_slip_bp}bp. ${R.note}`;
-  const BK=Object.fromEntries(D.books.map(b=>[b.key,b]));
-  const cell=x=>x&&x.n?`<td>${x.n}</td><td>${x.win??"–"}%</td><td class=${cl(x.avgR)}>${f(x.avgR)}R</td><td class=${cl(x.net)}>$${f(x.net)}</td>`:`<td>${x?x.n:0}</td><td>–</td><td>–</td><td>–</td>`;
-  $("cmp").innerHTML=`<table><tr><th rowspan=2>Strategy</th><th colspan=4>v1 · trend filter · 30m</th><th colspan=4>“2” · no filter · 60m</th><th colspan=5>“3” · confirmed · min stop · BE</th><th rowspan=2>Δ net<br>2 − v1</th><th rowspan=2>Δ net<br>3 − 2</th><th rowspan=2>Δ net<br>3 − v1</th></tr><tr>${"<th>Trades</th><th>Win%</th><th>Avg R</th><th>Net $</th>".repeat(3)}<th>BE moves / scratches</th></tr>`+
-    (D.pairs||[]).map(p=>{const a=BK[p.base],b=BK[p.test],c=BK[p.conf];if(!a||!b)return"";const d=(x,y)=>x&&y?`<td class=${cl(x.net-y.net)}>$${f(x.net-y.net)}</td>`:"<td>–</td>";return `<tr><td><b>${p.base}</b> / <b>${p.test}</b>${c?` / <b>${p.conf}</b>`:""}<br><span class=mut>${esc(a.name.replace(/^\w+ · /,""))}</span></td>${cell(a)}${cell(b)}${c?cell(c)+`<td>${c.be_moves??0} / ${c.be_scratch??0}</td>`:"<td colspan=5>–</td>"}${d(b,a)}${d(c,b)}${d(c,a)}</tr>`}).join("")+"</table>";
-  const two=D.books.filter(b=>b.trend_filter===false);
-  $("split").innerHTML=`<table><tr><th rowspan=2>Book</th><th colspan=4>With-trend entries</th><th colspan=4>Counter-trend entries</th><th colspan=4>Flat 1h trend</th></tr><tr>${"<th>Trades</th><th>Win%</th><th>Avg R</th><th>Net $</th>".repeat(3)}</tr>`+
-    two.map(b=>`<tr><td><b>${b.key}</b></td>${cell(b.split["with-trend"])}${cell(b.split["counter-trend"])}${cell(b.split["flat"])}</tr>`).join("")+"</table>";
-  $("books").innerHTML=D.books.map(b=>`<div class=card><b>${esc(b.name)}</b><div class="big ${cl(b.net)}">$${f(b.net)} <span style="font-size:14px">(${f(b.totR)}R)</span></div>
-   <div>${b.n} trades · win ${b.win??"–"}% · avg ${b.avgR==null?"–":f(b.avgR)}R · open ${b.open.length} · armed ${b.pending.length}${b.v==3?` · BE moves ${b.be_moves??0} (scratched ${b.be_scratch??0})`:""}</div>
-   <div class=mut>today ${b.today.taken}/${b.max_day??R.max_trades_day} trades, ${b.today.losses} losses, ${f(b.today.R)}R · week ${f(b.week_R)}R ${b.today.gate&&!b.today.gate.startsWith("max")?`· <span class=warn>${esc(b.today.gate)}</span>`:""}</div>
-   <div class=mut style="font-size:12px">exit: <b>${b.exit_style=="heist"?"HEIST (TP before 1st liquidity, ≤3R, "+b.tstop+"m timer)":"1R TP, "+b.tstop+"m timer (control)"}</b><br>coins: ${(b.coins||[]).join(", ")}${b.by_coin&&Object.keys(b.by_coin).length?"<br>"+Object.entries(b.by_coin).map(([c,x])=>`<span class=pill>${c} ${x.n} · <span class=${cl(x.totR)}>${f(x.totR)}R</span></span>`).join(""):""}</div>
-   ${spark(b.equity)}<details><summary>what this book does</summary><div>${esc(b.desc)}</div></details></div>`).join("");
-  const op=D.books.flatMap(b=>b.open.map(o=>({...o,book:b.key})));
-  $("open").innerHTML=op.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Entry (ET)</th><th>Fill</th><th>Stop</th><th>TP</th><th>Mark</th><th>uPnL</th><th>Held</th><th>MFE/MAE</th><th>Exp net R</th></tr>`+op.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${o.entry_et}<br><span class=mut>${o.session}</span></td><td>${px(o.fill)}</td><td>${px(o.stop)}${o.be?"<br><span class=ok>BE</span>":""}</td><td>${px(o.tp)}</td><td>${px(o.mark)}</td><td class=${cl(o.uR)}>${f(o.uR)}R<br>$${f(o.uusd)}</td><td>${o.held_min}m</td><td>${f(o.mfe)}/${f(o.mae)}R</td><td>${o.net_R==null?"–":f(o.net_R)+"R"}</td></tr><tr><td colspan=12><details><summary>why</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>flat</div>";
-  const pd=D.books.flatMap(b=>b.pending.map(o=>({...o,book:b.key})));
-  $("pend").innerHTML=pd.length?`<table><tr><th>Book</th><th>Coin</th><th>Side</th><th>Type</th><th>Level</th><th>Stop</th><th>Valid until (ET)</th><th>Closest</th></tr>`+pd.map(o=>`<tr><td>${o.book}</td><td>${o.coin}</td><td>${sd(o.side)}</td><td>${(BK[o.book]||{}).v==3&&!/absorption/.test(o.trigger||"")?(o.status=="go"?"confirmed 1m rejection → market entry":"waiting for confirmed 1m rejection (no limit)"):o.status=="go"?"rejection+absorption → enter next bar":o.trig=="limit"?"resting limit":"watching for rejection+absorption"}</td><td>${px(o.px)}</td><td>${px(o.stop)}</td><td>${new Date(o.exp_ts).toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})}</td><td>${o.closest==null?"–":f(o.closest,3)+"%"}</td></tr><tr><td colspan=8><details><summary>trigger</summary><div>${esc(o.trigger)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none</div>";
-  renderByBook(BK);
-  const sc=x=>x&&x.n?`<td>${x.n}</td><td>${x.win??"–"}%</td><td class=${cl(x.avgR)}>${f(x.avgR)}R</td><td class=${cl(x.totR)}><b>${f(x.totR)}R</b></td>`:`<td>0</td><td>–</td><td>–</td><td>–</td>`;
-  $("sessnow").innerHTML=D.session_now?`Right now: <b>${D.session_now=="RTH"?"regular hours — -RTH books can enter, -AH books are waiting":"after hours — -AH books can enter, -RTH books are waiting"}</b>.`:"";
-  $("sesscmp").innerHTML=(D.session_pairs||[]).length?`<table><tr><th rowspan=2>Test book</th><th rowspan=2>Rule</th><th colspan=4>Parent, in this window (hindsight)</th><th colspan=4>Parent, outside this window</th><th colspan=4>Test book live (from Nov 2 21:30 ET)</th><th rowspan=2>Open / armed</th><th rowspan=2>Off-window setups<br>logged / quiet</th></tr><tr>${"<th>Trades</th><th>Win%</th><th>Avg R</th><th>Net R</th>".repeat(3)}</tr>`+
-    D.session_pairs.map(p=>{const a=BK[p.parent]||{},b=BK[p.book]||{};const inW=p.window=="RTH"?a.rth_btc:a.ah,outW=p.window=="RTH"?a.ah_btc:a.rth;const lg=D.near.filter(e=>e.book==p.book&&e.cat=="session").length;
-      return `<tr><td><b>${p.book}</b><br><span class=mut style="font-size:11px">parent ${p.parent}</span></td><td class=mut style="font-size:12px">${p.window=="RTH"?"BTC only · weekdays 9:30–16:00":"same coins as "+p.parent+" · outside 9:30–16:00 wkdy"}</td>${sc(inW)}${sc(outW)}${sc({n:b.n,win:b.win,avgR:b.avgR,totR:b.totR})}<td>${(b.open||[]).length} / ${(b.pending||[]).length}</td><td>${lg} / ${b.sess_quiet??0}</td></tr>`}).join("")+
-    `</table><div class=mut style="font-size:12px">For -RTH books the parent columns count only the parent's <b>BTC</b> trades (in RTH / in AH). For -AH books they count all the parent's trades (in AH / in RTH). “Logged” = valid setups skipped because of the window (see near-misses, type “session”); “quiet” = setups that failed a rule while off-window (counted, not listed).</div>`:"<div class=mut>session books not in data yet</div>";
-  const par=D.books.filter(b=>!isSess(b.key));
-  $("sesssplit").innerHTML=`<table><tr><th rowspan=2>Book</th><th colspan=4>RTH · all coins</th><th colspan=4>AH · all coins</th><th colspan=4>RTH · BTC</th><th colspan=4>AH · BTC</th></tr><tr>${"<th>Trades</th><th>Win%</th><th>Avg R</th><th>Net R</th>".repeat(4)}</tr>`+
-    par.map(b=>`<tr><td><b>${b.key}</b></td>${sc(b.rth)}${sc(b.ah)}${sc(b.rth_btc)}${sc(b.ah_btc)}</tr>`).join("")+"</table>";
-  const ss=["Asia 20-03","London 03-09:30","US open 9:30-11","US midday 11-16","After-hours 16-20"];
-  $("sess").innerHTML=`<table><tr><th>Book</th>${ss.map(s=>`<th>${s}</th>`).join("")}</tr>`+D.books.map(b=>b.key).map(k=>`<tr><td>${k}</td>${ss.map(s=>{const x=(D.sessions[k]||{})[s];return `<td>${x?`${x.n} tr · ${Math.round(100*x.w/x.n)}% · <span class=${cl(x.R)}>${f(x.R)}R</span>`:"<span class=mut>–</span>"}</td>`}).join("")}</tr>`).join("")+"</table>";
-  $("cats").innerHTML=Object.entries(D.near_cats).map(([b,c])=>`<div><b>${b}</b>: `+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class=pill>${esc(k)} · ${v}</span>`).join("")+"</div>").join("");
-  const nb=$("nb").value,nc=$("nc").value,nm=D.near.filter(e=>(!nb||e.book==nb)&&(!nc||(nc=="rejected"?e.cat=="rejected":nc=="session"?e.cat=="session":e.cat!="rejected"))).slice(0,250);
-  $("near").innerHTML=nm.length?`<table><tr><th>Time (ET)</th><th>Book</th><th>Coin</th><th>Type</th><th>Reason</th></tr>`+nm.map(e=>`<tr><td>${e.t_et}</td><td>${e.book}</td><td>${e.coin}</td><td>${esc(e.cat)}</td><td>${esc(e.reason)}<details><summary>detail</summary><div>${esc(e.detail)}</div></details></td></tr>`).join("")+"</table>":"<div class=mut>none yet</div>";
-  $("uni").innerHTML=`<b>Wide books</b> (BTC + top-6 by 24h volume, min $50M): <b>${["BTC",...(D.wide||[])].join(", ")}</b> · 24h volume $M: `+(D.wide_info||[]).map(u=>`${u.coin} ${Math.round(u.vlm_musd)}`).join(" · ")+`<br><b>Heist books (D)</b> trading now: <b>${(D.heist||[]).join(", ")||"–"}</b> · ranked (mean 1h range % last 24h, top-15 by volume): `+(D.universe||[]).map(u=>`${u.coin} ${u.range_pct}%`).join(" · ");
-}
-function renderExtra(){
-  const ct=D.coin_table||[];
-  $("coins").innerHTML=ct.length?`<table><tr><th>Coin</th><th>Trades</th><th>Win%</th><th>Avg R</th><th>Total R</th><th>Net $</th><th>Exp net R (n)</th><th>Books</th></tr>`+ct.map(c=>`<tr><td><b>${c.coin}</b></td><td>${c.n}</td><td>${c.win}%</td><td class=${cl(c.avgR)}>${f(c.avgR)}R</td><td class=${cl(c.totR)}>${f(c.totR)}R</td><td class=${cl(c.net)}>$${f(c.net)}</td><td>${c.exp_netR==null?"–":f(c.exp_netR)+"R"} (${c.n_scored})</td><td class=mut>${c.books.join(", ")}</td></tr>`).join("")+"</table>":"<div class=mut>no closed trades yet</div>";
-  const rk=D.last_rank||[];
-  $("rank").innerHTML=`<div class=mut style="font-size:12px">Rule: every entry needs expected net R ≥ ${D.net_r_min??1.2}R; entries triggering in the same 1-min cycle fill best net R first; if a cap / position limit then binds the rest are logged “outranked”.</div>`+(rk.length?`<table><tr><th>Cycle (ET)</th><th>Candidates (best first)</th></tr>`+rk.map(r=>`<tr><td>${r.t_et}</td><td>${r.cands.map(c=>`<span class=pill>${c.book} ${c.coin} ${f(c.net_R)}R · ${esc(c.result)}</span>`).join("")}</td></tr>`).join("")+"</table>":"<div class=mut>no ranked entries yet</div>");
-  renderCards();
-}
-const TVMAP={HYPE:"BYBIT:HYPEUSDT.P",kPEPE:"BINANCE:1000PEPEUSDT.P",kBONK:"BINANCE:1000BONKUSDT.P",kSHIB:"BINANCE:1000SHIBUSDT.P",kFLOKI:"BINANCE:1000FLOKIUSDT.P",PUMP:"BYBIT:PUMPUSDT.P"};
-const tvSym=c=>TVMAP[c]||`BINANCE:${c}USDT.P`;
-const CARDS={};
-function lv(o){return `<span>Entry <b>${px(o.fill)}</b></span><span class=bad>Stop <b>${px(o.stop)}</b>${o.be?" (BE)":""}</span><span class=ok>TP <b>${px(o.tp)}</b> (${o.exit_style=="heist"?"heist, before 1st liquidity, "+f(o.tp_R)+"R":"1R"})</span><span>Timer <b>${o.tstop?o.tstop+"m":"book timer"}</b></span>${o.liq_tp!=null?`<span>1st liquidity <b>${px(o.liq_tp)}</b></span>`:""}<span>Size <b>${o.size!=null?(+o.size).toPrecision(4):"–"}</b> ${o.coin} (~$${o.size&&o.fill?f(o.size*o.fill,0):"–"} notional)</span><span>Exp net R <b>${o.net_R==null?"–":f(o.net_R)}</b></span><span class=${cl(o.uR)}>uPnL <b>${f(o.uR)}R / $${f(o.uusd)}</b> @ ${px(o.mark)}</span><span>In trade <b>${o.held_min}m</b></span><span>MFE/MAE ${f(o.mfe)}/${f(o.mae)}R</span>`}
-async function hlCandles(coin){const end=Date.now(),r=await fetch("https://api.hyperliquid.xyz/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"candleSnapshot",req:{coin,interval:"1m",startTime:end-6*3600e3,endTime:end}})});
-  const j=await r.json();const TZ=-new Date().getTimezoneOffset()*60;return j.map(k=>({time:Math.floor(k.t/1000)+TZ,open:+k.o,high:+k.h,low:+k.l,close:+k.c}))}
-function setLines(c,o){(c.lines||[]).forEach(l=>c.ser.removePriceLine(l));const L=[[o.fill,"#58a6ff","entry"],[o.stop,"#f85149",o.be?"stop (BE)":"stop"],[o.tp,"#3fb950",o.exit_style=="heist"?"TP heist":"TP 1R"]];if(o.liq_tp!=null)L.push([o.liq_tp,"#d29922","1st liquidity"]);
-  c.lines=L.filter(x=>x[0]!=null).map(([p,col,t])=>c.ser.createPriceLine({price:+p,color:col,lineWidth:2,lineStyle:t=="entry"?0:2,axisLabelVisible:true,title:t}))}
-async function loadLW(c,o){try{const d=await hlCandles(o.coin);c.ser.setData(d);setLines(c,o);
-  if(!c.marked&&o.entry_ts){c.ser.setMarkers([{time:Math.floor(Date.parse(o.entry_ts)/60000)*60-new Date().getTimezoneOffset()*60,position:o.side>0?"belowBar":"aboveBar",color:"#58a6ff",shape:o.side>0?"arrowUp":"arrowDown",text:"entry"}]);c.marked=1}}catch(e){c.el.querySelector(".lwbox").insertAdjacentHTML("beforeend","<div class=bad style='position:absolute;top:4px;left:6px'>HL candles failed to load</div>")}}
-function renderCards(){
-  const op=D.books.flatMap(b=>b.open.map(o=>({...o,book:b.key}))),box=$("pcards"),ids=new Set(op.map(o=>o.book+"|"+o.id));
-  for(const k of Object.keys(CARDS))if(!ids.has(k)){clearInterval(CARDS[k].timer);if(CARDS[k].chart)CARDS[k].chart.remove();CARDS[k].el.remove();delete CARDS[k]}
-  if(!op.length){box.querySelectorAll(".mut").forEach(x=>x.remove());if(!box.querySelector(".pcard"))box.innerHTML="<div class=mut>No open paper positions right now — a chart card appears here automatically when a book fills.</div>";return}
-  box.querySelectorAll(":scope > .mut").forEach(x=>x.remove());
-  for(const o of op){const k=o.book+"|"+o.id;let c=CARDS[k];
-    if(!c){const el=document.createElement("div");el.className="pcard";const tid="tv_"+k.replace(/\W/g,"_"),lid="lw_"+k.replace(/\W/g,"_");
-      el.innerHTML=`<div><b>${o.book}</b> · <b>${o.coin}</b> ${sd(o.side)} · id ${o.id} · opened ${o.entry_et} ET <span class=mut>(${esc(o.session||"")})</span> · <a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(o.coin))}" target=_blank>open in TradingView</a></div><div class=lv></div>
-       <div class=pgrid><div><div class=mut style="font-size:12px">TradingView ${tvSym(o.coin)} · 5m (switch to 1m in the chart) · if blank, ${o.coin} may be HL-only (no TradingView perp feed) — use the HL chart on the right</div><div class=tvbox id="${tid}"></div></div>
-       <div><div class=mut style="font-size:12px">Hyperliquid ${o.coin} 1m (your local time) · <span style="color:#58a6ff">entry</span> / <span class=bad>stop</span> / <span class=ok>TP</span> / <span class=warn>1st liquidity</span> lines</div><div class=lwbox id="${lid}"></div></div></div>
-       <details><summary>why this trade</summary><div>${esc(o.trigger)}</div></details>`;
-      box.appendChild(el);c=CARDS[k]={el};
-      try{new TradingView.widget({container_id:tid,symbol:tvSym(o.coin),interval:"5",theme:"dark",style:"1",timezone:"America/New_York",autosize:true,hide_side_toolbar:false,allow_symbol_change:true,withdateranges:true,locale:"en"})}catch(e){$(tid).innerHTML="<div class=bad style='padding:8px'>TradingView widget failed to load</div>"}
-      try{const lw=$(lid);c.chart=LightweightCharts.createChart(lw,{autoSize:true,layout:{background:{color:"#0d1117"},textColor:"#c9d1d9"},grid:{vertLines:{color:"#21262d"},horzLines:{color:"#21262d"}},timeScale:{timeVisible:true,secondsVisible:false},rightPriceScale:{borderColor:"#30363d"}});
-        c.ser=c.chart.addCandlestickSeries({upColor:"#3fb950",downColor:"#f85149",borderVisible:false,wickUpColor:"#3fb950",wickDownColor:"#f85149"});loadLW(c,o);c.timer=setInterval(()=>loadLW(c,c.o),60000)}catch(e){$(lid).innerHTML="<div class=bad style='padding:8px'>chart library failed to load — levels are listed above</div>"}}
-    c.o=o;c.el.querySelector(".lv").innerHTML=lv(o);if(c.ser&&c.lines)setLines(c,o)}
-}
-const _render=render;render=function(){_render();try{renderExtra()}catch(e){console.error(e)}};
-/* ==== simple view (Nov 2) — display only, reads the same data.json ==== */
-const SV={
- FAM:[
-  {k:"A",name:"Fib pullback",what:"Waits for a pullback into the 0.5–0.786 fib at a flipped level and buys or sells it with a resting limit order."},
-  {k:"B",name:"Fib pullback + absorption",what:"Same fib pullback, but only enters when the 1-minute candle shows buyers or sellers being absorbed at the level."},
-  {k:"C",name:"Break & retest",what:"Trades the retest of a broken 15-minute swing or yesterday's high or low."},
-  {k:"D",name:"Alt scanner (bank heist)",what:"Fib pullbacks on the 5 most volatile liquid Hyperliquid coins (BTC excluded)."}],
- VER:[
-  {s:"",name:"Original",vs:"trend filter on · 1R target"},
-  {s:"2",name:"No trend filter",vs:"both directions · 1R target"},
-  {s:"3",name:"Confirmed entry",vs:"waits for rejection candle · runner target"}],
- ORIG:["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"],
- isRTH(et){if(!et)return false;const d=new Date(et.slice(0,10)+"T00:00:00Z").getUTCDay(),m=+et.slice(11,13)*60+ +et.slice(14,16);return d>=1&&d<=5&&m>=570&&m<960},
- st(ts){const n=ts.length,w=ts.filter(t=>t.R>0).length,R=ts.reduce((a,t)=>a+t.R,0),U=ts.reduce((a,t)=>a+(t.usd||0),0);return {n,w,l:n-w,R,U,win:n?100*w/n:null,avg:n?R/n:null}},
- fR(x){return x==null?"–":(x>0?"+":x<0?"−":"")+Math.abs(x).toFixed(2)+"R"},
- fU(x){return (x<0?"−$":x>0?"+$":"$")+Math.abs(x).toFixed(2)},
- c(x){return x>0?"g":x<0?"r":""},
- pct(s){return s.n?Math.round(s.win)+"%":"–"},
- esc(s){return (s??"").toString().replace(/[&<>]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[ch]))},
- famOf(book){return book[0]},
- verLabel(book){const m=book.match(/^([A-D])(\d?)(?:-(RTH|AH))?$/);if(!m)return {name:book,vs:""};const v=SV.VER.find(v=>v.s==m[2])||SV.VER[0];
-   if(!m[3])return {name:v.name,vs:v.vs};
-   return m[3]=="RTH"?{name:v.name+" · reg. hours",vs:"BTC only, 9:30–4 ET"}:{name:v.name+" · after hours",vs:"outside 9:30–4 ET"}},
- trades(D){return (D.trades||[]).slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1)},
- // total line + family cards + session table (results page)
- renderResults(D,el){
-  const T=SV.trades(D),O=T.filter(t=>SV.ORIG.includes(t.book)),S=SV.st(O),risk=D.rules?.risk_usd??0.75;
-  const head=`<div class="total ${S.R>0?"win":"loss"}"><div class=cap>Total paper result · 12 original strategy versions · after fees</div>
-   <div class="big2 ${SV.c(S.R)}">${SV.fR(S.R)}</div>
-   <div class=sub2>${S.n} trades · ${S.w} wins, ${S.l} losses · win rate ${SV.pct(S)} · ${SV.fU(S.U)} at $${risk.toFixed(2)} per 1R</div></div>`;
-  const books=(D.books||[]).map(b=>b.key);
-  const fams=SV.FAM.map(F=>{
-    const keys=books.filter(k=>SV.famOf(k)==F.k);
-    const rows=keys.map(k=>({k,orig:SV.ORIG.includes(k),s:SV.st(T.filter(t=>t.book==k))}));
-    rows.sort((a,b)=>(b.orig-a.orig)||(keys.indexOf(a.k)-keys.indexOf(b.k)));
-    const fs=SV.st(O.filter(t=>SV.famOf(t.book)==F.k));
-    const tradedRows=rows.filter(r=>r.s.n);const best=tradedRows.length?tradedRows.reduce((a,b)=>b.s.R>a.s.R?b:a):null;
-    const tr=r=>{const v=SV.verLabel(r.k);return `<tr class="${r.orig?"":"copy"} ${r.s.n?"":"zero"} ${best&&r===best&&r.s.R>0?"best1":""}"><td><b>${SV.esc(v.name)}</b> <span class=m style="font-size:13px">${r.k}</span><span class=vs>${SV.esc(v.vs)}</span></td>
-      <td>${r.s.n}</td><td>${SV.pct(r.s)}</td><td class="${SV.c(r.s.R)}"><b>${r.s.n?SV.fR(r.s.R):"–"}</b></td><td class="${SV.c(r.s.avg)}">${SV.fR(r.s.avg)}</td></tr>`};
-    const o=rows.filter(r=>r.orig),cp=rows.filter(r=>!r.orig);
-    return {F,fs,html:t=>`<div class="fam ${t?"best":""}"><h3>${F.name} <span class=m style="font-weight:400">(${F.k})</span>${t?'<span class=bestb>best family</span>':""}</h3>
-     <div class=what>${F.what}</div>
-     <div class=sum>Family total: <b class="${SV.c(fs.R)}">${fs.n?SV.fR(fs.R):"–"}</b> · ${fs.n} trades · win rate ${SV.pct(fs)}</div>
-     <table><tr><th>Version</th><th>Trades</th><th>Win</th><th>Net R</th><th>Avg R</th></tr>${o.map(tr).join("")}
-     ${cp.length?`<tr class=sep><td colspan=5>Session test copies · started Nov 2, not in totals</td></tr>${cp.filter(r=>r.s.n).map(tr).join("")}${cp.some(r=>!r.s.n)?`<tr class=zero><td colspan=5 style="font-size:14px">No trades yet: ${cp.filter(r=>!r.s.n).map(r=>r.k).join(", ")}</td></tr>`:""}`:""}</table></div>`}});
-  const bf=fams.filter(x=>x.fs.n).reduce((a,b)=>!a||b.fs.R>a.fs.R?b:a,null);
-  const sess=SV.FAM.map(F=>{const ft=O.filter(t=>SV.famOf(t.book)==F.k),r=SV.st(ft.filter(t=>SV.isRTH(t.entry_et))),a=SV.st(ft.filter(t=>!SV.isRTH(t.entry_et)));return {F,r,a}});
-  const cell=s=>s.n?`<b class="${SV.c(s.R)}">${SV.fR(s.R)}</b><span class=vs>${s.n} trades · win ${SV.pct(s)}</span>`:`<span class=m>no trades</span>`;
-  const rAll=SV.st(O.filter(t=>SV.isRTH(t.entry_et))),aAll=SV.st(O.filter(t=>!SV.isRTH(t.entry_et)));
-  el.innerHTML=head+`<h2>Each strategy</h2><div class=fams>${fams.map(x=>x.html(x===bf&&bf.fs.R>0)).join("")}</div>
-   <div class=fine>★ = best version in that card. Net R is after fees; 1R = $${risk.toFixed(2)} risk per trade. Win = trade closed above 0R.</div>
-   <h2>Regular hours vs after hours</h2><div class=box><table><tr><th>Strategy</th><th>Regular hours<br><span style="text-transform:none;font-weight:400">weekdays 9:30–4 ET</span></th><th>After hours<br><span style="text-transform:none;font-weight:400">evenings, nights, weekends</span></th></tr>
-   ${sess.map(x=>`<tr><td><b>${x.F.name}</b> <span class=m style="font-size:13px">(${x.F.k})</span></td><td>${cell(x.r)}</td><td>${cell(x.a)}</td></tr>`).join("")}
-   <tr><td><b>All 12 versions</b></td><td>${cell(rAll)}</td><td>${cell(aAll)}</td></tr></table></div>
-   <div class=fine>Split by entry time (ET), original 12 versions only.</div>`;
- },
- // open positions + today's trades (live board)
- renderLive(D,el){
-  const T=SV.trades(D),now=new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});
-  const O=T.filter(t=>SV.ORIG.includes(t.book)),S=SV.st(O);
-  const op=(D.books||[]).flatMap(b=>(b.open||[]).map(o=>({...o,book:b.key})));
-  const fname=k=>(SV.FAM.find(F=>F.k==SV.famOf(k))||{name:k}).name;
-  const px=x=>x==null?"–":(x>=1000?(+x).toLocaleString(undefined,{maximumFractionDigits:1}):x>=1?(+x).toFixed(4):(+x).toPrecision(5));
-  const opH=op.length?op.map(o=>`<div class=opos><div class=h>${SV.esc(o.coin)} <span class="${o.side>0?"g":"r"}">${o.side>0?"LONG":"SHORT"}</span> · <span class="${SV.c(o.uR)}">${o.uR!=null?SV.fR(o.uR):"–"}</span></div>
-     <div class=l>${fname(o.book)} · ${SV.esc(SV.verLabel(o.book).name)} (${o.book}) · opened ${SV.esc((o.entry_et||"").slice(11))} ET</div>
-     <div class=l>Entry ${px(o.fill)} · <span class=r>Stop ${px(o.stop)}</span> · <span class=g>Target ${px(o.tp)}</span> · now ${px(o.mark)}</div></div>`).join(""):`<div class=none>No open paper trades right now.</div>`;
-  const td=T.filter(t=>(t.exit_et||"").slice(0,10)==now).reverse(),ts=SV.st(td.filter(t=>SV.ORIG.includes(t.book)));
-  const tdH=td.length?`<div class=box><table><tr><th>Time</th><th>Trade</th><th>Result</th></tr>${td.map(t=>`<tr class="${SV.ORIG.includes(t.book)?"":"copy"}"><td>${SV.esc(t.exit_et.slice(11))}</td>
-     <td><b>${SV.esc(t.coin)}</b> <span class="${t.side>0?"g":"r"}">${t.side>0?"long":"short"}</span><span class=vs>${fname(t.book)} · ${SV.esc(SV.verLabel(t.book).name)} (${t.book}) · ${SV.esc(t.how)}</span></td>
-     <td class="${SV.c(t.R)}"><b>${SV.fR(t.R)}</b></td></tr>`).join("")}</table></div>`:`<div class=none>No trades closed yet today.</div>`;
-  el.innerHTML=`<div class="total ${S.R>0?"win":"loss"}"><div class=cap>Total so far · 12 original versions · after fees</div><div class="big2 ${SV.c(S.R)}">${SV.fR(S.R)}</div>
-    <div class=sub2>${S.n} trades · win rate ${SV.pct(S)} · <a href="../scalp-pnl/">see results by strategy →</a></div></div>
-   <h2>Open now (${op.length})</h2>${opH}
-   <h2>Today's closed trades <span class=m style="font-weight:400;font-size:15px">· ${ts.n?SV.fR(ts.R)+" · "+ts.n+" trades · win "+SV.pct(ts):"none yet"}</span></h2>${tdH}
-   ${td.some(t=>!SV.ORIG.includes(t.book))?`<div class=fine>Greyed rows are session test copies; they repeat their parents and aren't in the totals.</div>`:""}`;
- }
-};
-
-const _r2=render;render=function(){try{SV.renderLive(D,$("svlive"));$("svupd").textContent="Updated "+(D.updated_et||"")+" · refreshes every 90 s · after fees";}catch(e){console.error(e)}try{_r2()}catch(e){console.error(e)}};
-$("ord").onchange=render;$("xall").onchange=render;$("nb").onchange=render;$("nc").onchange=render;load();setInterval(load,90000);
-</script><a href="/ai-trading-bot-/" id="homelink" style="position:fixed;left:10px;bottom:10px;z-index:99;background:#111;color:#e8e8e8;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">⌂ Home</a><a href="../scalp-pnl/" id="pnllink" style="position:fixed;left:84px;bottom:10px;z-index:99;background:#111;color:#e6c07b;border:1px solid #333;border-radius:6px;padding:5px 10px;font:12px system-ui,sans-serif;text-decoration:none;opacity:.92">💰 PnL board</a></body></html>
+async function mids(){try{const r=await fetch("https://api.hyperliquid.xyz/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"allMids"})});const j=await r.json();MIDS={};for(const k in j)MIDS[k]=+j[k]}catch(e){}}
+function render(){if(!D)return;
+  const keep=(D.active_books||KEEP),today=D.today_et||D.updated_et.slice(0,10);
+  const books=keep.map(k=>D.books.find(b=>b.key===k)).filter(Boolean);
+  const all=D.trades.filter(t=>keep.includes(t.book)),T=st(all),Td=st(all.filter(t=>(t.exit_et||"").startsWith(today)));
+  let openAll=books.flatMap(b=>b.open),uTot=openAll.reduce((a,p)=>a+(uR(p)[1]||0),0);
+  const hb=D.heartbeat||{};
+  $("status").innerHTML=`Updated ${esc(D.updated_et)} · bot ${hb.ts_et?"<span class=ok>running</span> (heartbeat "+esc(hb.ts_et.slice(11,16))+" ET)":"<span class=warn>no heartbeat</span>"} · now: ${D.session_now==="RTH"?"regular hours":"after hours"}`;
+  $("total").innerHTML=`<div class=k>COMBINED (D + A2, closed trades)</div><div class=top>
+   <div><span class=k>Trades</span><b>${T.n}</b></div><div><span class=k>Win rate</span><b>${f(T.win,0)}%</b></div>
+   <div><span class=k>Total R</span><b class=${cl(T.R)}>${sg(T.R)}R</b></div><div><span class=k>P&amp;L</span><b class=${cl(T.u)}>${usd(T.u)}</b></div>
+   <div><span class=k>Today</span><b class=${cl(Td.u)}>${usd(Td.u)}</b><span class=k>${Td.n} trades, ${sg(Td.R)}R</span></div>
+   <div><span class=k>Open now</span><b>${openAll.length}</b><span class="k ${cl(uTot)}">${usd(uTot)} unrealized</span></div></div>`;
+  $("books").innerHTML=books.map(b=>{const tr=all.filter(t=>t.book===b.key),S=st(tr),Sd=st(tr.filter(t=>(t.exit_et||"").startsWith(today)));
+    const rth=b.rth||{},ah=b.ah||{};
+    const op=b.open.length?`<div class=scroll><table><tr><th>Coin</th><th>Side</th><th>Entry</th><th>Stop</th><th>TP</th><th>Mark</th><th>Unrealized</th></tr>${b.open.map(p=>{const[r,u,m]=uR(p);
+      return`<tr><td><b>${esc(p.coin)}</b></td><td>${p.side>0?"<span class=ok>LONG</span>":"<span class=bad>SHORT</span>"}</td><td>${px(p.fill)}</td><td>${px(p.stop)}</td><td>${px(p.tp)}</td><td>${px(m)}</td><td class=${cl(r)}><b>${sg(r)}R</b> ${usd(u)}</td></tr>`}).join("")}</table></div><div class=k>opened ${b.open.map(p=>esc(p.coin)+" "+esc((p.entry_et||"").slice(11))+" ET").join(", ")}</div>`
+      :`<div class=mut>No open position right now.</div>`;
+    return`<div class=card><div style="font-weight:600;font-size:16px">${esc(NAMES[b.key]||b.name)}</div>
+     <div class=row style="margin-top:8px"><div><span class=k>Trades</span><b>${S.n}</b></div><div><span class=k>Win rate</span><b>${f(S.win,0)}%</b></div>
+     <div><span class=k>R</span><b class=${cl(S.R)}>${sg(S.R)}R</b></div><div><span class=k>P&amp;L</span><b class=${cl(S.u)}>${usd(S.u)}</b></div>
+     <div><span class=k>Today</span><b class=${cl(Sd.u)}>${usd(Sd.u)}</b><span class=k>${Sd.n} trades, ${sg(Sd.R)}R</span></div></div>
+     <div class=k style="margin-top:6px">Regular hours: ${rth.n||0} trades, ${sg(rth.totR||0)}R ${usd(rth.net||0)} · After hours: ${ah.n||0} trades, ${sg(ah.totR||0)}R ${usd(ah.net||0)}</div>
+     <div class=live><div style="font-weight:600;margin-bottom:4px">LIVE OPEN POSITIONS</div>${op}</div></div>`}).join("");
+  // details
+  const recent=all.slice(0,30);
+  let h=`<h3>Last ${recent.length} trades (D + A2)</h3><div class=scroll><table><tr><th>Exit (ET)</th><th>Book</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>How</th><th>R</th><th>$</th></tr>${recent.map(t=>`<tr><td>${esc(t.exit_et)}</td><td>${esc(t.book)}</td><td>${esc(t.coin)}</td><td>${t.side>0?"L":"S"}</td><td>${px(t.fill)}</td><td>${px(t.exit)}</td><td>${esc(t.how)}</td><td class=${cl(t.R)}>${sg(t.R)}</td><td class=${cl(t.usd)}>${usd(t.usd)}</td></tr>`).join("")}</table></div>`;
+  for(const b of books){h+=`<h3>${esc(b.key)}: waiting entries</h3>`+(b.pending.length?b.pending.map(s=>`<div class=k>${esc(s.coin)} ${s.side>0?"long":"short"} @ ${px(s.px)} · stop ${px(s.stop)} · ${esc(s.status)}</div>`).join(""):"<div class=k>none</div>");
+    h+=`<details><summary>${esc(b.key)} rules</summary><div class=k>${esc(b.desc)}</div></details>`}
+  const old=D.books.filter(b=>!keep.includes(b.key)&&(b.n||b.open.length));
+  h+=`<h3>Scrapped books (Nov 3 — no new trades; any open position runs to its normal exit)</h3><div class=scroll><table><tr><th>Book</th><th>Trades</th><th>Win</th><th>R</th><th>$</th><th>Still open</th></tr>${old.map(b=>`<tr><td>${esc(b.key)}</td><td>${b.n}</td><td>${f(b.win,0)}%</td><td class=${cl(b.totR)}>${sg(b.totR)}</td><td class=${cl(b.net)}>${usd(b.net)}</td><td>${b.open.map(p=>esc(p.coin)).join(", ")||"–"}</td></tr>`).join("")}</table></div>`;
+  $("details").innerHTML=h;}
+load();setInterval(load,90000);setInterval(async()=>{await mids();render()},30000);
+</script></body></html>
