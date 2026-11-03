@@ -122,21 +122,21 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
   <div id="perfTop">loading…</div>
   <div class="hero" id="hero" style="display:none"></div>
   <div class="kpis" id="kpis"></div>
-  <div class="note" id="notes"></div>
+  <div class="note" id="notes" style="display:none"></div>
   <div class="card"><div class="card-h"><h2>Daily PnL calendar (ET, by exit time)</h2><span class="muted" style="font-size:11px">click a day for its trades</span>
     <div class="nav"><button onclick="mv(-1)">‹</button><span class="mon" id="mon"></span><button onclick="mv(1)">›</button></div></div>
     <div class="card-b"><div class="cal" id="cal"></div></div></div>
-  <div class="card"><div class="card-h"><h2>Equity curve · all books combined</h2>
+  <div class="card"><div class="card-h"><h2>Equity curve · D + A2 combined</h2>
     <div class="seg" style="margin-left:auto"><button id="uR" class="on" onclick="setU('R')">R</button><button id="uU" onclick="setU('$')">$</button></div></div>
     <div class="card-b" id="eq"></div></div>
   <div class="card"><div class="card-h"><h2>Per book</h2><span class="muted" style="font-size:11px">sorted by total R · max DD = deepest drop from the running peak (closed trades)</span></div>
     <div class="card-b tbl" id="books"></div></div>
-  <div class="card"><div class="card-h"><h2>Groups</h2></div><div class="card-b tbl" id="groups"></div></div>
-  <div class="card"><div class="card-h"><h2>Session test · regular hours (RTH) vs after hours (AH)</h2><span class="muted" style="font-size:11px">RTH = weekdays 9:30–16:00 ET by entry time · new Nov 2 21:30 ET</span></div><div class="card-b tbl" id="sessbk"></div></div>
-  <div class="card"><div class="card-h"><h2>Per book · RTH vs AH split</h2><span class="muted" style="font-size:11px">original books, by entry time ET</span></div><div class="card-b tbl" id="sesssplit"></div></div>
+  <div class="card" style="display:none"><div class="card-h"><h2>Groups</h2></div><div class="card-b tbl" id="groups"></div></div>
+  <div class="card" style="display:none"><div class="card-h"><h2>Session test · regular hours (RTH) vs after hours (AH)</h2><span class="muted" style="font-size:11px">RTH = weekdays 9:30–16:00 ET by entry time · new Nov 2 21:30 ET</span></div><div class="card-b tbl" id="sessbk"></div></div>
+  <div class="card"><div class="card-h"><h2>Per book · RTH vs AH split</h2><span class="muted" style="font-size:11px">D and A2, by entry time ET</span></div><div class="card-b tbl" id="sesssplit"></div></div>
   <div id="perfBot"></div>
   <div class="card"><div class="card-h"><h2>Per day</h2></div><div class="card-b tbl" id="days"></div></div>
-  <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals · incl. session test books)</h2></div><div class="card-b tbl" id="open"></div></div>
+  <div class="card"><div class="card-h"><h2>Open positions (unrealized, not in totals)</h2></div><div class="card-b tbl" id="open"></div></div>
   <div class="card"><div class="card-h"><h2>All closed trades</h2></div><div class="card-b tbl" id="all"></div></div>
   <div class="footer" id="foot"></div>
 </div>
@@ -146,8 +146,8 @@ td.num,th.num{text-align:right;font-family:var(--mono)}tr:hover td{background:#1
 <script src="../assets/perf.js"></script>
 <script>
 const REPO="197mongrain-ux/ai-trading-bot-",BR="scalp-paper-data",P="scalp-paper/data.json";
-const ORDER=["A","B","C","D","A2","B2","C2","D2","A3","B3","C3","D3"];
-const SORDER=["A-RTH","B-RTH","C-RTH","A2-RTH","B2-RTH","C2-RTH","A3-RTH","B3-RTH","C3-RTH","D-AH","D2-AH","D3-AH"];
+const ORDER=["D","A2"];
+const SORDER=[];
 const isRTH=et=>{if(!et)return false;const d=new Date(et.slice(0,10)+"T00:00:00Z").getUTCDay(),m=+et.slice(11,13)*60+ +et.slice(14,16);return d>=1&&d<=5&&m>=570&&m<960};
 let TS=[];
 const FLOOR_TS="2026-11-02 15:22";  // NETR_MIN lowered 1.2R -> 0.9R (ET)
@@ -165,7 +165,7 @@ function stats(ts){ts=ts.slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1);let n=ts.
   return {n,w,l:n-w,win:n?100*w/n:null,R,U,avg:n?R/n:null,dd,ddU:dd*RISK,fr,g,best,worst}}
 async function load(){
   const urls=[`https://api.github.com/repos/${REPO}/contents/${P}?ref=${BR}&t=${Date.now()}`,`https://raw.githubusercontent.com/${REPO}/${BR}/${P}?t=${Date.now()}`];
-  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=await r.json();render();return}}catch(e){}}
+  for(const [i,u] of urls.entries()){try{const r=await fetch(u,i==0?{headers:{Accept:"application/vnd.github.raw"},cache:"no-store"}:{cache:"no-store"});if(r.ok){D=SV.keep2(await r.json());render();return}}catch(e){}}
   $("sub").innerHTML="<span class=neg>could not load data</span>";}
 function trRow(t,showDay){return `<tr><td class=mono>${showDay?esc(t.exit_et):esc(t.exit_et.slice(11))}</td><td><b>${t.book}</b></td><td>${esc(t.coin)}</td><td class=${t.side>0?"pos":"neg"}>${t.side>0?"LONG":"SHORT"}</td>
  <td class=num>${px(t.fill)}</td><td class=num>${px(t.exit)}</td><td>${esc(t.how)}${isHeist(t)?' <span class="pill h">heist</span>':""}</td><td class=num>${t.dur_min??"–"}m</td>
@@ -353,6 +353,38 @@ const SV={
    <h2>Today's closed trades <span class=m style="font-weight:400;font-size:15px">· ${ts.n?SV.fR(ts.R)+" · "+ts.n+" trades · win "+SV.pct(ts):"none yet"}</span></h2>${tdH}
    ${td.some(t=>!SV.ORIG.includes(t.book))?`<div class=fine>Greyed rows are session test copies; they repeat their parents and aren't in the totals.</div>`:""}`;
  }
+};
+/* ==== 2-book results view (Nov 3, Chris: only D and A2 still trading) — display only ==== */
+SV.KEEP=["D","A2"];
+SV.ORIG=SV.KEEP.slice();
+SV.BOOK2={
+ D:{name:"Fib pullback · alt scanner",what:"Fib pullbacks at a flipped level on the 5 most volatile liquid Hyperliquid coins (BTC excluded). 1R target, 30-min timer."},
+ A2:{name:"Fib pullback · no trend filter",what:"Fib pullback at a flipped level on BTC + the top-6 coins by volume, longs and shorts either way. 1R target, 60-min timer."}};
+SV.keep2=function(D){if(!D||D._k2)return D;const K=SV.KEEP;
+ D.trades=(D.trades||[]).filter(t=>K.includes(t.book));
+ D.books=(D.books||[]).filter(b=>K.includes(b.key)).sort((a,b)=>K.indexOf(a.key)-K.indexOf(b.key));
+ D.session_pairs=[];D.session_books=[];D._k2=1;return D};
+SV.renderResults=function(D,el){
+ SV.keep2(D);
+ const T=SV.trades(D),S=SV.st(T),risk=D.rules?.risk_usd??0.75,K=SV.KEEP;
+ const now=new Date().toLocaleDateString("en-CA",{timeZone:"America/New_York"});
+ const isT=t=>(t.exit_et||"").slice(0,10)==now,TD=SV.st(T.filter(isT));
+ const head=`<div class="total ${S.R>0?"win":"loss"}"><div class=cap>Total paper result · D + A2 (the 2 books still trading) · after fees</div>
+  <div class="big2 ${SV.c(S.R)}">${SV.fR(S.R)}</div>
+  <div class=sub2>${S.n} trades · ${S.w} wins, ${S.l} losses · win rate ${SV.pct(S)} · ${SV.fU(S.U)} at $${risk.toFixed(2)} per 1R</div>
+  <div class=sub2>Today: <b class="${SV.c(TD.R)}">${TD.n?SV.fR(TD.R):"–"}</b> · ${TD.n} trades · win rate ${SV.pct(TD)}</div></div>`;
+ const cards=K.map(k=>{const bt=T.filter(t=>t.book==k),s=SV.st(bt),d=SV.st(bt.filter(isT)),I=SV.BOOK2[k];
+  return `<div class="fam ${s.R>0?"best":""}"><h3>${SV.esc(I.name)} <span class=m style="font-weight:400">(${k})</span></h3><div class=what>${SV.esc(I.what)}</div>
+   <table><tr><th></th><th>Trades</th><th>Win</th><th>Net R</th></tr>
+   <tr><td><b>All time</b></td><td>${s.n}</td><td>${SV.pct(s)}</td><td class="${SV.c(s.R)}"><b>${s.n?SV.fR(s.R):"–"}</b></td></tr>
+   <tr><td><b>Today</b></td><td>${d.n}</td><td>${SV.pct(d)}</td><td class="${SV.c(d.R)}"><b>${d.n?SV.fR(d.R):"–"}</b></td></tr></table></div>`}).join("");
+ const cell=s=>s.n?`<b class="${SV.c(s.R)}">${SV.fR(s.R)}</b><span class=vs>${s.n} trades · win ${SV.pct(s)}</span>`:`<span class=m>no trades</span>`;
+ const row=(lab,ts)=>`<tr><td><b>${lab}</b></td><td>${cell(SV.st(ts.filter(t=>SV.isRTH(t.entry_et))))}</td><td>${cell(SV.st(ts.filter(t=>!SV.isRTH(t.entry_et))))}</td></tr>`;
+ el.innerHTML=head+`<h2>Each book</h2><div class=fams>${cards}</div>
+  <div class=fine>Net R is after fees; 1R = $${risk.toFixed(2)} risk per trade. Win = trade closed above 0R. Older test books are retired and not shown.</div>
+  <h2>Regular hours vs after hours</h2><div class=box><table><tr><th>Book</th><th>Regular hours<br><span style="text-transform:none;font-weight:400">weekdays 9:30–4 ET</span></th><th>After hours<br><span style="text-transform:none;font-weight:400">evenings, nights, weekends</span></th></tr>
+  ${K.map(k=>row(k+" · "+SV.BOOK2[k].name,T.filter(t=>t.book==k))).join("")}${row("D + A2",T)}</table></div>
+  <div class=fine>Split by entry time (ET).</div>`;
 };
 
 const _oldRender=render;
