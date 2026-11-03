@@ -57,6 +57,9 @@ a.sc.up{background:linear-gradient(135deg,#03170a,#0b0b0b 70%);border-color:#144
   <a class="tile" href="rules-board/"><div class="t"><span class="ic">🎯</span>Rules board<span class="tag l">LIVE</span></div><div class="d">BTC, ETH, SOL, SP500: bias, pass/fail per rule, level + fib zone, stop/TP/R, READY / FORMING / WAIT. Refreshes every 5 min.</div><div class="n" id="rb"></div></a>
   <a class="tile" href="tv/"><div class="t"><span class="ic">📈</span>TradingView indicator</div><div class="d">"MB Template" Pine v5: fib zone, one flipped level, SL/TP + R, 4h background, small checklist. Copy &amp; paste into the Pine Editor.</div><div class="n"><span class=u>tap to copy the code</span></div></a>
  </div></div>
+ <div class="grp"><h2><span class="f">📁</span>Propr paper bot (simulated $25k)</h2><div class="tiles">
+  <a class="tile" href="propr-paper/"><div class="t"><span class="ic">🤖</span>Propr $25k paper bot<span class="tag p">PAPER</span></div><div class="d">Your Propr rules with automated entries on BTC + SPX: simulated balance, today's P&amp;L, daily loss room, progress to target, open orders/positions. No real orders.</div><div class="n" id="pp"></div></a>
+ </div></div>
  <div class="grp"><h2><span class="f">🗄️</span>Archive (no longer updated)</h2><div class="tiles">
   <a class="tile" href="model-b/"><div class="t"><span class="ic">🤖</span>Model B performance<span class="tag">ARCHIVE</span></div><div class="d">Old Model B bot mainnet performance board.</div><div class="n" id="mb"></div></a>
   <a class="tile" href="positions/"><div class="t"><span class="ic">📌</span>Open positions (old)<span class="tag">ARCHIVE</span></div><div class="d">Old live-positions / planned-exits page.</div><div class="n" id="po"></div></a>
@@ -97,6 +100,11 @@ function card(id,net,fmt,S,extra){const el=$(id),up=net>0.005;el.className="sc "
   if(!d){$("rb").innerHTML="<span class=u>open board for status</span>";return}
   const M=d.markets||[],k=s=>M.filter(m=>m.status==s).map(m=>m.coin.replace("xyz:","")).join(", ");
   $("rb").innerHTML=`<span class="big ${k("READY")?"pos":""}">${M.filter(m=>m.status=="READY").length} READY</span> · ${M.filter(m=>m.status=="FORMING").length} forming${k("FORMING")?" ("+k("FORMING")+")":""}<div class=u>updated ${d.updated_et} ET</div>`})();
+(async()=>{const R="197mongrain-ux/ai-trading-bot-",P="propr-paper/data.json";let d=null;
+  try{d=await J(`https://api.github.com/repos/${R}/contents/${P}?ref=propr-paper-data`,{headers:{Accept:"application/vnd.github.raw"}})}catch(e){try{d=await J(`https://raw.githubusercontent.com/${R}/propr-paper-data/${P}`)}catch(e2){}}
+  if(!d){$("pp").innerHTML="<span class=u>open board for status</span>";return}
+  const a=d.account,f=x=>(x<0?"−$":"$")+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:0});
+  $("pp").innerHTML=`<span class="big">${f(a.balance)}</span> · today ${a.today_pnl>0?"+":""}${f(a.today_pnl)}<div class=u>${(d.markets||[]).map(m=>m.name.split(" ")[0]+": "+m.status).join(" · ")} · updated ${d.updated_et} ET</div>`})();
 </script>
 </body>
 </html>
