@@ -1,8 +1,8 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1793657481131,
- "generated_et": "2026-11-02 17:11:21",
+ "generated_ms": 1793761505727,
+ "generated_et": "2026-11-03 22:05:05",
  "challenge": {
   "name": "Bronze 2-Step Classic",
   "phase_order": 1,
@@ -10,39 +10,39 @@
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 25162.79,
-  "equity": 25162.79,
-  "hwm": 25169.7,
+  "balance": 25556.81,
+  "equity": 25556.81,
+  "hwm": 25561.93,
   "dd_pct": 8.0,
-  "dd_floor": 23169.7,
-  "dd_distance": 1993.1,
+  "dd_floor": 23561.93,
+  "dd_distance": 1994.88,
   "dl_pct": 5.0,
-  "sod_balance": 24827.45,
-  "daily_limit": 1241.37,
-  "daily_floor": 23586.08,
-  "daily_distance": 1576.71,
-  "today_pnl": 335.34,
-  "next_reset_et": "Nov 02 07:00 PM",
+  "sod_balance": 25161.43,
+  "daily_limit": 1258.07,
+  "daily_floor": 23903.36,
+  "daily_distance": 1653.45,
+  "today_pnl": 395.38,
+  "next_reset_et": "Nov 04 07:00 PM",
   "target_pct": 5.0,
   "target_equity": 26250.0,
   "target_usd": 1250.0,
-  "progress_usd": 162.79,
+  "progress_usd": 556.81,
   "binding_name": "daily loss",
-  "binding_floor": 23586.08,
-  "binding_distance": 1576.71,
-  "reconciliation_diff_ex_funding": 5.7304
+  "binding_floor": 23903.36,
+  "binding_distance": 1653.45,
+  "reconciliation_diff_ex_funding": 8.0405
  },
  "kpis": {
-  "today": 338.13,
-  "week": 338.13,
-  "mtd": 338.13,
-  "all_time": 162.79,
-  "win_rate": 50.0,
-  "wins": 3,
+  "today": 394.02,
+  "week": 732.15,
+  "mtd": 732.15,
+  "all_time": 556.81,
+  "win_rate": 62.5,
+  "wins": 5,
   "losses": 3,
-  "closed": 6,
+  "closed": 8,
   "open_upnl": 0.0,
-  "today_key": "2026-11-02",
+  "today_key": "2026-11-03",
   "week_start": "2026-11-02"
  },
  "days": {
@@ -93,6 +93,18 @@
    "risk": 232.24,
    "best": 208.84,
    "worst": 129.29
+  },
+  "2026-11-03": {
+   "net": 394.02,
+   "gross": 404.07,
+   "fees": 12.37,
+   "funding": 2.31,
+   "trades": 2,
+   "wins": 2,
+   "losses": 0,
+   "risk": 198.73,
+   "best": 274.78,
+   "worst": 119.23
   }
  },
  "trades": [
@@ -413,6 +425,147 @@
    "close_et": "2026-11-02 15:58",
    "result": "WIN",
    "day": "2026-11-02"
+  },
+  {
+   "stop_path": [
+    [
+     1793736561802,
+     1793751045441,
+     78611.0
+    ],
+    [
+     1793751043313,
+     1793761046172,
+     78080.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1793736561802,
+     1793753303782,
+     76365.0
+    ],
+    [
+     1793753301618,
+     1793761046172,
+     76513.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.102,
+   "entry": 77722.0,
+   "stop": 78080.0,
+   "target": 76513.0,
+   "risk": 90.68,
+   "initial_stop": 78611.0,
+   "initial_risk": 90.68,
+   "final_risk": 36.52,
+   "fee_open": 1.1891,
+   "fee_close": 3.5119,
+   "fees": 4.7011,
+   "funding": 0.6168,
+   "gross": 123.318,
+   "open_ms": 1793736561802,
+   "open_et": "2026-11-03 15:09",
+   "n_fills": 2,
+   "status": "closed",
+   "id": "BTC-20261103-1509",
+   "note": "Long hold but the setup was right. Mirrored on both accounts, all TPs hit, a no-loss day.",
+   "img": "journal/img/BTC-20261103-1509.png",
+   "exit": 76513.0,
+   "net": 119.2337,
+   "exit_type": "TP",
+   "r_mult": 1.31,
+   "r_gross": 1.36,
+   "close_ms": 1793761046216,
+   "close_et": "2026-11-03 21:57",
+   "result": "WIN",
+   "day": "2026-11-03"
+  },
+  {
+   "stop_path": [
+    [
+     1793715863497,
+     1793722196569,
+     94.1
+    ],
+    [
+     1793722186968,
+     1793730810732,
+     95.385
+    ],
+    [
+     1793730801251,
+     1793751035530,
+     94.5
+    ],
+    [
+     1793751033348,
+     1793759757285,
+     93.82
+    ],
+    [
+     1793759755199,
+     1793761118066,
+     92.75
+    ]
+   ],
+   "tp_path": [
+    [
+     1793715863497,
+     1793722197174,
+     90.854
+    ],
+    [
+     1793722191659,
+     1793730811338,
+     90.854
+    ],
+    [
+     1793730805944,
+     1793753297648,
+     90.854
+    ],
+    [
+     1793753295530,
+     1793761118066,
+     91.133
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "SOL",
+   "side": "short",
+   "size": 154.8,
+   "entry": 93.402,
+   "stop": 92.75,
+   "target": 91.133,
+   "risk": 108.05,
+   "initial_stop": 94.1,
+   "initial_risk": 108.05,
+   "final_risk": 0.0,
+   "fee_open": 2.1688,
+   "fee_close": 5.4974,
+   "fees": 7.6662,
+   "funding": 1.6933,
+   "gross": 280.7568,
+   "open_ms": 1793715863497,
+   "open_et": "2026-11-03 09:24",
+   "n_fills": 3,
+   "status": "closed",
+   "id": "SOL-20261103-0924",
+   "note": "Long hold but the setup was right. Mirrored on both accounts, all TPs hit, a no-loss day.",
+   "img": "journal/img/SOL-20261103-0924.png",
+   "exit": 91.58832558139535,
+   "net": 274.7838,
+   "exit_type": "TP",
+   "r_mult": 2.54,
+   "r_gross": 2.6,
+   "close_ms": 1793761118105,
+   "close_et": "2026-11-03 21:58",
+   "result": "WIN",
+   "day": "2026-11-03"
   }
  ],
  "positions": [],
