@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Trading boards · Chris Mongrain</title>
+<title>Trade Hub · Chris Mongrain</title>
 <style>
 :root{--bg:#000;--panel:#0e0e0e;--border:#1a1a1a;--border2:#262626;--text:#e8e8e8;--muted:#8b8b8b;--dim:#5c5c5c;--green:#00c805;--red:#ff4d4f;--amber:#e6c07b;--accent:#6ea8fe;
 --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;--sans:"Inter","Segoe UI",system-ui,sans-serif}
@@ -31,40 +31,50 @@ a.sc.up{background:linear-gradient(135deg,#03170a,#0b0b0b 70%);border-color:#144
 .sc .l{color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase;display:flex;gap:.4rem}.sc .v{font-family:var(--mono);font-size:1.6rem;font-weight:750;margin:.2rem 0 .3rem}
 .yn{font-family:var(--mono);font-size:10px;font-weight:700;padding:.15rem .45rem;border-radius:4px;border:1px solid #262626}.yn.y{color:var(--green);border-color:#1a5c2a}.yn.n{color:var(--red);border-color:#7a3338}
 .sc .m{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:.35rem;line-height:1.5}.pb{height:6px;background:#151515;border-radius:3px;overflow:hidden;margin-top:.4rem}.pb i{display:block;height:100%;background:var(--green)}
+.jump{position:sticky;top:0;z-index:5;display:flex;gap:.4rem;overflow-x:auto;padding:.55rem 1.1rem;background:#000d;backdrop-filter:blur(6px);border-bottom:1px solid var(--border)}
+.jump a{flex:none;color:var(--text);text-decoration:none;font-size:12px;padding:.3rem .7rem;border:1px solid var(--border2);border-radius:999px}.jump a:hover{border-color:#444}
+.sec{display:flex;flex-direction:column;gap:1rem;scroll-margin-top:3rem}.sh{margin:.4rem 0 0;font-size:18px;display:flex;align-items:center;gap:.5rem}
+.grp.hl{border-left:3px solid var(--green);padding-left:.7rem}.grp.pr{border-left:3px solid #a970ff;padding-left:.7rem}
+@media(max-width:560px){.tiles{grid-template-columns:1fr}a.tile{min-height:0}}
 </style>
 </head>
 <body>
-<div class="top"><span style="color:var(--green);font-size:1.2rem">◆</span><h1>Trading boards</h1><span class="s">Chris Mongrain · all pages in one place · live numbers load from each board</span></div>
+<div class="top"><span style="color:var(--green);font-size:1.2rem">◆</span><h1>Trade Hub</h1><span class="s">Chris Mongrain · every board in one place · live numbers load from each board</span></div>
+<nav class="jump"><a href="#live">Live accounts</a><a href="#paper">Paper bots</a><a href="#tools">Setup &amp; tools</a></nav>
 <div class="wrap">
  <div class="grp"><h2><span class="f">📊</span>All-time summary (each account separate)</h2><div class="sum">
   <a class="sc" id="sHL" href="pnl/"><div class="l">Hyperliquid · manual · real money</div><div class="v">…</div></a>
-  <a class="sc" id="sPR" href="propr-pnl/"><div class="l">Propr evaluation · simulated $25k</div><div class="v">…</div></a>
+  <a class="sc" id="sPR" href="propr-pnl/"><div class="l">Propr evaluation · $25k challenge</div><div class="v">…</div></a>
   <a class="sc" id="sSP" href="scalp-pnl/"><div class="l">Scalp paper bot · paper</div><div class="v">…</div></a>
  </div></div>
- <div class="grp"><h2><span class="f">📁</span>Hyperliquid (mainnet)</h2><div class="tiles">
-  <a class="tile" href="pnl/"><div class="t"><span class="ic">📅</span>PnL calendar<span class="tag l">LIVE</span></div><div class="d">All-time dashboard (net PnL, profit factor, equity &amp; drawdown, by month / symbol / session, trade log) + daily calendar and open positions.</div><div class="n" id="hl"></div></a>
-  <a class="tile" href="journal/"><div class="t"><span class="ic">📓</span>Trade journal</div><div class="d">Every HL trade with chart (entry/exit, stop moves, TP), setup notes, management and result in $ and R.</div><div class="n" id="hlj"></div></a>
+ <section id="live" class="sec"><h3 class="sh">Live accounts</h3>
+ <div class="grp"><h2><span class="f">📌</span>Positions</h2><div class="tiles">
+  <a class="tile" href="positions/"><div class="t"><span class="ic">📌</span>Open positions<span class="tag l">LIVE</span></div><div class="d">Current open positions, stops and take-profits.</div><div class="n" id="po"></div></a>
  </div></div>
- <div class="grp"><h2><span class="f">📁</span>Propr (evaluation account)</h2><div class="tiles">
-  <a class="tile" href="propr-pnl/"><div class="t"><span class="ic">📅</span>Propr PnL calendar<span class="tag l">LIVE</span></div><div class="d">Challenge objectives (target, daily loss, trailing drawdown), all-time dashboard, equity curve, daily calendar. Separate from HL.</div><div class="n" id="pr"></div></a>
+ <div class="grp hl"><h2><span class="f">🟢</span>Hyperliquid</h2><div class="tiles">
+  <a class="tile" href="pnl/"><div class="t"><span class="ic">📅</span>HL PnL calendar<span class="tag l">LIVE</span></div><div class="d">Daily calendar, all-time PnL, equity &amp; drawdown, trade log.</div><div class="n" id="hl"></div></a>
+  <a class="tile" href="journal/"><div class="t"><span class="ic">📓</span>HL trade journal</div><div class="d">Every HL trade with chart, setup notes, management and result.</div><div class="n" id="hlj"></div></a>
+ </div></div>
+ <div class="grp pr"><h2><span class="f">🟣</span>Propr</h2><div class="tiles">
+  <a class="tile" href="propr-pnl/"><div class="t"><span class="ic">📅</span>Propr PnL calendar<span class="tag l">LIVE</span></div><div class="d">Challenge progress, daily loss &amp; drawdown room, daily calendar.</div><div class="n" id="pr"></div></a>
   <a class="tile" href="propr-pnl/journal/"><div class="t"><span class="ic">📓</span>Propr trade journal</div><div class="d">Propr trades with charts, management and notes.</div><div class="n" id="prj"></div></a>
  </div></div>
- <div class="grp"><h2><span class="f">📁</span>Scalp paper bot</h2><div class="tiles">
-  <a class="tile" href="scalp-pnl/"><div class="t"><span class="ic">💰</span>Scalp PnL board<span class="tag p">PAPER</span></div><div class="d">Is the bot in profit? All-time R/$ after fees, profit factor, equity &amp; drawdown, breakdowns, calendar, per-book table (A–D, A2–D2, A3–D3).</div><div class="n" id="sp"></div></a>
-  <a class="tile" href="scalp-paper/"><div class="t"><span class="ic">⚡</span>Live engine board<span class="tag p">PAPER</span></div><div class="d">Engine status, open positions with charts, pending setups, near-misses, rules per book.</div><div class="n" id="sl"></div></a>
+ </section>
+ <section id="paper" class="sec"><h3 class="sh">Paper bots <span class="tag p">PAPER ONLY</span></h3>
+ <div class="grp"><h2><span class="f">🤖</span>Bots</h2><div class="tiles">
+  <a class="tile" href="propr-paper/"><div class="t"><span class="ic">🤖</span>Propr $25k paper bot<span class="tag p">PAPER</span></div><div class="d">Your Propr rules on BTC + SPX, simulated balance. No real orders.</div><div class="n" id="pp"></div></a>
+  <a class="tile" href="scalp-paper/"><div class="t"><span class="ic">⚡</span>Scalp bot paper board<span class="tag p">PAPER</span></div><div class="d">Engine status, open paper positions, pending setups.</div><div class="n" id="sl"></div></a>
+  <a class="tile" href="scalp-pnl/"><div class="t"><span class="ic">💰</span>Scalp bot results<span class="tag p">PAPER</span></div><div class="d">All-time R and $ after fees, per-book results, calendar.</div><div class="n" id="sp"></div></a>
+  <a class="tile" href="model-b/"><div class="t"><span class="ic">🧪</span>Model B performance<span class="tag">ARCHIVE</span></div><div class="d">Old Model B bot performance board.</div><div class="n" id="mb"></div></a>
  </div></div>
- <div class="grp"><h2><span class="f">📁</span>Setup rules (Nov 2 template)</h2><div class="tiles">
-  <a class="tile" href="rules-board/"><div class="t"><span class="ic">🎯</span>Rules board<span class="tag l">LIVE</span></div><div class="d">BTC, ETH, SOL, SP500: bias, pass/fail per rule, level + fib zone, stop/TP/R, READY / FORMING / WAIT. Refreshes every 5 min.</div><div class="n" id="rb"></div></a>
-  <a class="tile" href="tv/"><div class="t"><span class="ic">📈</span>TradingView indicator</div><div class="d">"MB Template" Pine v5: fib zone, one flipped level, SL/TP + R, 4h background, small checklist. Copy &amp; paste into the Pine Editor.</div><div class="n"><span class=u>tap to copy the code</span></div></a>
+ </section>
+ <section id="tools" class="sec"><h3 class="sh">Setup &amp; tools</h3>
+ <div class="grp"><h2><span class="f">🎯</span>Setup</h2><div class="tiles">
+  <a class="tile" href="rules-board/"><div class="t"><span class="ic">🎯</span>Setup rules board<span class="tag l">LIVE</span></div><div class="d">Nov 2 template: BTC, ETH, SOL, SP500 READY / FORMING / WAIT.</div><div class="n" id="rb"></div></a>
+  <a class="tile" href="tv/"><div class="t"><span class="ic">📈</span>MB Template indicator</div><div class="d">TradingView Pine v5 code: copy &amp; paste into the Pine Editor.</div><div class="n"><span class=u>tap to open</span></div></a>
  </div></div>
- <div class="grp"><h2><span class="f">📁</span>Propr paper bot (simulated $25k)</h2><div class="tiles">
-  <a class="tile" href="propr-paper/"><div class="t"><span class="ic">🤖</span>Propr $25k paper bot<span class="tag p">PAPER</span></div><div class="d">Your Propr rules with automated entries on BTC + SPX: simulated balance, today's P&amp;L, daily loss room, progress to target, open orders/positions. No real orders.</div><div class="n" id="pp"></div></a>
- </div></div>
- <div class="grp"><h2><span class="f">🗄️</span>Archive (no longer updated)</h2><div class="tiles">
-  <a class="tile" href="model-b/"><div class="t"><span class="ic">🤖</span>Model B performance<span class="tag">ARCHIVE</span></div><div class="d">Old Model B bot mainnet performance board.</div><div class="n" id="mb"></div></a>
-  <a class="tile" href="positions/"><div class="t"><span class="ic">📌</span>Open positions (old)<span class="tag">ARCHIVE</span></div><div class="d">Old live-positions / planned-exits page.</div><div class="n" id="po"></div></a>
- </div></div>
- <div class="foot">Times are ET. Numbers on this page are fetched from each board's own data when you open it; tap a tile for the details.</div>
+ </section>
+ <div class="foot">Times are ET. Numbers are fetched from each board when you open this page; tap a card for details.</div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
