@@ -1301,5 +1301,93 @@
    ]
   ],
   "note": "Setup (Nov 2 template trade): BTC short. 4h downtrend (EMAs 20/50/200 at 78,315 / 79,508 / 81,065, ADX 29, -DI over +DI). Entry 78,000 was a limit at the round number and the broken Oct 30 1h low (flipped support to resistance), the 0.69 fib retracement of the 78,772 to 76,264 impulse. TP 76,264 at the impulse low (first liquidity), about 1.51R planned from the original stop 79,150 (about 0.5% above the 78,772 swing high, 1.47% away).\nHL: short 0.01723 at 20x isolated, about 2% risk (about $20.6 at the original stop incl. fees). Filled 1:15 AM ET Nov 1.\nManagement: stop tightened to 78,865 at 11:05 AM ET Nov 2, then moved to breakeven (78,000) at 1:11 PM ET at Chris's request; TP left at 76,264.\nExit: Chris closed it manually at market at 76,765 (3:58 PM ET) at the end of the day (day done). The remaining stop and TP were cancelled automatically when the position closed.\nResult: +$21.28 gross, $0.76 fees, +$20.51 net, about +1.0R on the original 79,150 stop.\nChris: happy with this trade. Same format as the SP500 short, and part of the template for the new setup watch."
+ },
+ {
+  "id": "BTC-20261103-1521",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.02284,
+  "entry": 77721.99999999999,
+  "exit": 76503.0,
+  "stop": 78080.0,
+  "initial_stop": 78611.0,
+  "fees": 1.0105,
+  "net": 26.8315,
+  "r_mult": 1.32,
+  "open_ms": 1793737313443,
+  "close_ms": 1793761048960,
+  "open_et": "2026-11-03 15:21",
+  "close_et": "2026-11-03 21:57",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 76365.0,
+  "tp_final": 76513.0,
+  "mfe_r": 1.8,
+  "mae_r": 0.36,
+  "chart_tf": "15m",
+  "img_v": "701915f5",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 3 3:20 PM at 77,722.0, filled Nov 3 3:21 PM. Initial stop 78,611.0, target 76,365.0. Stop tightened: 78,611.0 \u2192 78,080.0 at 7:11 PM. Target moved 76,365.0 \u2192 76,513.0 at 7:48 PM. Take-profit hit at 76,503.0 (9:57 PM). Held 6h 35m.",
+  "stop_path": [
+   [
+    "15:21",
+    78611.0
+   ],
+   [
+    "19:11",
+    78080.0
+   ]
+  ],
+  "note": "No notes recorded\n\nLong hold but the setup was right. Mirrored on both accounts, all TPs hit, a no-loss day."
+ },
+ {
+  "id": "SOL-20261103-0924",
+  "coin": "SOL",
+  "side": "short",
+  "size": 28.26,
+  "entry": 93.4,
+  "exit": 92.32210049539987,
+  "stop": 92.75,
+  "initial_stop": 94.1,
+  "fees": 1.0978,
+  "net": 29.3637,
+  "r_mult": 1.48,
+  "open_ms": 1793715862794,
+  "close_ms": 1793761186867,
+  "open_et": "2026-11-03 09:24",
+  "close_et": "2026-11-03 21:59",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 90.854,
+  "tp_final": 91.133,
+  "mfe_r": 3.67,
+  "mae_r": 0.77,
+  "chart_tf": "15m",
+  "img_v": "ddd8c10d",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 3 9:12 AM at 93.400, filled Nov 3 9:24 AM. Initial stop 94.100, target 90.854. Stop widened: 94.100 \u2192 95.385 at 11:10 AM. Stop tightened: 95.385 \u2192 94.500 at 1:33 PM. Stop tightened: 94.500 \u2192 93.820 at 7:11 PM. Stop trailed into profit: 93.820 \u2192 92.750 at 9:36 PM. Target moved 90.854 \u2192 91.133 at 7:48 PM. Closed in 2 pieces (partials). Take-profit hit at 92.322 (9:59 PM). Held 12h 35m.",
+  "stop_path": [
+   [
+    "09:24",
+    94.1
+   ],
+   [
+    "11:10",
+    95.385
+   ],
+   [
+    "13:33",
+    94.5
+   ],
+   [
+    "19:11",
+    93.82
+   ],
+   [
+    "21:36",
+    92.75
+   ]
+  ],
+  "note": "No notes recorded\n\nLong hold but the setup was right. Mirrored on both accounts, all TPs hit, a no-loss day."
  }
 ]
