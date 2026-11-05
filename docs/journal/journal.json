@@ -1389,5 +1389,47 @@
    ]
   ],
   "note": "No notes recorded\n\nLong hold but the setup was right. Mirrored on both accounts, all TPs hit, a no-loss day."
+ },
+ {
+  "id": "SOL-20261104-2141",
+  "coin": "SOL",
+  "side": "short",
+  "size": 11.49,
+  "entry": 96.5,
+  "exit": 91.15100000000001,
+  "stop": 98.4,
+  "initial_stop": 98.4,
+  "fees": 0.6121,
+  "net": 60.8479,
+  "r_mult": 2.79,
+  "open_ms": 1793846499774,
+  "close_ms": 1793891419574,
+  "open_et": "2026-11-04 21:41",
+  "close_et": "2026-11-05 10:10",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 94.19,
+  "tp_final": 91.2,
+  "mfe_r": 3.22,
+  "mae_r": 0.33,
+  "chart_tf": "15m",
+  "img_v": "c519d7d7",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 4 2:17 PM at 96.500, filled Nov 4 9:41 PM. Initial stop 98.400, target 94.190. Target moved 94.190 \u2192 92.450 at 9:41 PM. Target moved 92.450 \u2192 91.200 at 9:41 PM. Take-profit hit at 91.151 (Nov 5 10:10 AM). Held 12h 28m.",
+  "stop_path": [
+   [
+    "21:41",
+    98.4
+   ],
+   [
+    "21:41",
+    98.4
+   ],
+   [
+    "21:41",
+    98.4
+   ]
+  ],
+  "note": "No notes recorded"
  }
 ]
