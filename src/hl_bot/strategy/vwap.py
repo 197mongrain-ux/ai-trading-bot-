@@ -164,9 +164,13 @@ class VwapTrendScalp:
         self.htf_confirm = htf_confirm
         self.htf_interval = htf_interval
         mode = (entry_mode or "both").strip().lower()
-        if mode not in {"breakout", "ote", "both"}:
-            mode = "both"
-        self.entry_mode = mode
+        # Model B is a separate loop. Do not remap it onto breakout/OTE.
+        if mode == "model_b":
+            self.entry_mode = "model_b"
+        elif mode not in {"breakout", "ote", "both"}:
+            self.entry_mode = "both"
+        else:
+            self.entry_mode = mode
         self.ote_lookback_bars = ote_lookback_bars
         self.ote_fib_shallow = ote_fib_shallow
         self.ote_fib_deep = ote_fib_deep
@@ -327,6 +331,16 @@ class VwapTrendScalp:
         only, then OTE reasons surface.
         """
         mode = self.entry_mode
+        if mode == "model_b":
+            return Signal(
+                "flat",
+                mark,
+                0.0,
+                0.0,
+                vwap,
+                reason="model_b_separate",
+                entry_mode="model_b",
+            )
         ote_fn = self._ote_long if bias == "long" else self._ote_short
         brk_fn = self._breakout_long if bias == "long" else self._breakout_short
 

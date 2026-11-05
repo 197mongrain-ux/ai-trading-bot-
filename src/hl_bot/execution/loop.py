@@ -59,7 +59,20 @@ def run_bot(
     Scale-out (sell into strength) is paper-first; LIVE uses best-effort
     reduce-only ``market_close`` of the scaled size and a new stop at BE —
     exchange netting may prevent true per-trade_id stops.
+
+    ``ENTRY_MODE=model_b`` does not enter this path. Model B is a separate
+    hunt and is not stacked on breakout/OTE or on a score door.
     """
+    if (settings.entry_mode or "").strip().lower() == "model_b":
+        from hl_bot.execution.model_b_loop import run_model_b
+
+        return run_model_b(
+            settings,
+            max_iterations=max_iterations,
+            info=info,
+            sleep_fn=sleep_fn,
+        )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

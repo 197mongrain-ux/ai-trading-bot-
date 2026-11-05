@@ -9,6 +9,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from hl_bot.strategy.filters import parse_trade_hours
+from hl_bot.strategy.model_b.tape import (
+    DELTA_FLAT_EPS,
+    DELTA_FLAT_USDC,
+    MIN_PRINTS,
+    density_min_prints,
+)
 
 load_dotenv()
 
@@ -111,8 +117,24 @@ class Settings:
     reset_daily_risk: bool = False
 
     # --- Entry mode / OTE add-on ---
-    # breakout | ote | both (default both: prefer OTE when in zone, else breakout)
+    # breakout | ote | both | model_b
+    # model_b is a separate hunt (sweep/reclaim Alo). It does not wrap
+    # breakout/OTE and it does not use the score as a gate.
     entry_mode: str = "both"
+    # Model B TP multiple when no liquidity sits in front of the entry.
+    # Default 1.5, must stay in [1, 2]. A swing or pool is the target instead.
+    model_b_tp_r: float = 1.5
+    # 90s print floor. Mainnet stays 30. Testnet auto-scales by tape density
+    # unless MODEL_B_MIN_PRINTS is set. See tape.density_min_prints.
+    model_b_min_prints: int = 30
+    # 0 = rest the maker Alo until the thesis is stale. No default 20s cancel.
+    model_b_alo_timeout_sec: float = 0.0
+    # USDC notional. Coin size is max(this / mid, the coin floor below).
+    # 0 drops this term.
+    model_b_delta_flat_usdc: float = DELTA_FLAT_USDC
+    # Coin-size floor (buy sz − sell sz). The larger of this and the USDC
+    # term is the band. 0 drops this term. Both at 0 is the strict sign check.
+    model_b_delta_flat_eps: float = DELTA_FLAT_EPS
     ote_lookback_bars: int = 45
     ote_fib_shallow: float = 0.62
     ote_fib_deep: float = 0.79
@@ -162,13 +184,24 @@ class Settings:
                 f"MAX_POSITIONS_PER_SYMBOL={self.max_positions_per_symbol} must be >= 0 "
                 "(0 = unlimited)."
             )
-        if not (0.0025 <= self.risk_per_trade <= 0.005):
+        mode_now = (self.entry_mode or "").strip().lower()
+        if mode_now == "model_b":
+            if abs(self.risk_per_trade - 0.02) > 1e-12:
+                raise ValueError(
+                    f"RISK_PER_TRADE={self.risk_per_trade} — Model B sizes at "
+                    "RISK_PER_TRADE=0.02 (max 2% of spot USDC, not perp account value)."
+                )
+        elif not (0.0025 <= self.risk_per_trade <= 0.005):
             raise ValueError(
                 f"RISK_PER_TRADE={self.risk_per_trade} outside documented range "
                 "0.0025–0.005 (0.25%–0.5%)."
             )
         if not (1.0 <= self.tp_r_multiple <= 3.0):
             raise ValueError(f"TP_R_MULTIPLE={self.tp_r_multiple} must be in [1, 3].")
+        if (self.entry_mode or "").strip().lower() == "model_b" and self.leverage != 20:
+            raise ValueError(
+                f"LEVERAGE={self.leverage} — Model B is 20x only (40x off)."
+            )
         if self.leverage < 1 or self.leverage > 20:
             raise ValueError(f"LEVERAGE={self.leverage} must be in [1, 20].")
         if self.stop_pct <= 0:
@@ -200,9 +233,29 @@ class Settings:
                 f"ENTRY_COOLDOWN_SEC={self.entry_cooldown_sec} must be >= 0."
             )
         mode = (self.entry_mode or "").strip().lower()
-        if mode not in {"breakout", "ote", "both"}:
+        if mode not in {"breakout", "ote", "both", "model_b"}:
             raise ValueError(
-                f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both."
+                f"ENTRY_MODE={self.entry_mode!r} must be breakout|ote|both|model_b."
+            )
+        if not (1.0 <= self.model_b_tp_r <= 2.0):
+            raise ValueError(
+                f"MODEL_B_TP_R={self.model_b_tp_r} must be in [1, 2]."
+            )
+        if self.model_b_min_prints < 1:
+            raise ValueError(
+                f"MODEL_B_MIN_PRINTS={self.model_b_min_prints} must be >= 1."
+            )
+        if self.model_b_alo_timeout_sec < 0:
+            raise ValueError(
+                f"MODEL_B_ALO_TIMEOUT_SEC={self.model_b_alo_timeout_sec} must be >= 0."
+            )
+        if self.model_b_delta_flat_usdc < 0:
+            raise ValueError(
+                f"MODEL_B_DELTA_FLAT_USDC={self.model_b_delta_flat_usdc} must be >= 0."
+            )
+        if self.model_b_delta_flat_eps < 0:
+            raise ValueError(
+                f"MODEL_B_DELTA_FLAT_EPS={self.model_b_delta_flat_eps} must be >= 0."
             )
         if self.ote_lookback_bars < 3:
             raise ValueError(
@@ -249,6 +302,17 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
     api_url = os.getenv("HL_API_URL", default_url).strip() or default_url
 
     symbols = _parse_symbols()
+    entry_mode = os.getenv("ENTRY_MODE", "both").strip().lower() or "both"
+    # Mainnet tape floor stays 30. Testnet uses the measured density ratio
+    # unless MODEL_B_MIN_PRINTS is set explicitly.
+    if os.getenv("MODEL_B_MIN_PRINTS", "").strip():
+        model_b_min_prints = _int("MODEL_B_MIN_PRINTS", MIN_PRINTS)
+    elif network == "testnet":
+        model_b_min_prints = density_min_prints()
+    else:
+        model_b_min_prints = MIN_PRINTS
+    # Model B is max 2% of spot USDC. Scalp stays at 0.5% when the var is unset.
+    risk_default = 0.02 if entry_mode == "model_b" else 0.005
     # MAX_OPEN_POSITIONS: 0 = unlimited global (default). Positive = hard cap.
     max_open = _int("MAX_OPEN_POSITIONS", 0)
     # MAX_POSITIONS_PER_SYMBOL: default 3; 0 = unlimited stacking per ticker
@@ -281,7 +345,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         max_open_positions=max_open,
         max_positions_per_symbol=max_per_sym,
         starting_equity=_float("STARTING_EQUITY", 5000.0),
-        risk_per_trade=_float("RISK_PER_TRADE", 0.005),
+        risk_per_trade=_float("RISK_PER_TRADE", risk_default),
         max_daily_loss_pct=_float("MAX_DAILY_LOSS_PCT", 0.03),
         max_drawdown_pct=_float("MAX_DRAWDOWN_PCT", 0.08),
         max_trades_per_day=_int("MAX_TRADES_PER_DAY", 0),
@@ -304,7 +368,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         htf_interval=os.getenv("HTF_INTERVAL", "5m").strip() or "5m",
         entry_cooldown_sec=_float("ENTRY_COOLDOWN_SEC", 120.0),
         reset_daily_risk=_bool("RESET_DAILY_RISK", False),
-        entry_mode=(os.getenv("ENTRY_MODE", "both").strip().lower() or "both"),
+        entry_mode=entry_mode,
+        model_b_tp_r=_float("MODEL_B_TP_R", 1.5),
+        model_b_min_prints=model_b_min_prints,
+        model_b_alo_timeout_sec=_float("MODEL_B_ALO_TIMEOUT_SEC", 0.0),
+        model_b_delta_flat_usdc=_float("MODEL_B_DELTA_FLAT_USDC", DELTA_FLAT_USDC),
+        model_b_delta_flat_eps=_float("MODEL_B_DELTA_FLAT_EPS", DELTA_FLAT_EPS),
         ote_lookback_bars=_int("OTE_LOOKBACK_BARS", 45),
         ote_fib_shallow=_float("OTE_FIB_SHALLOW", 0.62),
         ote_fib_deep=_float("OTE_FIB_DEEP", 0.79),
