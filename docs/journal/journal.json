@@ -1431,5 +1431,51 @@
    ]
   ],
   "note": "Nov 4 SOL retest short, approved by Chris around 2:16 PM ET after he moved the resting entry from 95.9 up to 96.5. Mirrored on Hyperliquid and Propr: stop 98.40, size at normal risk (2% HL / 0.5% Propr), split targets at 94.19 / 92.45 / 91.2. Limit filled 9:41 PM ET Nov 4; targets were then consolidated toward 91.2. Take-profit hit at 91.151 on Nov 5 at 10:10 AM ET for about +2.79R (+$60.85 net on HL)."
+ },
+ {
+  "id": "BTC-20261108-2116",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.01953,
+  "entry": 75292.0,
+  "exit": 73321.0,
+  "stop": 76461.0,
+  "initial_stop": 76461.0,
+  "fees": 0.8303,
+  "net": 37.6633,
+  "r_mult": 1.65,
+  "open_ms": 1794190592853,
+  "close_ms": 1794325053704,
+  "open_et": "2026-11-08 21:16",
+  "close_et": "2026-11-10 10:37",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 73514.0,
+  "tp_final": 73514.0,
+  "mfe_r": 1.8,
+  "mae_r": 0.25,
+  "chart_tf": "15m",
+  "img_v": "67d637c2",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 8 9:13 PM at 75,292.0, filled Nov 8 9:16 PM. Initial stop 76,461.0, target 73,514.0. Stop moved to breakeven: 76,461.0 \u2192 75,292.0 at Nov 9 9:16 AM. Stop widened: 75,292.0 \u2192 75,775.0 at Nov 9 10:25 AM. Stop widened: 75,775.0 \u2192 76,461.0 at Nov 9 7:09 PM. Take-profit hit at 73,321.0 (Nov 10 10:37 AM). Held 1d 13h 21m.",
+  "stop_path": [
+   [
+    "21:16",
+    76461.0
+   ],
+   [
+    "09:16",
+    75292.0
+   ],
+   [
+    "10:25",
+    75775.0
+   ],
+   [
+    "19:09",
+    76461.0
+   ]
+  ],
+  "note": "Nov 2 template short around 75.3k: the resting limit filled at 75,292 on Nov 8 at 9:16 PM ET, with the initial stop at 76,461 and the target at 73,514. The stop was moved to breakeven (75,292) on Nov 9 at 9:16 AM ET, then widened to 75,775 at 10:25 AM and back to 76,461 at 7:09 PM. It was held through the Nov 10 8:30 AM ET CPI print, and take-profit filled at 73,321 at 10:37 AM ET (better than the 73,514 target) for about +1.65R, +$37.66 net on Hyperliquid."
  }
 ]
