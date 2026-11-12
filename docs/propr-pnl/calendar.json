@@ -1,48 +1,48 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1794326338729,
- "generated_et": "2026-11-10 10:58:58",
+ "generated_ms": 1794472589242,
+ "generated_et": "2026-11-12 03:36:29",
  "challenge": {
   "name": "Bronze 2-Step Classic",
-  "phase_order": 1,
+  "phase_order": 2,
   "phase_count": 2,
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 26174.19,
-  "equity": 26174.19,
-  "hwm": 26179.77,
+  "balance": 25000.0,
+  "equity": 25000.0,
+  "hwm": 25000.0,
   "dd_pct": 8.0,
-  "dd_floor": 24179.77,
-  "dd_distance": 1994.42,
+  "dd_floor": 23000.0,
+  "dd_distance": 2000.0,
   "dl_pct": 5.0,
-  "sod_balance": 25895.16,
-  "daily_limit": 1294.76,
-  "daily_floor": 24600.4,
-  "daily_distance": 1573.79,
-  "today_pnl": 279.03,
-  "next_reset_et": "Nov 10 07:00 PM",
-  "target_pct": 5.0,
-  "target_equity": 26250.0,
-  "target_usd": 1250.0,
-  "progress_usd": 1174.19,
+  "sod_balance": 25000.0,
+  "daily_limit": 1250.0,
+  "daily_floor": 23750.0,
+  "daily_distance": 1250.0,
+  "today_pnl": 0.0,
+  "next_reset_et": "Nov 12 07:00 PM",
+  "target_pct": 10.0,
+  "target_equity": 27500.0,
+  "target_usd": 2500.0,
+  "progress_usd": 0.0,
   "binding_name": "daily loss",
-  "binding_floor": 24600.4,
-  "binding_distance": 1573.79,
-  "reconciliation_diff_ex_funding": 14.4078
+  "binding_floor": 23750.0,
+  "binding_distance": 1250.0,
+  "reconciliation_diff_ex_funding": -1229.5475
  },
  "kpis": {
-  "today": 282.76,
-  "week": 282.76,
-  "mtd": 1349.53,
-  "all_time": 1174.19,
-  "win_rate": 70.0,
-  "wins": 7,
+  "today": 0,
+  "week": 353.19,
+  "mtd": 1419.97,
+  "all_time": 1244.63,
+  "win_rate": 75.0,
+  "wins": 9,
   "losses": 3,
-  "closed": 10,
+  "closed": 12,
   "open_upnl": 0.0,
-  "today_key": "2026-11-10",
+  "today_key": "2026-11-12",
   "week_start": "2026-11-09"
  },
  "days": {
@@ -129,6 +129,18 @@
    "risk": 185.24,
    "best": 282.76,
    "worst": 282.76
+  },
+  "2026-11-11": {
+   "net": 70.44,
+   "gross": 76.99,
+   "fees": 7.22,
+   "funding": 0.67,
+   "trades": 2,
+   "wins": 2,
+   "losses": 0,
+   "risk": 244.63,
+   "best": 39.22,
+   "worst": 31.21
   }
  },
  "trades": [
@@ -602,13 +614,13 @@
    "tp_path": [
     [
      1793846500413,
-     1793859681158,
-     91.2
+     1793859680632,
+     94.19
     ],
     [
      1793846500413,
-     1793859680632,
-     94.19
+     1793859681158,
+     91.2
     ],
     [
      1793846500413,
@@ -716,6 +728,102 @@
    "close_et": "2026-11-10 10:37",
    "result": "WIN",
    "day": "2026-11-10"
+  },
+  {
+   "stop_path": [
+    [
+     1794411293380,
+     1794436317223,
+     2116.5
+    ]
+   ],
+   "tp_path": [
+    [
+     1794411293380,
+     1794436317223,
+     2004.3
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "ETH",
+   "side": "short",
+   "size": 4.46,
+   "entry": 2075.5,
+   "stop": 2116.5,
+   "target": 2004.3,
+   "risk": 182.86,
+   "initial_stop": 2116.5,
+   "initial_risk": 182.86,
+   "final_risk": 182.86,
+   "fee_open": 1.3885,
+   "fee_close": 4.1457,
+   "fees": 5.5342,
+   "funding": 0.6027,
+   "gross": 44.154,
+   "open_ms": 1794411293380,
+   "open_et": "2026-11-11 10:34",
+   "n_fills": 2,
+   "status": "closed",
+   "id": "ETH-20261111-1034",
+   "note": "Setup (Nov 2 template trade): ETH short, mirrored on Hyperliquid. Entry 2,075.5, initial stop 2,116.5 (risk $182.86), TP 2,004.3. Propr: short 4.46 at 10x, filled 10:34 AM ET Nov 11.\nExit: Propr auto-closed the position at market at 2,065.6 at 5:31 PM ET when the account hit the Step 1 +5% equity target ($26,250). This was not a stop or take-profit fill, and not a discretionary close. The Hyperliquid mirror was left open (stop later moved to breakeven at 2,075).\nResult: +$44.15 gross, $5.53 fees, +$0.60 funding, +$39.22 net, about +0.21R.\nStep 2 then started at a fresh $25,000 balance, with a new +10% target of $27,500.",
+   "img": "journal/img/ETH-20261111-1034.png",
+   "exit": 2065.6,
+   "net": 39.2226,
+   "exit_type": "Market",
+   "r_mult": 0.21,
+   "r_gross": 0.24,
+   "close_ms": 1794436317569,
+   "close_et": "2026-11-11 17:31",
+   "result": "WIN",
+   "day": "2026-11-11"
+  },
+  {
+   "stop_path": [
+    [
+     1794417229770,
+     1794436317223,
+     87.002
+    ]
+   ],
+   "tp_path": [
+    [
+     1794417229770,
+     1794436317223,
+     81.302
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "SOL",
+   "side": "short",
+   "size": 33.3,
+   "entry": 85.14695315315315,
+   "stop": 87.002,
+   "target": 81.302,
+   "risk": 61.77,
+   "initial_stop": 87.002,
+   "initial_risk": 61.77,
+   "final_risk": 61.77,
+   "fee_open": 0.4253,
+   "fee_close": 1.2612,
+   "fees": 1.6865,
+   "funding": 0.0679,
+   "gross": 32.8322,
+   "open_ms": 1794417229770,
+   "open_et": "2026-11-11 12:13",
+   "n_fills": 3,
+   "status": "closed",
+   "id": "SOL-20261111-1213",
+   "note": "Setup (Nov 2 template trade): SOL short, mirrored on Hyperliquid. Entry about 85.147 (two fills: 1.56 at 85.146 and 31.74 at 85.147), initial stop 87.002 (risk $61.77), TP 81.302. Propr: short 33.3 at 10x, filled 12:13 PM ET Nov 11.\nExit: Propr auto-closed the position at market at 84.161 at 5:31 PM ET when the account hit the Step 1 +5% equity target ($26,250), at the same time as the ETH short. This was not a stop or take-profit fill, and not a discretionary close. The Hyperliquid mirror was left open (stop later moved to breakeven at 85.144).\nResult: +$32.83 gross, $1.69 fees, +$0.07 funding, +$31.21 net, about +0.51R.",
+   "img": "journal/img/SOL-20261111-1213.png",
+   "exit": 84.161,
+   "net": 31.2137,
+   "exit_type": "Market",
+   "r_mult": 0.51,
+   "r_gross": 0.53,
+   "close_ms": 1794436317727,
+   "close_et": "2026-11-11 17:31",
+   "result": "WIN",
+   "day": "2026-11-11"
   }
  ],
  "positions": [],
