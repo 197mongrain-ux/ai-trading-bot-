@@ -1477,5 +1477,81 @@
    ]
   ],
   "note": "Nov 2 template short around 75.3k: the resting limit filled at 75,292 on Nov 8 at 9:16 PM ET, with the initial stop at 76,461 and the target at 73,514. The stop was moved to breakeven (75,292) on Nov 9 at 9:16 AM ET, then widened to 75,775 at 10:25 AM and back to 76,461 at 7:09 PM. It was held through the Nov 10 8:30 AM ET CPI print, and take-profit filled at 73,321 at 10:37 AM ET (better than the 73,514 target) for about +1.65R, +$37.66 net on Hyperliquid."
+ },
+ {
+  "id": "ETH-20261111-1034",
+  "coin": "ETH",
+  "side": "short",
+  "size": 0.5726,
+  "entry": 2075.0,
+  "exit": 1995.0,
+  "stop": 2075.0,
+  "initial_stop": 2116.5,
+  "fees": 0.6646,
+  "net": 45.1434,
+  "r_mult": 1.9,
+  "open_ms": 1794411292471,
+  "close_ms": 1794488992270,
+  "open_et": "2026-11-11 10:34",
+  "close_et": "2026-11-12 08:09",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 2004.3,
+  "tp_final": 2004.3,
+  "mfe_r": 2.07,
+  "mae_r": 0.67,
+  "chart_tf": "15m",
+  "img_v": "9f4fe4e5",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 11 1:03 AM at 2,075.0, filled Nov 11 10:34 AM. Initial stop 2,116.5, target 2,004.3. Stop moved to breakeven: 2,116.5 \u2192 2,075.0 at Nov 12 3:31 AM. Take-profit hit at 1,995.0 (Nov 12 8:09 AM). Held 21h 34m.",
+  "stop_path": [
+   [
+    "10:34",
+    2116.5
+   ],
+   [
+    "03:31",
+    2075.0
+   ]
+  ],
+  "note": "No notes recorded"
+ },
+ {
+  "id": "SOL-20261111-1213",
+  "coin": "SOL",
+  "side": "short",
+  "size": 6.4,
+  "entry": 85.14399999999999,
+  "exit": 81.226,
+  "stop": 85.144,
+  "initial_stop": 87.002,
+  "fees": 0.303,
+  "net": 24.7722,
+  "r_mult": 2.08,
+  "open_ms": 1794417229248,
+  "close_ms": 1794489001626,
+  "open_et": "2026-11-11 12:13",
+  "close_et": "2026-11-12 08:10",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 81.302,
+  "tp_final": 81.302,
+  "mfe_r": 2.46,
+  "mae_r": 0.34,
+  "chart_tf": "15m",
+  "img_v": "137d5fa4",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 11 11:18 AM at 85.144, filled Nov 11 12:13 PM. Initial stop 87.002, target 81.302. Stop moved to breakeven: 87.002 \u2192 85.144 at Nov 12 3:31 AM. Take-profit hit at 81.226 (Nov 12 8:10 AM). Held 19h 56m.",
+  "stop_path": [
+   [
+    "12:13",
+    87.002
+   ],
+   [
+    "03:31",
+    85.144
+   ]
+  ],
+  "note": "No notes recorded"
  }
 ]
