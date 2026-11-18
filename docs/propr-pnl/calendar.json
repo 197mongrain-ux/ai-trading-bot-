@@ -1,8 +1,8 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1794472589242,
- "generated_et": "2026-11-12 03:36:29",
+ "generated_ms": 1795012891364,
+ "generated_et": "2026-11-18 09:41:31",
  "challenge": {
   "name": "Bronze 2-Step Classic",
   "phase_order": 2,
@@ -10,40 +10,40 @@
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 25000.0,
-  "equity": 25000.0,
-  "hwm": 25000.0,
+  "balance": 25423.49,
+  "equity": 25423.49,
+  "hwm": 25431.89,
   "dd_pct": 8.0,
-  "dd_floor": 23000.0,
-  "dd_distance": 2000.0,
+  "dd_floor": 23431.89,
+  "dd_distance": 1991.6,
   "dl_pct": 5.0,
-  "sod_balance": 25000.0,
-  "daily_limit": 1250.0,
-  "daily_floor": 23750.0,
-  "daily_distance": 1250.0,
-  "today_pnl": 0.0,
-  "next_reset_et": "Nov 12 07:00 PM",
+  "sod_balance": 25005.1,
+  "daily_limit": 1250.25,
+  "daily_floor": 23754.84,
+  "daily_distance": 1668.64,
+  "today_pnl": 418.39,
+  "next_reset_et": "Nov 18 07:00 PM",
   "target_pct": 10.0,
   "target_equity": 27500.0,
   "target_usd": 2500.0,
-  "progress_usd": 0.0,
+  "progress_usd": 423.49,
   "binding_name": "daily loss",
-  "binding_floor": 23750.0,
-  "binding_distance": 1250.0,
-  "reconciliation_diff_ex_funding": -1229.5475
+  "binding_floor": 23754.84,
+  "binding_distance": 1668.64,
+  "reconciliation_diff_ex_funding": -1220.4081
  },
  "kpis": {
-  "today": 0,
-  "week": 353.19,
-  "mtd": 1419.97,
-  "all_time": 1244.63,
-  "win_rate": 75.0,
-  "wins": 9,
+  "today": 423.49,
+  "week": 423.49,
+  "mtd": 1843.45,
+  "all_time": 1668.11,
+  "win_rate": 76.9,
+  "wins": 10,
   "losses": 3,
-  "closed": 12,
+  "closed": 13,
   "open_upnl": 0.0,
-  "today_key": "2026-11-12",
-  "week_start": "2026-11-09"
+  "today_key": "2026-11-18",
+  "week_start": "2026-11-16"
  },
  "days": {
   "2026-10-26": {
@@ -141,6 +141,18 @@
    "risk": 244.63,
    "best": 39.22,
    "worst": 31.21
+  },
+  "2026-11-18": {
+   "net": 423.49,
+   "gross": 425.58,
+   "fees": 11.24,
+   "funding": 9.14,
+   "trades": 1,
+   "wins": 1,
+   "losses": 0,
+   "risk": 293.83,
+   "best": 423.49,
+   "worst": 423.49
   }
  },
  "trades": [
@@ -614,6 +626,11 @@
    "tp_path": [
     [
      1793846500413,
+     1793859680912,
+     92.45
+    ],
+    [
+     1793846500413,
      1793859680632,
      94.19
     ],
@@ -621,11 +638,6 @@
      1793846500413,
      1793859681158,
      91.2
-    ],
-    [
-     1793846500413,
-     1793859680912,
-     92.45
     ],
     [
      1793859678569,
@@ -824,6 +836,74 @@
    "close_et": "2026-11-11 17:31",
    "result": "WIN",
    "day": "2026-11-11"
+  },
+  {
+   "stop_path": [
+    [
+     1794733373380,
+     1794945588482,
+     66562.0
+    ],
+    [
+     1794945586389,
+     1794958799404,
+     65700.0
+    ],
+    [
+     1794958797557,
+     1795012454791,
+     65700.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1794733373380,
+     1794958803089,
+     61988.0
+    ],
+    [
+     1794958799619,
+     1794959594615,
+     61988.0
+    ],
+    [
+     1794959592581,
+     1795012454791,
+     63700.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.251,
+   "entry": 65391.3625498008,
+   "stop": 65700.0,
+   "target": 63700.0,
+   "risk": 293.83,
+   "initial_stop": 66562.0,
+   "initial_risk": 293.83,
+   "final_risk": 77.47,
+   "fee_open": 4.0437,
+   "fee_close": 7.1944,
+   "fees": 11.2382,
+   "funding": 9.1394,
+   "gross": 425.5839,
+   "open_ms": 1794733373380,
+   "open_et": "2026-11-15 04:02",
+   "n_fills": 4,
+   "status": "closed",
+   "id": "BTC-20261115-0402",
+   "note": "Nov 2 template short, mirrored with the Hyperliquid book: 0.17 BTC short at 65,534 (10x cross) filled Nov 15 at 4:02 AM ET, with the initial stop at 66,562 and the target at 61,988. On Nov 17 at 2:59 PM ET the stop was tightened to 65,700. At 6:39 PM ET Chris added 0.081 at 65,092, bringing the position to 0.251 at an average of 65,391.36, still with the stop at 65,700 and the original 61,988 target. At 6:53 PM the take-profit was moved to 63,700. The TP filled Nov 18 at 9:34 AM ET at 63,695.81, for +$425.58 gross, $11.24 fees, +$9.14 funding, +$423.49 net, about +1.44R.",
+   "img": "journal/img/BTC-20261115-0402.png",
+   "exit": 63695.809282868526,
+   "net": 423.4851,
+   "exit_type": "TP",
+   "r_mult": 1.44,
+   "r_gross": 1.45,
+   "close_ms": 1795012454844,
+   "close_et": "2026-11-18 09:34",
+   "result": "WIN",
+   "day": "2026-11-18"
   }
  ],
  "positions": [],
