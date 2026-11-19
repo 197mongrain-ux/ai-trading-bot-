@@ -1,8 +1,8 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1795012891364,
- "generated_et": "2026-11-18 09:41:31",
+ "generated_ms": 1795120626828,
+ "generated_et": "2026-11-19 15:37:06",
  "challenge": {
   "name": "Bronze 2-Step Classic",
   "phase_order": 2,
@@ -10,39 +10,39 @@
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 25423.49,
-  "equity": 25423.49,
-  "hwm": 25431.89,
+  "balance": 25771.98,
+  "equity": 25771.98,
+  "hwm": 25777.97,
   "dd_pct": 8.0,
-  "dd_floor": 23431.89,
-  "dd_distance": 1991.6,
+  "dd_floor": 23777.97,
+  "dd_distance": 1994.01,
   "dl_pct": 5.0,
-  "sod_balance": 25005.1,
-  "daily_limit": 1250.25,
-  "daily_floor": 23754.84,
-  "daily_distance": 1668.64,
-  "today_pnl": 418.39,
-  "next_reset_et": "Nov 18 07:00 PM",
+  "sod_balance": 25423.91,
+  "daily_limit": 1271.2,
+  "daily_floor": 24152.71,
+  "daily_distance": 1619.27,
+  "today_pnl": 348.08,
+  "next_reset_et": "Nov 19 07:00 PM",
   "target_pct": 10.0,
   "target_equity": 27500.0,
   "target_usd": 2500.0,
-  "progress_usd": 423.49,
+  "progress_usd": 771.98,
   "binding_name": "daily loss",
-  "binding_floor": 23754.84,
-  "binding_distance": 1668.64,
-  "reconciliation_diff_ex_funding": -1220.4081
+  "binding_floor": 24152.71,
+  "binding_distance": 1619.27,
+  "reconciliation_diff_ex_funding": -1219.9866
  },
  "kpis": {
-  "today": 423.49,
-  "week": 423.49,
-  "mtd": 1843.45,
-  "all_time": 1668.11,
-  "win_rate": 76.9,
-  "wins": 10,
+  "today": 348.5,
+  "week": 771.98,
+  "mtd": 2191.95,
+  "all_time": 2016.61,
+  "win_rate": 78.6,
+  "wins": 11,
   "losses": 3,
-  "closed": 13,
+  "closed": 14,
   "open_upnl": 0.0,
-  "today_key": "2026-11-18",
+  "today_key": "2026-11-19",
   "week_start": "2026-11-16"
  },
  "days": {
@@ -153,6 +153,18 @@
    "risk": 293.83,
    "best": 423.49,
    "worst": 423.49
+  },
+  "2026-11-19": {
+   "net": 348.5,
+   "gross": 355.02,
+   "fees": 6.94,
+   "funding": 0.42,
+   "trades": 1,
+   "wins": 1,
+   "losses": 0,
+   "risk": 238.57,
+   "best": 348.5,
+   "worst": 348.5
   }
  },
  "trades": [
@@ -626,8 +638,8 @@
    "tp_path": [
     [
      1793846500413,
-     1793859680912,
-     92.45
+     1793859681158,
+     91.2
     ],
     [
      1793846500413,
@@ -636,8 +648,8 @@
     ],
     [
      1793846500413,
-     1793859681158,
-     91.2
+     1793859680912,
+     92.45
     ],
     [
      1793859678569,
@@ -904,6 +916,54 @@
    "close_et": "2026-11-18 09:34",
    "result": "WIN",
    "day": "2026-11-18"
+  },
+  {
+   "stop_path": [
+    [
+     1795087948494,
+     1795120158515,
+     65261.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1795087948494,
+     1795120158515,
+     62054.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.185,
+   "entry": 63971.45054054054,
+   "stop": 65261.0,
+   "target": 62054.0,
+   "risk": 238.57,
+   "initial_stop": 65261.0,
+   "initial_risk": 238.57,
+   "final_risk": 238.57,
+   "fee_open": 1.7752,
+   "fee_close": 5.1659,
+   "fees": 6.9411,
+   "funding": 0.4216,
+   "gross": 355.0183,
+   "open_ms": 1795087948494,
+   "open_et": "2026-11-19 06:32",
+   "n_fills": 6,
+   "status": "closed",
+   "id": "BTC-20261119-0632",
+   "note": "Resting limit short, mirrored with the Hyperliquid book: 0.185 BTC short at 63,971.45 (10x) filled on a wick Nov 19 at 6:32 AM ET, with the stop at 65,261 (risk about $238.57, 1%) and the measured target at 62,054. Take-profit filled at 62,052.43 at 3:29 PM ET, for +$355.02 gross, $6.94 fees, +$0.42 funding, +$348.50 net, about +1.46R.",
+   "img": "journal/img/BTC-20261119-0632.png",
+   "exit": 62052.4327027027,
+   "net": 348.4988,
+   "exit_type": "TP",
+   "r_mult": 1.46,
+   "r_gross": 1.49,
+   "close_ms": 1795120158574,
+   "close_et": "2026-11-19 15:29",
+   "result": "WIN",
+   "day": "2026-11-19"
   }
  ],
  "positions": [],
