@@ -1595,5 +1595,39 @@
    ]
   ],
   "note": "Nov 2 template short at 65,500: a resting post-only limit of 0.0235 BTC (20x isolated) was placed Nov 15 at 12:46 AM ET and filled at 4:02 AM, with the initial stop at 66,562 and the target at 61,988. On Nov 17 at 2:59 PM ET the stop was tightened to 65,700. At 6:39 PM ET Chris added 0.0279 at 65,078 (IOC), bringing the position to 0.0514 at an average of 65,270.9, still with the stop at 65,700 and the original 61,988 target. At 6:53 PM the take-profit was moved to 63,700. The TP filled Nov 18 at 9:34 AM ET at 63,694, for +$81.05 gross, $2.42 fees, +$78.63 net, about +1.18R."
+ },
+ {
+  "id": "BTC-20261119-0632",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.02067,
+  "entry": 63970.0,
+  "exit": 62031.00000000001,
+  "stop": 65261.0,
+  "initial_stop": 65261.0,
+  "fees": 0.7443,
+  "net": 39.3348,
+  "r_mult": 1.47,
+  "open_ms": 1795087947956,
+  "close_ms": 1795120159218,
+  "open_et": "2026-11-19 06:32",
+  "close_et": "2026-11-19 15:29",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 62054.0,
+  "tp_final": 62054.0,
+  "mfe_r": 1.69,
+  "mae_r": 0.06,
+  "chart_tf": "15m",
+  "img_v": "d14604e2",
+  "reason": "Take profit",
+  "management": "Resting limit short placed Nov 19 6:17 AM at 63,970.0, filled Nov 19 6:32 AM. Initial stop 65,261.0, target 62,054.0. Take-profit hit at 62,031.0 (3:29 PM). Held 8h 56m.",
+  "stop_path": [
+   [
+    "06:32",
+    65261.0
+   ]
+  ],
+  "note": "A resting limit short of 0.02067 BTC at 63,970 (20x isolated, 2% risk) filled on a wick Nov 19 at 6:32 AM ET, with the stop at 65,261 and a measured target at 62,054. Take-profit filled at 62,031 at 3:29 PM ET, for +$40.08 gross, $0.74 fees, +$39.33 net, about +1.47R."
  }
 ]
