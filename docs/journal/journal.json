@@ -1629,5 +1629,39 @@
    ]
   ],
   "note": "A resting limit short of 0.02067 BTC at 63,970 (20x isolated, 2% risk) filled on a wick Nov 19 at 6:32 AM ET, with the stop at 65,261 and a measured target at 62,054. Take-profit filled at 62,031 at 3:29 PM ET, for +$40.08 gross, $0.74 fees, +$39.33 net, about +1.47R."
+ },
+ {
+  "id": "BTC-20261122-1800",
+  "coin": "BTC",
+  "side": "short",
+  "size": 0.0225,
+  "entry": 61206.99999999999,
+  "exit": 62514.22933333334,
+  "stop": 62461.0,
+  "initial_stop": 62461.0,
+  "fees": 0.8059,
+  "net": -30.2186,
+  "r_mult": -1.07,
+  "open_ms": 1795388454268,
+  "close_ms": 1795442240020,
+  "open_et": "2026-11-22 18:00",
+  "close_et": "2026-11-23 08:57",
+  "result": "LOSS",
+  "exit_type": "SL",
+  "tp_initial": 58900.0,
+  "tp_final": 58900.0,
+  "mfe_r": 0.69,
+  "mae_r": 2.13,
+  "chart_tf": "15m",
+  "img_v": "9214ecf3",
+  "reason": "Stop loss",
+  "management": "Resting limit short placed Nov 22 2:19 PM at 61,207.0, filled Nov 22 6:00 PM. Initial stop 62,461.0, target 58,900.0. Stop hit at 62,514.2 (Nov 23 8:57 AM). Held 14h 56m.",
+  "stop_path": [
+   [
+    "18:00",
+    62461.0
+   ]
+  ],
+  "note": "No notes recorded"
  }
 ]
