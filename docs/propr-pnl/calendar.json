@@ -1,8 +1,8 @@
 {
  "source": "propr",
  "label": "PROPR evaluation (simulated)",
- "generated_ms": 1795120626828,
- "generated_et": "2026-11-19 15:37:06",
+ "generated_ms": 1795478986838,
+ "generated_et": "2026-11-23 19:09:46",
  "challenge": {
   "name": "Bronze 2-Step Classic",
   "phase_order": 2,
@@ -10,40 +10,40 @@
   "status": "active",
   "started_et": "2026-10-26 15:57",
   "initial": 25000.0,
-  "balance": 25771.98,
-  "equity": 25771.98,
-  "hwm": 25777.97,
+  "balance": 25580.85,
+  "equity": 25580.85,
+  "hwm": 25901.12,
   "dd_pct": 8.0,
-  "dd_floor": 23777.97,
-  "dd_distance": 1994.01,
+  "dd_floor": 23901.12,
+  "dd_distance": 1679.72,
   "dl_pct": 5.0,
-  "sod_balance": 25423.91,
-  "daily_limit": 1271.2,
-  "daily_floor": 24152.71,
-  "daily_distance": 1619.27,
-  "today_pnl": 348.08,
-  "next_reset_et": "Nov 19 07:00 PM",
+  "sod_balance": 25580.85,
+  "daily_limit": 1279.04,
+  "daily_floor": 24301.8,
+  "daily_distance": 1279.04,
+  "today_pnl": 0.0,
+  "next_reset_et": "Nov 24 07:00 PM",
   "target_pct": 10.0,
   "target_equity": 27500.0,
   "target_usd": 2500.0,
-  "progress_usd": 771.98,
+  "progress_usd": 580.85,
   "binding_name": "daily loss",
-  "binding_floor": 24152.71,
-  "binding_distance": 1619.27,
-  "reconciliation_diff_ex_funding": -1219.9866
+  "binding_floor": 24301.8,
+  "binding_distance": 1279.04,
+  "reconciliation_diff_ex_funding": -1218.5708
  },
  "kpis": {
-  "today": 348.5,
-  "week": 771.98,
-  "mtd": 2191.95,
-  "all_time": 2016.61,
-  "win_rate": 78.6,
+  "today": -191.14,
+  "week": -191.14,
+  "mtd": 2000.81,
+  "all_time": 1825.47,
+  "win_rate": 73.3,
   "wins": 11,
-  "losses": 3,
-  "closed": 14,
+  "losses": 4,
+  "closed": 15,
   "open_upnl": 0.0,
-  "today_key": "2026-11-19",
-  "week_start": "2026-11-16"
+  "today_key": "2026-11-23",
+  "week_start": "2026-11-23"
  },
  "days": {
   "2026-10-26": {
@@ -165,6 +165,18 @@
    "risk": 238.57,
    "best": 348.5,
    "worst": 348.5
+  },
+  "2026-11-23": {
+   "net": -191.14,
+   "gross": -187.0,
+   "fees": 5.56,
+   "funding": 1.42,
+   "trades": 1,
+   "wins": 0,
+   "losses": 1,
+   "risk": 184.16,
+   "best": -191.14,
+   "worst": -191.14
   }
  },
  "trades": [
@@ -964,6 +976,54 @@
    "close_et": "2026-11-19 15:29",
    "result": "WIN",
    "day": "2026-11-19"
+  },
+  {
+   "stop_path": [
+    [
+     1795388454732,
+     1795442239191,
+     62461.0
+    ]
+   ],
+   "tp_path": [
+    [
+     1795388454732,
+     1795442239191,
+     58900.0
+    ]
+   ],
+   "entry_placed_ms": null,
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.149,
+   "entry": 61225.0,
+   "stop": 62461.0,
+   "target": 58900.0,
+   "risk": 184.16,
+   "initial_stop": 62461.0,
+   "initial_risk": 184.16,
+   "final_risk": 184.16,
+   "fee_open": 1.3684,
+   "fee_close": 4.1893,
+   "fees": 5.5577,
+   "funding": 1.4158,
+   "gross": -186.995,
+   "open_ms": 1795388454732,
+   "open_et": "2026-11-22 18:00",
+   "n_fills": 2,
+   "status": "closed",
+   "id": "BTC-20261122-1800",
+   "note": "No notes recorded",
+   "img": "journal/img/BTC-20261122-1800.png",
+   "exit": 62480.0,
+   "net": -191.1369,
+   "exit_type": "SL",
+   "r_mult": -1.04,
+   "r_gross": -1.02,
+   "close_ms": 1795442239246,
+   "close_et": "2026-11-23 08:57",
+   "result": "LOSS",
+   "day": "2026-11-23"
   }
  ],
  "positions": [],
