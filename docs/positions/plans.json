@@ -1,21 +1,5 @@
 {
- "updated": "2026-10-21 22:32 ET",
- "note": "Planned exits per leg. Book orders are matched by oid, else by price+size. TPs not on the book show as 'planned (watcher)' when the leg is watcher-managed. Read-only: the board never places or changes orders.",
- "coins": {
-  "BTC": {
-   "lev": 20,
-   "legs": [
-    {"name": "Re-entry A · TP1 half", "entry_oid": 582107378077, "entry": 82923, "size": 0.0233,
-     "sl": 82500, "sl_oid": 582107378078, "managed": "book",
-     "tps": [
-      {"label": "TP1 · 83,196 · 4h resistance (~0.5R)", "px": 83196, "sz": 0.0233, "oid": 582107378079}
-     ]},
-    {"name": "Re-entry B · TP2 half", "entry_oid": 582107390783, "entry": 82923, "size": 0.02331,
-     "sl": 82500, "sl_oid": 582107390784, "managed": "book",
-     "tps": [
-      {"label": "TP2 · 84,041 · PDC (~2.3R)", "px": 84041, "sz": 0.02331, "oid": 582107390785}
-     ]}
-   ]
-  }
- }
+ "updated": "2026-11-25 09:07 ET",
+ "note": "Planned exits per leg. Book orders are matched by oid, else by price+size. TPs not on the book show as 'planned (watcher)' when the leg is watcher-managed. Read-only: the board never places or changes orders. Currently flat on both Hyperliquid and Propr.",
+ "coins": {}
 }

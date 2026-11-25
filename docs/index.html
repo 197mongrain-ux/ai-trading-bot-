@@ -82,26 +82,34 @@ const $=id=>document.getElementById(id);
 const fu=x=>x==null||isNaN(x)?"–":(x<0?"−$":x>0?"+$":"$")+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const fr=x=>(x>0?"+":"")+(+x).toFixed(2)+"R";const c=x=>x>0?"pos":x<0?"neg":"";
 async function J(u,o){const r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now(),Object.assign({cache:"no-store"},o||{}));if(!r.ok)throw r.status;return r.json()}
-function st(v){const T=v.filter(x=>x!=null),W=T.filter(x=>x>0.005),L=T.filter(x=>x<-0.005),gw=W.reduce((a,b)=>a+b,0),gl=-L.reduce((a,b)=>a+b,0);let cu=0,pk=0,dd=0;for(const x of T){cu+=x;pk=Math.max(pk,cu);dd=Math.min(dd,cu-pk)}
-  return {n:T.length,net:cu,w:W.length,l:L.length,wr:W.length+L.length?100*W.length/(W.length+L.length):null,pf:gl>0?gw/gl:null,dd}}
+function st(v,rs){const T=v.filter(x=>x!=null),W=T.filter(x=>x>0.005),L=T.filter(x=>x<-0.005),gw=W.reduce((a,b)=>a+b,0),gl=-L.reduce((a,b)=>a+b,0);let cu=0,pk=0,dd=0;for(const x of T){cu+=x;pk=Math.max(pk,cu);dd=Math.min(dd,cu-pk)}
+  const R=(rs||[]).filter(x=>x!=null&&!isNaN(x));
+  return {n:T.length,net:cu,w:W.length,l:L.length,wr:W.length+L.length?100*W.length/(W.length+L.length):null,pf:gl>0?gw/gl:null,dd,totR:R.length?R.reduce((a,b)=>a+b,0):null}}
 function card(id,net,fmt,S,extra){const el=$(id),up=net>0.005;el.className="sc "+(up?"up":"dn");
+  const rTxt=S.totR!=null?` · ${fr(S.totR)}`:"";
   el.innerHTML=el.querySelector(".l").outerHTML+`<div class="v ${c(net)}">${fmt(net)}</div><span class="yn ${up?"y":"n"}">PROFITABLE OVERALL: ${up?"YES":"NO"}</span>`+
-  `<div class=m>${S.n} trades · ${S.wr==null?"–":S.wr.toFixed(0)+"%"} win · PF ${S.pf==null?"–":S.pf.toFixed(2)} · max DD ${fmt(S.dd)}${extra||""}</div>`}
-(async()=>{try{const d=await J("pnl/calendar.json"),k=d.kpis;
-  try{card("sHL",k.all_time,fu,st((d.trades||[]).map(t=>t.net)),`<br>since ${(d.history_from_et||"").slice(0,10)} · equity ${fu(k.equity_spot_usdc).replace("+","")}`)}catch(e){}
-  $("hl").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${k.closed} trades · ${k.win_rate}% win · updated ${d.generated_et} ET</div>`;
-  $("hlj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("hl").innerHTML="<span class=u>open board for numbers</span>"}})();
-(async()=>{try{const d=await J("propr-pnl/calendar.json"),k=d.kpis,ch=d.challenge||{};
-  const bal=ch.balance??ch.true_balance??null;
-  try{const net=bal!=null&&ch.initial?bal-ch.initial:k.all_time,pg=ch.target_usd?Math.max(0,Math.min(100,100*ch.progress_usd/ch.target_usd)):0;
-    card("sPR",net,fu,st((d.trades||[]).map(t=>t.net)),`<br>balance ${fu(bal).replace("+","")} · target ${fu(ch.target_equity).replace("+","")} · ${pg.toFixed(1)}% there<div class=pb><i style="width:${pg}%"></i></div>`)}catch(e){}
-  $("pr").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${bal!=null?"balance "+fu(bal).replace("+","")+" · ":""}${k.closed} trades · updated ${d.generated_et} ET</div>`;
-  $("prj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L</div>`}catch(e){$("pr").innerHTML="<span class=u>open board for numbers</span>"}})();
+  `<div class=m>${S.n} trades · ${S.wr==null?"–":S.wr.toFixed(1)+"%"} win${rTxt} · PF ${S.pf==null?"–":S.pf.toFixed(2)} · max DD ${fmt(S.dd)}${extra||""}</div>`}
+(async()=>{try{const d=await J("pnl/calendar.json"),k=d.kpis,T=d.trades||[],S=st(T.map(t=>t.net),T.map(t=>t.r_mult));
+  try{card("sHL",k.all_time,fu,S,`<br>since ${(d.history_from_et||"").slice(0,10)} · equity ${fu(k.equity_spot_usdc).replace("+","")}`)}catch(e){}
+  $("hl").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${k.closed} trades · ${k.win_rate}% win${S.totR!=null?" · "+fr(S.totR):""} · updated ${d.generated_et} ET</div>`;
+  $("hlj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L · ${k.win_rate}% win${S.totR!=null?" · "+fr(S.totR):""}</div>`}catch(e){$("hl").innerHTML="<span class=u>open board for numbers</span>"}})();
+(async()=>{try{const d=await J("propr-pnl/calendar.json"),k=d.kpis,ch=d.challenge||{},T=d.trades||[],S=st(T.map(t=>t.net),T.map(t=>t.r_mult));
+  const bal=ch.balance??ch.true_balance??null, eq=ch.equity??bal, mlock=ch.margin_locked??0;
+  try{const net=eq!=null&&ch.initial?eq-ch.initial:k.all_time,pg=ch.target_usd?Math.max(0,Math.min(100,100*ch.progress_usd/ch.target_usd)):0;
+    const lines=[
+      bal!=null?`<br>Realized balance: ${fu(bal).replace("+","")}`:"",
+      eq!=null?`<br>Equity: ${fu(eq).replace("+","")}`:"",
+      `<br>Margin locked: ${fu(mlock).replace("+","")}`,
+      `<br>Step ${ch.phase_order??2} target: ${fu(ch.target_equity).replace("+","")} · ${pg.toFixed(1)}% (progress uses equity)<div class=pb><i style="width:${pg}%"></i></div>`
+    ].join("");
+    card("sPR",net,fu,S,lines)}catch(e){}
+  $("pr").innerHTML=`All-time <span class="big ${c(k.all_time)}">${fu(k.all_time)}</span> · today <span class=${c(k.today)}>${fu(k.today)}</span><div class=u>${bal!=null?"Realized balance: "+fu(bal).replace("+","")+"<br>Equity: "+fu(eq).replace("+","")+"<br>Margin locked: "+fu(mlock).replace("+","")+"<br>":""}${k.closed} trades · ${k.win_rate}% win · progress uses equity · updated ${d.generated_et} ET</div>`;
+  $("prj").innerHTML=`<span class=big>${k.closed}</span> trades journaled<div class=u>${k.wins}W / ${k.losses}L · ${k.win_rate}% win${S.totR!=null?" · "+fr(S.totR):""}</div>`}catch(e){$("pr").innerHTML="<span class=u>open board for numbers</span>"}})();
 (async()=>{const R="197mongrain-ux/ai-trading-bot-",P="scalp-paper/data.json";let d=null;
   try{d=await J(`https://api.github.com/repos/${R}/contents/${P}?ref=scalp-paper-data`,{headers:{Accept:"application/vnd.github.raw"}})}catch(e){try{d=await J(`https://raw.githubusercontent.com/${R}/scalp-paper-data/${P}`)}catch(e2){}}
   if(!d){$("sp").innerHTML="<span class=u>open board for numbers</span>";$("sSP").querySelector(".v").textContent="open board";return}
   const T=d.trades||[],r=T.reduce((a,t)=>a+t.R,0),u=T.reduce((a,t)=>a+(t.usd||0),0),w=T.filter(t=>t.R>0).length,op=(d.books||[]).reduce((a,b)=>a+(b.open||[]).length,0);
-  try{card("sSP",r,fr,st(T.slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1).map(t=>t.R)),`<br>= ${fu(u)} at $${(d.rules?.risk_usd??0.75).toFixed(2)}/R · ${(d.books||[]).length} books`)}catch(e){}
+  try{card("sSP",r,fr,st(T.slice().sort((a,b)=>a.exit_et<b.exit_et?-1:1).map(t=>t.R),T.map(t=>t.R)),`<br>= ${fu(u)} at $${(d.rules?.risk_usd??0.75).toFixed(2)}/R · ${(d.books||[]).length} books`)}catch(e){}
   $("sp").innerHTML=`<span class="big ${c(r)}">${r>0?"In profit":"Not in profit"}</span> · <span class=${c(r)}>${fr(r)} (${fu(u)})</span><div class=u>${T.length} trades · ${w}W/${T.length-w}L · after fees</div>`;
   $("sl").innerHTML=`${op} open position${op==1?"":"s"} · ${(d.books||[]).length} books<div class=u>engine data ${d.updated_et||""}</div>`})();
 (async()=>{try{const d=await J("model-b/board.json");$("mb").innerHTML=`<span class=u>last updated ${(d.generated_et||"").slice(0,16).replace("T"," ")} ET</span>`}catch(e){}})();
