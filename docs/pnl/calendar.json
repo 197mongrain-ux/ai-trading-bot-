@@ -1,23 +1,23 @@
 {
  "address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541",
  "network": "mainnet",
- "generated_ms": 1795478988814,
- "generated_et": "2026-11-23 19:09:48",
+ "generated_ms": 1795615591377,
+ "generated_et": "2026-11-25 09:06:31",
  "history_days": 90,
  "history_from_et": "2026-10-06 23:58",
  "kpis": {
-  "today": -30.22,
-  "week": -30.22,
-  "mtd": 348.82,
-  "all_time": 100.74,
-  "win_rate": 37.8,
-  "wins": 17,
+  "today": 49.26,
+  "week": 19.04,
+  "mtd": 398.08,
+  "all_time": 150.0,
+  "win_rate": 39.1,
+  "wins": 18,
   "losses": 28,
-  "closed": 45,
+  "closed": 46,
   "open_upnl": 0.0,
-  "equity_spot_usdc": 1384.181103,
+  "equity_spot_usdc": 1433.634904,
   "perp_account_value": 0.0,
-  "today_key": "2026-11-23",
+  "today_key": "2026-11-25",
   "week_start": "2026-11-23"
  },
  "days": {
@@ -284,6 +284,17 @@
    "risk": 28.22,
    "best": -30.22,
    "worst": -30.22
+  },
+  "2026-11-25": {
+   "net": 49.26,
+   "gross": 50.24,
+   "fees": 0.98,
+   "trades": 1,
+   "wins": 1,
+   "losses": 0,
+   "risk": 24.5,
+   "best": 49.26,
+   "worst": 49.26
   }
  },
  "trades": [
@@ -1790,6 +1801,39 @@
    ],
    "result": "LOSS",
    "day": "2026-11-23"
+  },
+  {
+   "coin": "ZEC",
+   "side": "short",
+   "size": 1.59,
+   "entry": 732.59,
+   "exit": 700.99,
+   "stop": 748.0,
+   "risk": 24.5,
+   "initial_stop": 748.0,
+   "initial_risk": 24.5,
+   "final_risk": 24.5,
+   "fees": 0.9847,
+   "gross": 50.244,
+   "net": 49.2593,
+   "r_mult": 2.01,
+   "open_ms": 1795559188805,
+   "close_ms": 1795613449879,
+   "open_et": "2026-11-24 17:26",
+   "close_et": "2026-11-25 08:30",
+   "exit_type": "TP",
+   "n_fills": 3,
+   "partial_history": false,
+   "status": "closed",
+   "id": "ZEC-20261124-1726",
+   "open_oids": [
+    615635577205
+   ],
+   "close_oids": [
+    615636749235
+   ],
+   "result": "WIN",
+   "day": "2026-11-25"
   }
  ],
  "positions": [],
