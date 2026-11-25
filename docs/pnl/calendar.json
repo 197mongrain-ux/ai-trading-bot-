@@ -1,21 +1,21 @@
 {
  "address": "0x052091F7bc55779D8D83546D8B9BCf9A9956d541",
  "network": "mainnet",
- "generated_ms": 1795615591377,
- "generated_et": "2026-11-25 09:06:31",
+ "generated_ms": 1795628315988,
+ "generated_et": "2026-11-25 12:38:35",
  "history_days": 90,
  "history_from_et": "2026-10-06 23:58",
  "kpis": {
-  "today": 49.26,
-  "week": 19.04,
-  "mtd": 398.08,
-  "all_time": 150.0,
-  "win_rate": 39.1,
+  "today": 20.37,
+  "week": -9.85,
+  "mtd": 369.19,
+  "all_time": 121.1,
+  "win_rate": 38.3,
   "wins": 18,
-  "losses": 28,
-  "closed": 46,
+  "losses": 29,
+  "closed": 47,
   "open_upnl": 0.0,
-  "equity_spot_usdc": 1433.634904,
+  "equity_spot_usdc": 1404.741149,
   "perp_account_value": 0.0,
   "today_key": "2026-11-25",
   "week_start": "2026-11-23"
@@ -286,15 +286,15 @@
    "worst": -30.22
   },
   "2026-11-25": {
-   "net": 49.26,
-   "gross": 50.24,
-   "fees": 0.98,
-   "trades": 1,
+   "net": 20.37,
+   "gross": 22.49,
+   "fees": 2.12,
+   "trades": 2,
    "wins": 1,
-   "losses": 0,
-   "risk": 24.5,
+   "losses": 1,
+   "risk": 51.99,
    "best": 49.26,
-   "worst": 49.26
+   "worst": -28.89
   }
  },
  "trades": [
@@ -1833,6 +1833,39 @@
     615636749235
    ],
    "result": "WIN",
+   "day": "2026-11-25"
+  },
+  {
+   "coin": "BTC",
+   "side": "short",
+   "size": 0.03332,
+   "entry": 58679.99999999999,
+   "exit": 59513.0,
+   "stop": 59505.0,
+   "risk": 27.49,
+   "initial_stop": 59505.0,
+   "initial_risk": 27.49,
+   "final_risk": 27.49,
+   "fees": 1.1382,
+   "gross": -27.7556,
+   "net": -28.8938,
+   "r_mult": -1.05,
+   "open_ms": 1795626176298,
+   "close_ms": 1795627016085,
+   "open_et": "2026-11-25 12:02",
+   "close_et": "2026-11-25 12:16",
+   "exit_type": "SL",
+   "n_fills": 3,
+   "partial_history": false,
+   "status": "closed",
+   "id": "BTC-20261125-1202",
+   "open_oids": [
+    616511297939
+   ],
+   "close_oids": [
+    616511297940
+   ],
+   "result": "LOSS",
    "day": "2026-11-25"
   }
  ],
