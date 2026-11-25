@@ -1148,7 +1148,7 @@
     80490.0
    ]
   ],
-  "note": "No notes recorded"
+  "note": "What: Short 0.05968 BTC @ 80,170 (mirrored with Propr).\nWhy: Fib / key-level short planned with Chris.\nTrigger: Resting limit placed Oct 27 at 10:09 ET; filled at 10:13 ET.\nLevels: Entry 80,170; initial stop 80,490; TP 79,567.\nFlow read: Got ~0.58R in favor before reversing.\nExit reason: Stop-loss hit Oct 27 at 11:20 ET at 80,514.9 (\u2212$23.35 net, \u22121.22R)."
  },
  {
   "id": "BTC-20261027-1217",
@@ -1182,7 +1182,7 @@
     80880.0
    ]
   ],
-  "note": "No notes recorded"
+  "note": "What: Short 0.05639 BTC @ 80,547 (mirrored with Propr).\nWhy: 0.786-fib short at a key level, planned with Chris.\nTrigger: Resting limit placed Oct 27 at 12:07 ET; filled at 12:17 ET.\nLevels: Entry 80,547; stop 80,880; initial TP 79,950 moved to 80,100 at 12:39 ET.\nFlow read: Kept open past 4 PM ET on Chris's call; spiked ~80,730 \u2192 81,260 in 1 minute on ~8x normal volume.\nExit reason: Stop-loss hit Oct 27 at 17:31 ET with slippage at 81,005.0 (\u2212$28.45 net, \u22121.52R)."
  },
  {
   "id": "BTC-20261029-1601",
@@ -1662,6 +1662,40 @@
     62461.0
    ]
   ],
-  "note": "No notes recorded"
+  "note": "[Tier B \u00b7 Nov 2 template (15m swing low)]\nWhat: Short 0.0225 BTC @ 61,207 (20x isolated, ~$28.21 risk).\nWhy: Nov 2 template short alert (12:01 ET) on a 0.68 fib pullback into the 61,115\u201361,299 zone (15m swing low level, Tier B quality).\nTrigger: Resting limit short at 61,207 placed Nov 22 at 14:19 ET; filled at 18:00 ET.\nLevels: Entry 61,207; stop 62,461; TP 58,900 (~1.8R planned).\nFlow read: Reached ~0.69R in favor overnight without reaching target, then buyers pushed back through 62k in the morning.\nExit reason: Stop-loss hit Nov 23 at 08:57 ET at 62,514.23 (\u2212$30.22 net after fees, \u22121.07R)."
+ },
+ {
+  "id": "ZEC-20261124-1726",
+  "coin": "ZEC",
+  "side": "short",
+  "size": 1.59,
+  "entry": 732.59,
+  "exit": 700.99,
+  "stop": 748.0,
+  "initial_stop": 748.0,
+  "fees": 0.9847,
+  "net": 49.2593,
+  "r_mult": 2.01,
+  "open_ms": 1795559188805,
+  "close_ms": 1795613449879,
+  "open_et": "2026-11-24 17:26",
+  "close_et": "2026-11-25 08:30",
+  "result": "WIN",
+  "exit_type": "TP",
+  "tp_initial": 705.5,
+  "tp_final": 701.5,
+  "mfe_r": 2.5,
+  "mae_r": 0.81,
+  "chart_tf": "15m",
+  "img_v": "bffe71f8",
+  "reason": "Take profit",
+  "management": "Limit short at 732.59 filled Nov 24 5:26 PM. Initial stop 748.00, target 705.50. Target moved 705.50 \u2192 701.50 at 5:29 PM. Take-profit hit at 700.99 (Nov 25 8:30 AM). Held 15h 4m.",
+  "stop_path": [
+   [
+    "17:26",
+    748.0
+   ]
+  ],
+  "note": "[Tier B \u00b7 alt scan #1]\nWhat: Short 1.59 ZEC @ 732.59 (10x isolated, max leverage on ZEC; ~$27.74 / ~2% planned risk).\nWhy: Top-10 HL alt scan ranked ZEC short B at 4h/daily resistance zone (729.6\u2013736.3), sitting at the 0.786 retracement (728) of the 680 \u2192 903 leg.\nTrigger: Confirmed 15m rejection on the 17:00 ET candle (wicked to 734.73 into the zone, closed 729.01 < 729.6 at 17:15 ET). Placed limit 731; filled as taker ~17:26 ET at 732.59.\nLevels: Entry 732.59 (limit 731); stop 748 (above 744.85\u2013745 resistance); initial TP 705.5 (1.5R), moved to 701.5 at 17:29 ET (~2.0R).\nFlow read: Swiftedge did not cover ZEC, so read Hyperliquid directly. At 17:35 ET price spiked to 745.0 on a 5m volume burst (~9,500 ZEC, ~10x normal \u2014 stop-hunt look without breaking 745), then rejected 744.6\u2013745.0 four times while OI climbed 286k \u2192 291k ZEC and asks outweighed bids (147 vs 94 near price), confirming sellers defending 745.\nExit reason: Take-profit hit Nov 25 at 08:30 ET on the PCE/GDP release at 700.99 (+$49.26 net after fees, +2.01R)."
  }
 ]
